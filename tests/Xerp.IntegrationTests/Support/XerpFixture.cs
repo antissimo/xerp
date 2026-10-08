@@ -47,9 +47,9 @@ public sealed class XerpFixture : IAsyncLifetime
     }
 
     /// <summary>A second API host on the same database with another admin key setting (null = not configured).</summary>
-    public XerpFactory CreateHost(string? adminKey)
+    public XerpFactory CreateHost(string? adminKey, params (string Key, string Value)[] settings)
     {
-        var factory = new XerpFactory(ConnectionString, adminKey);
+        var factory = new XerpFactory(ConnectionString, adminKey, settings);
         _extraFactories.Add(factory);
         return factory;
     }
@@ -139,7 +139,8 @@ public sealed class XerpFixture : IAsyncLifetime
 
 public sealed record TestTenant(Guid Id, string Code, string Name, Guid ApiKeyId, string Key, HttpClient Client);
 
-public sealed class XerpFactory(string connectionString, string? adminKey) : WebApplicationFactory<Program>
+public sealed class XerpFactory(string connectionString, string? adminKey, (string Key, string Value)[]? settings = null)
+    : WebApplicationFactory<Program>
 {
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -147,6 +148,8 @@ public sealed class XerpFactory(string connectionString, string? adminKey) : Web
         builder.UseSetting("ConnectionStrings:Default", connectionString);
         // An explicit empty value keeps an admin key from the environment of the test run out of the host.
         builder.UseSetting("Xerp:AdminKey", adminKey ?? "");
+        foreach (var (key, value) in settings ?? [])
+            builder.UseSetting(key, value);
     }
 }
 
