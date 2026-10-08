@@ -76,7 +76,7 @@ public sealed class UnitOfMeasureOperations(IXerpDb db, ITenantContext context, 
         {
             await db.SaveChangesAsync(cancellationToken);
         }
-        catch (UniqueConstraintViolationException ex) when (ex.ConstraintName == DbNames.UnitOfMeasureCodeIndex)
+        catch (UniqueConstraintViolationException ex) when (ex.IsCodeOf<UnitOfMeasure>())
         {
             // Lost a race with a concurrent create of the same code: the unique index is the authority (E8).
             return CodeTaken(values.Code);
@@ -103,7 +103,7 @@ public sealed class UnitOfMeasureOperations(IXerpDb db, ITenantContext context, 
         {
             await db.SaveChangesAsync(cancellationToken);
         }
-        catch (UniqueConstraintViolationException ex) when (ex.ConstraintName == DbNames.UnitOfMeasureCodeIndex)
+        catch (UniqueConstraintViolationException ex) when (ex.IsCodeOf<UnitOfMeasure>())
         {
             return CodeTaken(values.Code);
         }
