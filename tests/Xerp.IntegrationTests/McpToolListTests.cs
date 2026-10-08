@@ -6,14 +6,20 @@ using Xerp.IntegrationTests.Support;
 
 namespace Xerp.IntegrationTests;
 
-/// <summary>Spec 003, AC-40 to AC-45 (tool list and metadata) and AC-03 (MCP tools hold no data access).</summary>
+/// <summary>
+/// Spec 003, AC-40 to AC-45 (tool list and metadata) and AC-03 (MCP tools hold no data access).
+/// Spec 004, AC-90 to AC-93: the list grows to 24 tools; the ten new ones have the same metadata rules.
+/// </summary>
 [Collection(XerpCollection.Name)]
 public class McpToolListTests(XerpFixture app)
 {
     private sealed record Expected(string Name, string[] Properties, string[] Required, string Kind);
 
-    // Spec 003, section 5.3. This is the complete list: a new tool must be added here by its spec.
-    private static readonly Expected[] Tools =
+    private static readonly string[] Address =
+        ["addressLine1", "addressLine2", "postalCode", "city", "region", "countryCode"];
+
+    // Spec 003, section 5.3.
+    private static readonly Expected[] Spec003Tools =
     [
         new("whoami", [], [], "read"),
         new("uom_list", ["search", "isActive", "limit", "offset"], [], "read"),
@@ -33,6 +39,27 @@ public class McpToolListTests(XerpFixture app)
         new("api_key_revoke", ["id"], ["id"], "update"),
     ];
 
+    // Spec 004, section 5.1.
+    private static readonly Expected[] Spec004Tools =
+    [
+        new("partner_list", ["search", "isCustomer", "isSupplier", "isActive", "limit", "offset"], [], "read"),
+        new("partner_get", ["id", "code"], [], "read"),
+        new("partner_create", ["code", "name", "isCustomer", "isSupplier", "taxId", .. Address, "isActive"],
+            ["code", "name"], "create"),
+        new("partner_update", ["id", "code", "name", "isCustomer", "isSupplier", "taxId", .. Address, "isActive"],
+            ["id", "code", "name", "isCustomer", "isSupplier", "taxId", .. Address, "isActive"], "update"),
+        new("partner_delete", ["id"], ["id"], "delete"),
+        new("warehouse_list", ["search", "isActive", "limit", "offset"], [], "read"),
+        new("warehouse_get", ["id", "code"], [], "read"),
+        new("warehouse_create", ["code", "name", .. Address, "isActive"], ["code", "name"], "create"),
+        new("warehouse_update", ["id", "code", "name", .. Address, "isActive"],
+            ["id", "code", "name", .. Address, "isActive"], "update"),
+        new("warehouse_delete", ["id"], ["id"], "delete"),
+    ];
+
+    // The complete list (spec 004, section 5.3): a new tool must be added here by its spec.
+    private static readonly Expected[] Tools = [.. Spec003Tools, .. Spec004Tools];
+
     private async Task<Dictionary<string, Tool>> ListToolsAsync(string? key = null)
     {
         key ??= (await app.NewTenantAsync()).Key;
@@ -44,22 +71,64 @@ public class McpToolListTests(XerpFixture app)
     private static string[] Sorted(IEnumerable<string> values) => values.Order(StringComparer.Ordinal).ToArray();
 
     [Fact]
-    public async Task AC40_Tool_list_is_exactly_the_14_tools_of_the_spec()
+    public async Task AC40_S004_AC90_Tool_list_is_exactly_the_24_tools_of_the_specs()
     {
         var tools = await ListToolsAsync();
 
-        Assert.Equal(14, Tools.Length);
+        Assert.Equal(14, Spec003Tools.Length);
+        Assert.Equal(10, Spec004Tools.Length);
         Assert.Equal(Sorted(Tools.Select(t => t.Name)), Sorted(tools.Keys));
         Assert.DoesNotContain("api_key_create", tools.Keys);
         Assert.DoesNotContain(tools.Keys, name => name.StartsWith("tenant", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
-    public async Task AC41_Every_tool_has_description_closed_input_schema_and_output_schema()
+    public async Task AC41_Every_tool_has_description_closed_input_schema_and_output_schema() =>
+        AssertMetadata(await ListToolsAsync(), Spec003Tools);
+
+    [Fact]
+    public async Task S004_AC91_Partner_and_warehouse_tools_have_description_closed_input_schema_and_output_schema()
     {
         var tools = await ListToolsAsync();
 
-        foreach (var expected in Tools)
+        AssertMetadata(tools, Spec004Tools);
+        Assert.Equal(13, tools["partner_update"].InputSchema.GetProperty("required").GetArrayLength());
+        Assert.Equal(10, tools["warehouse_update"].InputSchema.GetProperty("required").GetArrayLength());
+    }
+
+    [Theory]
+    [InlineData("partner_create")]
+    [InlineData("partner_update")]
+    [InlineData("warehouse_create")]
+    [InlineData("warehouse_update")]
+    public async Task S004_AC91_Nullable_text_arguments_accept_string_or_null(string toolName)
+    {
+        // Section 5.1: each address argument (and taxId) is "string | null"; section 5.2 for the schema type.
+        var tools = await ListToolsAsync();
+
+        Assert.True(tools.TryGetValue(toolName, out var tool), $"Tool '{toolName}' is not listed.");
+        var properties = tool!.InputSchema.GetProperty("properties");
+        string[] nullable = toolName.StartsWith("partner", StringComparison.Ordinal) ? ["taxId", .. Address] : Address;
+        foreach (var name in nullable)
+        {
+            Assert.True(properties.TryGetProperty(name, out var schema), $"{toolName} has no argument '{name}'.");
+            var types = SchemaTypes(schema);
+            Assert.True(types.Contains("string") && types.Contains("null"),
+                $"{toolName}.{name}: schema must allow string and null, is {schema}");
+        }
+    }
+
+    [Fact]
+    public async Task AC42_Every_tool_has_the_annotations_of_the_spec() =>
+        AssertAnnotations(await ListToolsAsync(), Spec003Tools);
+
+    [Fact]
+    public async Task S004_AC92_Partner_and_warehouse_tools_have_the_annotations_of_their_pattern() =>
+        AssertAnnotations(await ListToolsAsync(), Spec004Tools);
+
+    private static void AssertMetadata(Dictionary<string, Tool> tools, Expected[] expectedTools)
+    {
+        foreach (var expected in expectedTools)
         {
             Assert.True(tools.TryGetValue(expected.Name, out var tool), $"Tool '{expected.Name}' is not listed.");
             Assert.False(string.IsNullOrWhiteSpace(tool!.Description), $"{expected.Name}: description is empty.");
@@ -89,12 +158,9 @@ public class McpToolListTests(XerpFixture app)
         }
     }
 
-    [Fact]
-    public async Task AC42_Every_tool_has_the_annotations_of_the_spec()
+    private static void AssertAnnotations(Dictionary<string, Tool> tools, Expected[] expectedTools)
     {
-        var tools = await ListToolsAsync();
-
-        foreach (var expected in Tools)
+        foreach (var expected in expectedTools)
         {
             Assert.True(tools.TryGetValue(expected.Name, out var tool), $"Tool '{expected.Name}' is not listed.");
             var a = tool!.Annotations;
@@ -113,6 +179,27 @@ public class McpToolListTests(XerpFixture app)
         }
     }
 
+    /// <summary>The JSON types a property schema allows: <c>type</c> as a string or an array, or through anyOf / oneOf.</summary>
+    private static HashSet<string> SchemaTypes(JsonElement schema)
+    {
+        var types = new HashSet<string>(StringComparer.Ordinal);
+        if (schema.ValueKind != JsonValueKind.Object)
+            return types;
+        if (schema.TryGetProperty("type", out var type))
+        {
+            if (type.ValueKind == JsonValueKind.String)
+                types.Add(type.GetString()!);
+            else if (type.ValueKind == JsonValueKind.Array)
+                foreach (var member in type.EnumerateArray())
+                    types.Add(member.GetString()!);
+        }
+        foreach (var keyword in new[] { "anyOf", "oneOf" })
+            if (schema.TryGetProperty(keyword, out var alternatives) && alternatives.ValueKind == JsonValueKind.Array)
+                foreach (var alternative in alternatives.EnumerateArray())
+                    types.UnionWith(SchemaTypes(alternative));
+        return types;
+    }
+
     [Theory]
     [InlineData("article_create", "type", "service,stock")]
     [InlineData("article_list", "type", "service,stock")]
@@ -128,7 +215,7 @@ public class McpToolListTests(XerpFixture app)
     }
 
     [Fact]
-    public async Task AC44_Tool_list_and_instructions_are_the_same_for_every_tenant()
+    public async Task AC44_S004_AC93_Tool_list_and_instructions_are_the_same_for_every_tenant()
     {
         var a = await app.NewTenantAsync("Tenant Alpha");
         var b = await app.NewTenantAsync("Tenant Beta");
