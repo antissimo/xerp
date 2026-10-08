@@ -4,6 +4,10 @@ Status: ready for implementation once specs 001 and 002 are merged to `main`. Br
 Read first: `docs/architecture.md` (sections 4, 6, 7), specs 001 and 002, ADR-0003, ADR-0005, **ADR-0009**,
 **ADR-0010**. Why this is the third spec: `docs/roadmap.md` backlog item 3.
 
+Owner decisions (confirmed 2026-10-09, as written in this spec): no `api_key_create` MCP tool; any tenant key
+may manage keys until the permissions spec; MCP clients authenticate with a static API key only; no rate
+limiting yet.
+
 Everything specs 001 and 002 established applies unchanged unless this spec says otherwise. Rule, edge-case and
 criterion numbers are local to this spec; "001/R9" means rule R9 of spec 001.
 
@@ -31,14 +35,17 @@ In scope
 Out of scope
 - `api_key_create` as a tool (ADR-0010, point 5) and any tool for tenant provisioning.
 - MCP resources, prompts, sampling, elicitation, tasks, notifications, sessions, resumability.
-- OAuth-based MCP authorization (ADR-0009); permissions per key, key expiry, rotation, rename (roadmap item 6).
+- OAuth-based MCP authorization (ADR-0009); permissions per key, key expiry, rotation, rename (roadmap item 17).
 - Rate limiting (roadmap, later). A stdio transport or a separate bridge process.
+- The OpenAPI document (spec 018, formerly 003a).
 - Any change to the behaviour of the HTTP operations of specs 001 and 002.
 
 ## 3. Data
 
 `ApiKey` gains three nullable columns: `CreatedBy` (id of the key that created it; `null` for a tenant's
 `initial` key), `RevokedAt`, `RevokedBy`. Existing columns (001 §3) are unchanged. Rows are never deleted.
+`CreatedBy` and `RevokedBy` are foreign keys `(TenantId, CreatedBy)` / `(TenantId, RevokedBy)` ->
+`ApiKey (TenantId, Id)`, `ON DELETE RESTRICT`, like every audit column (architecture §8).
 Invariant: `IsActive = false` exactly when `RevokedAt` is set — except for rows deactivated outside the
 application (001/AC-20 does this in a test), which the code must tolerate.
 
@@ -127,7 +134,8 @@ Tool metadata (returned by `tools/list`)
   enums for `type` (`stock`, `service`) and `actorType` (`human`, `agent`), `additionalProperties: false`.
   `description` of `article_update` is `string | null`.
 - `outputSchema`: describes the success object.
-- `annotations`:
+- `annotations` — every value in the table is sent explicitly, also where it equals the MCP default
+  (`docs/questions/003-q.md`, T-Q2):
 
 | Tools | `readOnlyHint` | `destructiveHint` | `idempotentHint` | `openWorldHint` |
 |---|---|---|---|---|
@@ -139,7 +147,8 @@ Tool metadata (returned by `tools/list`)
 ## 6. Business rules
 
 API keys
-- R1. `name`: trimmed; 1–100 characters after trimming. Names need not be unique.
+- R1. `name`: trimmed; 1–100 characters after trimming; no control characters (001/R4). Names need not be
+  unique.
 - R2. `actorType`: required, exactly `"human"` or `"agent"`; fixed for the life of the key.
 - R3. A created key has the format of 001/R13, is stored only as its SHA-256 hash (001/S5), is active, belongs
   to the caller's tenant and has `createdBy` = the acting key. The plaintext appears only in the `201` response
@@ -155,6 +164,8 @@ API keys
   always retains at least one active key.
 - R9. A revoked key is rejected from the next request on (`401 UNAUTHENTICATED`, 001/S2), on `/api/v1` and on
   `/mcp` alike. Records it created keep their `createdBy` / `updatedBy`.
+- R9a. Query strings and bodies follow 001/R14–R16 on every API key route (unknown query parameters rejected
+  under their own name; no input may cause `500`).
 - R10. List: `search` as 001/R9 but matching `name` only; `actorType` and `isActive` filter when present;
   ordering by `createdAt` ascending, then `id`; `limit`, `offset`, `total` as 001/R9.
 - R11. There is no interface restriction by `actorType`: a `human` key may use `/mcp`, an `agent` key may use
@@ -167,9 +178,9 @@ MCP
 - R13. `*_get` with `id` or `code`: exactly one of the two must be present and non-null; both or neither ->
   `VALIDATION_FAILED` with `errors` keys `id` and `code`. This rule lives in the Application layer.
 - R14. Arguments use JSON types, not strings: `limit`/`offset` numbers, `isActive` boolean. A wrong JSON type,
-  a missing required argument, an unknown argument or `arguments` that is not an object -> tool error
-  `VALIDATION_FAILED` with non-empty `errors` (for a missing or rule-violating argument: the key is the
-  argument's name, as over HTTP). It is never a JSON-RPC error and never `INTERNAL_ERROR`.
+  a missing required argument or an unknown argument -> tool error `VALIDATION_FAILED` whose `errors` key is
+  the argument's name, as over HTTP (001/E4). It is never a JSON-RPC error and never `INTERNAL_ERROR`.
+  (`arguments` that is not an object is not specified beyond "never HTTP `500`"; T-Q3.)
 - R15. An `id` argument that addresses the record (`uom_get`, `*_update`, `*_delete`, `api_key_get`,
   `api_key_revoke`) and is a string but not a UUID -> `NOT_FOUND`, as a malformed `{id}` path segment over HTTP
   (001/E6). A reference argument (`baseUnitId`) that is not a UUID -> `VALIDATION_FAILED` (002/E3).
@@ -232,14 +243,21 @@ MCP
 - S5. Logs may record tool name, key id, tenant id and resulting `code`; they never record the `Authorization`
   header or a plaintext key.
 - S6. Tool errors never contain stack traces, SQL, constraint names or other tenants' data (001/S6, 002/S2).
-- S7. Until permissions exist (roadmap item 6) every tenant key, of either actor type, may create keys over HTTP
-  and revoke other keys. This is the trust level of ADR-0003 and is stated in the builder's summary as a known
-  limitation, not hidden.
-- S8. Known gap, not to be solved here: no rate limiting on `/mcp` or `/api/v1` (ADR-0009, consequences).
+- S7. Until permissions exist (roadmap item 17) every tenant key, of either actor type, may create keys over HTTP
+  and revoke other keys (owner decision, 2026-10-09). This is the trust level of ADR-0003 and is stated in the
+  builder's summary as a known limitation, not hidden.
+- S8. Known gap, accepted by the owner (2026-10-09), not to be solved here: no rate limiting on `/mcp` or
+  `/api/v1` (ADR-0009, consequences).
 
 ## 10. Acceptance criteria
 
 Conventions as in spec 001 §10. Additionally:
+- **Who tests what** (architecture §9). Criteria without a mark are black-box: they are verified only through
+  the public surface (HTTP and MCP) and belong to the tester (`tests/003-mcp-server`). Criteria marked
+  *(builder)* need access below the public surface (internal types, the EF model, the database) and are tested
+  by the builder. Criteria marked *(manual)* are checked in review. A black-box test needs nothing but HTTP
+  and MCP requests: further keys come from `POST /api/v1/api-keys`, and a host setting such as
+  `Xerp:Mcp:AllowedOrigins` is test-host configuration, not internal access.
 - "MCP client" = the official C# SDK's client connected to `/mcp` of the in-process test server with a given
   API key. "Tool error X" = a tool result with `isError == true`, exactly one `text` content block whose text
   parses as a JSON object with `code == "X"` and a non-empty `detail`, and no `structuredContent`.
@@ -254,12 +272,12 @@ Structure
   all tests of specs 001 and 002 pass and none was weakened, deleted or skipped. The builder's summary states
   the commands, the test counts, the SDK package version used and the MCP protocol revision negotiated.
 - AC-02 *(manual, by inspection)* Exactly one migration was added; earlier migration files are unchanged.
-- AC-03 (unit) No type in the namespace that holds the MCP tools (`Xerp.Api.Mcp` and below) has a constructor
+- AC-03 *(builder, unit)* No type in the namespace that holds the MCP tools (`Xerp.Api.Mcp` and below) has a constructor
   parameter, method parameter, field or property whose type is the DbContext, `IXerpDb` or any EF Core type.
-- AC-04 (unit) The mapping from an `AppError` to a tool result yields a tool error with the same `code`,
+- AC-04 *(builder, unit)* The mapping from an `AppError` to a tool result yields a tool error with the same `code`,
   `detail` and `errors`; the mapping from an arbitrary exception yields `INTERNAL_ERROR` whose text does not
   contain the exception's message or type name.
-- AC-05 (unit) The "exactly one of `id`, `code`" rule (R13) is tested on the Application operation, without MCP
+- AC-05 *(builder, unit)* The "exactly one of `id`, `code`" rule (R13) is tested on the Application operation, without MCP
   or HTTP: neither -> `VALIDATION_FAILED` with `errors` keys `id` and `code`; both -> the same.
 
 API keys — HTTP
@@ -269,13 +287,14 @@ API keys — HTTP
   `Location` ends with `/api/v1/api-keys/{id}`; `Cache-Control` contains `no-store`; no `tenantId`, no `keyHash`.
 - AC-11 `GET /whoami` with the new key -> `200`, same tenant as the creating key, `actor.apiKeyId ==` the new
   id, `actor.name == "claude-warehouse"`, `actor.actorType == "agent"`.
-- AC-12 After AC-10, the new `ApiKey` row's `KeyHash` equals the lower-case hex SHA-256 of the returned key and
+- AC-12 *(builder, database)* After AC-10, the new `ApiKey` row's `KeyHash` equals the lower-case hex SHA-256 of the returned key and
   no column contains the plaintext (as 001/AC-22).
 - AC-13 `POST /api-keys` with `"  bot  "` as name -> `201` with `name == "bot"`. Two keys with the same name ->
   both `201`, different ids, different `key` values.
 - AC-14 `POST /api-keys` with `name` missing, `null`, `""`, `"   "`, or 101 characters -> `400`
   `VALIDATION_FAILED` with `errors` key `name`; a 100-character name -> `201`. With `actorType` missing, `null`,
-  `"Agent"`, `"robot"` -> `400` with `errors` key `actorType`.
+  `"Agent"`, `"robot"` -> `400` with `errors` key `actorType`. With `name` = `"a\u0000b"` or `"a\nb"` -> `400`
+  with `errors` key `name`. `GET /api-keys?foo=1` -> `400` with `errors` key `foo`.
 - AC-15 `POST /api-keys` with an extra property (`"key"`, `"isActive"`, `"tenantId"`, `"foo"`) or malformed
   JSON -> `400` `VALIDATION_FAILED`, non-empty `errors`; the key list is unchanged.
 - AC-16 `GET /api-keys/{id}` -> `200` with the representation of AC-10 without `key`. For the tenant's
@@ -290,7 +309,7 @@ API keys — HTTP
 - AC-19 Key A revokes key B: `POST /api-keys/{B}/revoke` -> `200` with `isActive == false`, a `revokedAt`, and
   `revokedBy == A`. A following `GET /whoami` with B's key -> `401` problem with code `UNAUTHENTICATED`.
   `GET /api-keys/{B}` with A -> `200`, still `isActive == false`.
-- AC-20 Revoking B a second time -> `200`; `revokedAt` and `revokedBy` are identical to those of the first
+- AC-20 Revoking B a second time, with a third key C -> `200`; `revokedAt` and `revokedBy` are identical to those of the first
   response.
 - AC-21 `POST /api-keys/{own id}/revoke` -> `409`, problem with code `CANNOT_REVOKE_SELF`; the key still
   authenticates.
@@ -368,7 +387,8 @@ MCP — tool errors
 - AC-70 `uom_create` with `{ "name": "x" }` (no `code`) -> tool error `VALIDATION_FAILED` with `errors` key
   `code`; with `{ "code": "a b", "name": "" }` -> `errors` keys `code` and `name`. No unit is created.
 - AC-71 `uom_create` with an unknown argument (`"tenantId"` or `"foo"`), with `"name": 123`, and `uom_list` with
-  `{ "limit": "10" }` -> tool error `VALIDATION_FAILED` with non-empty `errors` — not a JSON-RPC error.
+  `{ "limit": "10" }` -> tool error `VALIDATION_FAILED` with `errors` key `tenantId` / `foo`, `name`, `limit`
+  respectively — not a JSON-RPC error.
   `whoami` with `{ "x": 1 }` -> tool error `VALIDATION_FAILED`.
 - AC-72 `uom_list` with `{ "limit": 0 }` and `{ "limit": 501 }` -> tool error `VALIDATION_FAILED` with `errors`
   key `limit`; `{ "offset": -1 }` -> `errors` key `offset`.
@@ -433,6 +453,6 @@ Errors
 - HTTP and MCP parity tests are the template for all later specs: keep the helper that compares a tool's
   `structuredContent` with an HTTP body reusable.
 - Report in the summary: SDK version, protocol revision, and a transcript of a real MCP client (for example
-  `claude mcp add --transport http xerp http://localhost:8080/mcp --header "Authorization: Bearer …"`, or the
+  `claude mcp add --transport http xerp http://localhost:8000/mcp --header "Authorization: Bearer …"`, or the
   MCP inspector) listing the tools against `docker compose up` *(manual)*.
 - Anything unclear or contradictory: `docs/questions/003-q.md`, then continue with the rest.

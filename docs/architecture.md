@@ -78,6 +78,8 @@ Rules:
   is permanent; keys are never deleted (they are the actors that audit fields point at); a key cannot revoke
   itself, so a tenant always keeps one active key. A plaintext key is returned once, over HTTP only — never
   through an MCP tool.
+- Owner decisions (2026-10-09): until the permissions spec any tenant key may manage keys; MCP clients use a
+  static API key (no OAuth yet); there is no rate limiting yet.
 - Roles/permissions per key are a later roadmap item. Human login for the
   external web client (e.g. OIDC mapped to the same actor model) is not planned here until that project asks for it.
 - Agents may post documents by default (owner answered "yes"; interpreted as "agents may post by default"),
@@ -88,19 +90,36 @@ Rules:
 - Base path `/api/v1`. `/health` is outside it and unauthenticated.
 - JSON, camelCase properties, UTF-8. Timestamps are UTC ISO 8601. Ids are server-generated UUIDv7.
 - Unknown JSON properties in a request body are rejected (`400 VALIDATION_FAILED`) so that an agent's typo is
-  an error, not a silently ignored field.
+  an error, not a silently ignored field. The same holds for query strings: a query parameter an operation does
+  not define is rejected under its own name. Property and parameter names are case-sensitive.
+- No request may fail in the database because of its content; `500` is never the answer to client input.
+  Single-line text (codes, names) contains no control characters; multi-line text allows only LF, CR and TAB.
+- Under `/api/v1` the kind of credential is checked before the route: `/api/v1/admin/*` needs the admin key,
+  everything else a tenant key (`403` otherwise), whether or not the path exists. An unknown path and an
+  unsupported method on a known path are both `404 NOT_FOUND`.
 - Collections: `GET` returns `{ "items": [...], "total": n, "limit": n, "offset": n }`;
   `limit` default 50, range 1–500; `offset` >= 0; out-of-range values are rejected, not clamped.
 - Master data has a server id (`id`, used for references) and a human/agent-friendly `code`, unique per tenant,
   case-insensitive. Lookup by code is `GET /<resource>/by-code/{code}`.
 - Create: `POST` -> `201` + `Location` + body. Replace: `PUT` (all fields) -> `200` + body. Delete: `204`.
+- Optional text (ADR-0011): omitted on create, `null`, empty and whitespace-only all mean "no value", stored
+  and returned as `null`; the property is always present in a representation and must be present (possibly
+  `null`) on `PUT`. An address is six optional flat fields — `addressLine1`, `addressLine2`, `postalCode`,
+  `city`, `region`, `countryCode` (two upper-case letters, form only) — with the same rules on every record
+  that has one.
 - References between records (ADR-0008): a request names another record by server id in a field `<role>Id`
   (`baseUnitId`); a representation returns it as an embedded summary `"<role>": { "id", "code", "name" }`.
   An inactive record cannot be newly referenced but existing references stay valid. A referenced record cannot
   be deleted (`IN_USE`); it is retired with `isActive = false`. Every spec that adds a reference adds a list
   filter by it (`GET /articles?baseUnitId=`).
-- Order of checks in a write: validation (`400`) -> addressed record exists (`404`) -> references
-  (`409 REFERENCE_*`) -> uniqueness (`409 CODE_TAKEN`).
+- Order of checks in a write: validation (`400`) -> addressed record exists (`404`) -> state
+  (`409 INVALID_STATE`) -> references (`409 REFERENCE_*`) -> uniqueness (`409 CODE_TAKEN`).
+- Documents (ADR-0007, ADR-0012): a document has a header and `lines`; it is created and replaced as a whole
+  while `draft`, and changes state through action routes (`POST /<resource>/{id}/post`). A posted document is
+  immutable and has a `number`, `postedAt`, `postedBy`; lookup by number is `GET /<resource>/by-number/{number}`.
+  An error about a line is keyed `lines[i].<field>` with a zero-based index into the request's array.
+- Quantities are exact decimals sent as JSON numbers: at most 6 decimal places and 15 significant digits;
+  a quoted number is a wrong type. Consumers compare numerically (`10` equals `10.000000`).
 
 ## 6. Error model (ADR-0004)
 
@@ -117,13 +136,15 @@ Every non-2xx response under `/api/v1` is `application/problem+json` (RFC 9457) 
 | 400 | `VALIDATION_FAILED` | Malformed JSON, unknown property, or field rule violated — anything decidable from the request alone. `errors` maps camelCase field name -> messages. |
 | 401 | `UNAUTHENTICATED` | Missing, malformed, unknown or disabled credential. Sent with `WWW-Authenticate: Bearer`. |
 | 403 | `FORBIDDEN` | Valid credential, operation not allowed for it. |
-| 404 | `NOT_FOUND` | No such record in this tenant (also: other tenant's record, malformed id). |
+| 404 | `NOT_FOUND` | No such record in this tenant (also: other tenant's record, malformed id), no such path, or method not supported on the path. |
 | 409 | `CODE_TAKEN` | Unique code already used in this tenant. |
-| 409 | `IN_USE` | Record is referenced and cannot be deleted. |
+| 409 | `IN_USE` | Record is referenced and cannot be deleted; or a field that is frozen while the record is used would change (`errors` names the fields). |
 | 409 | `REFERENCE_NOT_FOUND` | A `<role>Id` in the body is well-formed but no such record exists in this tenant (also: other tenant's record). `errors` has the field's key. |
 | 409 | `REFERENCE_INACTIVE` | A `<role>Id` in the body points at an inactive record that is being newly assigned. `errors` has the field's key. |
 | 409 | `CANNOT_REVOKE_SELF` | An API key tried to revoke itself. |
-| 409 | `INVALID_STATE` | (later) Operation not allowed in the document's current status. |
+| 409 | `INVALID_STATE` | Operation not allowed in the document's current status (e.g. replace, delete or post of a posted document). |
+| 409 | `INSUFFICIENT_STOCK` | Posting would make stock on hand negative. `errors` has `lines[i].quantity` for the short lines. |
+| 409 | `ARTICLE_NOT_STOCKED` | A stock document line names a `service` article. `errors` has `lines[i].articleId`. |
 | 500 | `INTERNAL_ERROR` | Unexpected. No stack trace or SQL in the body. |
 
 `code` values are part of the contract: clients and tests branch on `code`, never on `detail` text.
@@ -157,6 +178,8 @@ MCP maps the same error to a tool error with the same `code` (shape in section 7
 - The CLI and the web UI are not built in this repository. They are ordinary HTTP API clients with their own
   API keys; nothing in the backend is specific to them. Because they are developed separately, the HTTP API must
   not change incompatibly within `/api/v1`, and the OpenAPI document is the description they build against.
+  It does not exist yet: spec 018 delivers it (served in every environment to any authenticated tenant key,
+  and committed to the repository so that a contract change is visible in a diff).
 - Every spec defines both the HTTP and the MCP signature of each operation. Specs 001 and 002 carry their MCP
   signatures as contract only; spec 003 implements them. From spec 004 on, a spec's tools are implemented with it,
   including tool metadata (description with error codes, schemas, annotations) and an HTTP/MCP parity test.
@@ -167,19 +190,35 @@ MCP maps the same error to a tool error with the same `code` (shape in section 7
   (acceptable while there is one instance; revisit before production).
 - Money and quantities are `decimal` / `numeric`, never floating point.
 - Audit columns on every tenant-owned row: `CreatedAt`, `UpdatedAt`, `CreatedBy`, `UpdatedBy`.
-- Ledger tables (stock ledger, journal lines; later) are append-only: no `UPDATE`, no `DELETE`; corrections are
-  reversing entries (ADR-0007).
+  Columns that hold an actor (`CreatedBy`, `UpdatedBy`, `RevokedBy`, …) are real foreign keys
+  `(TenantId, <column>)` -> `ApiKeys (TenantId, Id)` with `ON DELETE RESTRICT`: an actor can never belong to
+  another tenant, and an API key that has written anything can be revoked but never deleted (ADR-0010).
+- Ledger tables (stock ledger from spec 005; journal lines later) are append-only: no `UPDATE`, no `DELETE`;
+  corrections are reversing entries (ADR-0007). Stock on hand is the sum of the stock ledger and is never
+  negative (ADR-0012). Document numbers are gapless per tenant and document type and are assigned at posting.
 
 ## 9. Testing (ADR-0006)
 
-- xUnit. Test-first: the builder writes tests from a spec's acceptance criteria before the code.
+- xUnit. Test-first. From spec 003 on the acceptance tests are written by the **tester** (`tester.md`), on
+  branch `tests/NNN-name`, before the builder implements; the builder merges that branch and may not change
+  those tests. (Specs 001 and 002: the builder wrote them.)
+- Consequence for specs: an acceptance criterion is **black-box** — stated as requests and observable responses
+  on the public surface (HTTP `/api/v1`, MCP `/mcp`), with nothing that requires an internal type, the EF model
+  or a look into the database. A black-box test may configure the test host (settings such as
+  `Xerp:AdminKey`) and uses only operations that exist: tenants from `POST /api/v1/admin/tenants`, further
+  keys from `POST /api/v1/api-keys`.
+- What cannot be observed from outside (layering, the EF model, database constraints as a second barrier,
+  hashing at rest) is a criterion marked *(builder)*: the builder writes that test. *(manual)* criteria are
+  checked in review. A spec keeps *(builder)* criteria few; a business rule that needs one is in the wrong
+  place or is stated wrongly.
 - Unit tests: Domain/Application rules and the architecture dependency test. No I/O.
 - Integration tests: start the real API in-process (`WebApplicationFactory`) against a PostgreSQL started by
   Testcontainers (`postgres:18`), apply the real migrations, drive it over HTTP. Never the dev database, never
   an in-memory or SQLite provider (query filters, unique indexes and collation behaviour must be the real ones).
 - Tests must be independent: each creates its own tenants (unique codes), so tests can share one database
   container and run in parallel.
-- Each acceptance criterion maps to at least one named test. Each feature has a tenant-isolation test.
+- Each acceptance criterion maps to at least one named test. Each feature has a tenant-isolation test, over
+  HTTP and over MCP.
 
 ## 10. Build environment constraint
 

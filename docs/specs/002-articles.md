@@ -30,10 +30,10 @@ In scope
 
 Out of scope
 - MCP server (the MCP signatures in section 5 are a contract for spec 003, **not** to be implemented now).
-- Stock, ledger entries, quantities on hand (spec 008). Until then nothing references an article, so an article
+- Stock, ledger entries, quantities on hand (spec 005). Until then nothing references an article, so an article
   can always be deleted.
-- Alternative units and conversion factors per article (spec 009); prices and price lists; tax classes
-  (spec 015); barcodes; article groups/categories; images/attachments; lots and serial numbers.
+- Alternative units and conversion factors per article (spec 007); prices and price lists; tax classes
+  (spec 014); barcodes; article groups/categories; images/attachments; lots and serial numbers.
 - Reference by code in request bodies (ADR-0008, decision 1).
 
 ## 3. Data
@@ -46,6 +46,9 @@ Indexes and keys
 - Foreign key `(Article.TenantId, Article.BaseUnitId)` -> `(UnitOfMeasure.TenantId, UnitOfMeasure.Id)`,
   `ON DELETE RESTRICT` (or `NO ACTION`); no cascade. `UnitOfMeasure` gets the unique key on `(TenantId, Id)`
   that this requires.
+- `CreatedBy` and `UpdatedBy` are foreign keys `(TenantId, CreatedBy)` / `(TenantId, UpdatedBy)` ->
+  `ApiKey (TenantId, Id)`, `ON DELETE RESTRICT`, exactly as spec 001 built them for `UnitOfMeasure`
+  (`docs/questions/001-q.md`, Q2; architecture §8).
 - An index that makes "articles by base unit" efficient (the foreign-key columns).
 
 Migration: one **new** migration is added on top of spec 001's initial migration, which is not edited.
@@ -111,15 +114,17 @@ Code and name
 - R1. `code` follows 001/R1–R3 (trimmed; `^[\p{L}\p{N}._-]{1,50}$`; stored as entered; unique and looked up
   case-insensitively **within the tenant's articles**). Article codes and unit-of-measure codes are separate
   namespaces: an article may have the code `kg`.
-- R2. `name` follows 001/R4 (trimmed; 1–200 characters).
+- R2. `name` follows 001/R4 (trimmed; 1–200 characters; no control characters).
 
 Description
 - R3. Optional free text. Trimmed; an empty or whitespace-only value is stored and returned as `null`; maximum
-  2000 characters after trimming. Line breaks inside the text are preserved.
+  2000 characters after trimming. Line breaks inside the text are preserved: of the control characters
+  (001/R4) only line feed (U+000A), carriage return (U+000D) and tab (U+0009) are allowed; any other —
+  NUL in particular — gives `400` with `errors.description`.
 
 Type
 - R4. `type` is required and is exactly `"stock"` or `"service"` (lower-case; `"Stock"` is invalid).
-  `stock` = a physical item whose quantity will be tracked in the stock ledger (spec 008);
+  `stock` = a physical item whose quantity will be tracked in the stock ledger (spec 005);
   `service` = never stocked. In this spec the value is stored and filterable and has no other effect.
 
 Base unit
@@ -139,7 +144,7 @@ Create and replace
   silent clearing (same reasoning as 001/R5).
 - R12. Replace may change every field, including `code` (001/R6 applies: own code, or a change of letter case
   only, never conflicts), `type` and `baseUnitId`. Audit fields behave as 001/R7.
-  *Forward notice:* once stock ledger entries exist for an article (spec 008), `type` and `baseUnitId` will
+  *Forward notice:* once an article is used by a stock document (spec 005), `type` and `baseUnitId` will
   become unchangeable for that article. Clients must not rely on changing them after first use.
 - R13. Order of checks (ADR-0008, decision 7): request validation -> existence of the addressed article (`404`)
   -> base unit (`REFERENCE_NOT_FOUND`, then `REFERENCE_INACTIVE`) -> code uniqueness (`CODE_TAKEN`).
@@ -148,7 +153,7 @@ Create and replace
   `createdAt`, `createdBy`.
 
 Delete
-- R15. `DELETE /articles/{id}` removes the row. Nothing references an article yet; spec 008 introduces `IN_USE`
+- R15. `DELETE /articles/{id}` removes the row. Nothing references an article yet; spec 005 introduces `IN_USE`
   for articles.
 - R16. `DELETE /units-of-measure/{id}` fails with `409 IN_USE` while at least one article of the tenant —
   active or inactive — has it as base unit; the unit is left unchanged. Once no article references it, delete
@@ -156,6 +161,8 @@ Delete
 - R17. Deactivating a unit (`isActive: false`) and changing its code or name are always allowed, referenced or not.
 
 List
+- R17a. Query strings and bodies follow 001/R14–R16: unknown query parameters are rejected under their own
+  name, on every article route; no input may cause `500`.
 - R18. As 001/R9 for `search` (trimmed, max 100, case-insensitive substring of `code` or `name`, wildcards
   literal; `description` is not searched), `isActive`, `limit`, `offset`, `total` and ordering (by code,
   case-insensitive, ascending).
@@ -172,7 +179,9 @@ List
   `errors.baseUnitId`. A JSON number or object in its place -> `400` with non-empty `errors` (key not specified,
   001/E4).
 - E4. `description` of 2001 characters -> `400` with `errors.description`; exactly 2000 -> accepted;
-  `""` or `"   "` -> accepted, stored as `null`.
+  `""` or `"   "` -> accepted, stored as `null`. `description` containing `\u0000` or `\u0007` -> `400` with
+  `errors.description`; containing `\n`, `\r\n` or `\t` -> accepted. `name` containing `\u0000` or `\n` -> `400`
+  with `errors.name`.
 - E5. `baseUnitId` = a random UUID, or the id of a unit that was deleted -> `409 REFERENCE_NOT_FOUND`.
 - E6. A request with an invalid `name` **and** an unknown `baseUnitId` -> `400` (validation first).
   A request with an unknown `baseUnitId` **and** a code already taken -> `409 REFERENCE_NOT_FOUND`.
@@ -234,9 +243,11 @@ Structure
   its delete behaviour is not cascade and not set-null. The test enumerates the model (it must fail for a future
   entity that violates this) and asserts that it found at least the `Article` -> `UnitOfMeasure` key.
 - AC-05 (integration, below HTTP) Inserting, with raw SQL, an article row with tenant B's `TenantId` and the id
-  of a unit of tenant A as base unit fails with a foreign-key violation and stores no row.
-- AC-06 (integration, below HTTP) Deleting, with raw SQL, a unit row that an article references fails with a
-  foreign-key violation; both rows still exist.
+  of a unit of tenant A as base unit fails with an integrity-constraint violation raised by the foreign key
+  (SQLSTATE `23503` or `23001`) and stores no row.
+- AC-06 (integration, below HTTP) Deleting, with raw SQL, a unit row that an article references fails with an
+  integrity-constraint violation raised by the foreign key (`23001` for `RESTRICT`, or `23503`); both rows
+  still exist.
 
 Authentication
 - AC-10 `GET /api/v1/articles`, `GET /api/v1/articles/{uuid}`, `POST /api/v1/articles` with no `Authorization`
@@ -274,6 +285,9 @@ Create and read
 - AC-30 `POST` with an extra property (`"id"`, `"tenantId"`, `"baseUnit"`, `"baseUnitCode"` or `"foo"`), with
   malformed JSON, or with an empty body -> `400` `VALIDATION_FAILED`, non-empty `errors`; the tenant's article
   list is still empty.
+- AC-34 `POST` with `description` = `"a\u0000b"` or `"a\u0007b"` -> `400` `VALIDATION_FAILED` with `errors`
+  key `description`; with `description` = `"a\r\n\tb"` -> `201`, returned unchanged. `POST` and `PUT` with
+  `name` = `"a\u0000b"` or `"a\nb"` -> `400` with `errors` key `name`. No response is `500`.
 - AC-31 `POST` of code `ART-1` twice, and of `art-1` after `ART-1` -> second response `409`, problem with code
   `CODE_TAKEN`.
 - AC-32 Ten parallel `POST`s of the same new article code in one tenant -> exactly one `201`, nine
@@ -332,7 +346,8 @@ List
 - AC-72 With 3 articles: `limit=2` -> 2 items, `total == 3`; `limit=2&offset=2` -> the third by code;
   `offset=10` -> 0 items, `total == 3`.
 - AC-73 `limit=0`, `limit=501`, `limit=abc` -> `400` with `errors` key `limit`; `offset=-1` -> `400` with
-  `errors` key `offset`.
+  `errors` key `offset`. `GET /articles?foo=1`, `?baseunitid=<uuid>` and `GET /articles/{id}?x=1` -> `400` with
+  `errors` key `foo`, `baseunitid`, `x` (001/R15). `search=a%00b` -> `400` with `errors` key `search`.
 - AC-74 `isActive=true` / `isActive=false` / absent return active / inactive / all; `total` reflects the filter;
   `isActive=maybe` -> `400` with `errors` key `isActive`.
 - AC-75 With two `stock` articles and one `service` article: `type=stock` returns the two, `type=service` the
@@ -389,7 +404,7 @@ Errors
   `IN_USE` on the ordinary path), but AC-85 only passes if the foreign-key violation raised by the database is
   translated in Infrastructure — Application must not reference Npgsql. Reuse the mechanism spec 001 built for
   `CODE_TAKEN`, extended to tell a violated reference on write from a blocked delete.
-- Build the reference check and the `{ id, code, name }` summary so that specs 004 and 008 can reuse them for
+- Build the reference check and the `{ id, code, name }` summary so that specs 004 and 005 can reuse them for
   partners, warehouses and document lines; do not build a generic framework beyond what two call sites need.
 - `PUT` must distinguish an omitted `description` from `"description": null` (R11, AC-51 vs AC-52).
 - List queries must not issue one query per article for `baseUnit` (join or include).
