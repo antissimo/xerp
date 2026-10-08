@@ -28,13 +28,13 @@ public sealed class ValidationErrors
     }
 
     /// <summary>Checks a <c>name</c> field (R4); returns the normalised value, or records an error.</summary>
-    public string Name(string? input, string field = "name")
+    public string Name(string? input, string field = "name", int maxLength = NameRules.MaxLength)
     {
-        if (NameRules.TryNormalize(input, out var name))
+        if (NameRules.TryNormalize(input, maxLength, out var name))
             return name;
         Add(field, string.IsNullOrWhiteSpace(input)
             ? "Name is required."
-            : $"Name must be at most {NameRules.MaxLength} characters and contain no control characters.");
+            : $"Name must be at most {maxLength} characters and contain no control characters.");
         return "";
     }
 

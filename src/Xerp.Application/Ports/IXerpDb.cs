@@ -12,7 +12,6 @@ namespace Xerp.Application.Ports;
 /// </summary>
 public interface IXerpDb
 {
-    DbSet<Tenant> Tenants { get; }
     DbSet<ApiKey> ApiKeys { get; }
     DbSet<UnitOfMeasure> UnitsOfMeasure { get; }
     DbSet<Article> Articles { get; }
@@ -20,6 +19,13 @@ public interface IXerpDb
     /// <exception cref="UniqueConstraintViolationException">A unique index rejected the change.</exception>
     /// <exception cref="ForeignKeyViolationException">A foreign key rejected the change.</exception>
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Runs <paramref name="work"/> in one transaction that holds a lock on the current tenant, so that
+    /// two such pieces of work of one tenant never overlap. Reads inside <paramref name="work"/> see
+    /// everything committed before the lock was obtained.
+    /// </summary>
+    Task<T> SerializedPerTenantAsync<T>(Func<CancellationToken, Task<T>> work, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

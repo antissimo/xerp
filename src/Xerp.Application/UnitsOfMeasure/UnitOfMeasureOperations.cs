@@ -153,7 +153,29 @@ public sealed class UnitOfMeasureOperations(IXerpDb db, ITenantContext context, 
     private static AppError InUse(string detail) =>
         AppError.InUse(detail + " Deactivate it instead (isActive = false), or remove the references first.");
 
-    private static AppError NotFound() => AppError.NotFound("Unit of measure not found.");
+    /// <summary>By <c>id</c> or by <c>code</c>, exactly one (spec 003, R13) - for clients without a URL path.</summary>
+    public Task<Result<UnitOfMeasureDto>> FindAsync(RecordAddressInput address, CancellationToken cancellationToken = default)
+    {
+        if (RecordAddress.IdOrCode(address, NotFoundDetail, out var id, out var code) is { } error)
+            return Task.FromResult<Result<UnitOfMeasureDto>>(error);
+        return id is { } byId ? GetAsync(byId, cancellationToken) : GetByCodeAsync(code, cancellationToken);
+    }
+
+    /// <summary>As the overload with a <see cref="Guid"/>; an id that is not a UUID names no record (spec 003, R15).</summary>
+    public Task<Result<UnitOfMeasureDto>> ReplaceAsync(string? id, ReplaceUnitOfMeasureInput input, CancellationToken cancellationToken = default) =>
+        RecordAddress.Id(id, NotFoundDetail, out var parsed) is { } error
+            ? Task.FromResult<Result<UnitOfMeasureDto>>(error)
+            : ReplaceAsync(parsed, input, cancellationToken);
+
+    /// <summary>As the overload with a <see cref="Guid"/>; an id that is not a UUID names no record (spec 003, R15).</summary>
+    public Task<Result<UnitOfMeasureDeleted>> DeleteAsync(string? id, CancellationToken cancellationToken = default) =>
+        RecordAddress.Id(id, NotFoundDetail, out var parsed) is { } error
+            ? Task.FromResult<Result<UnitOfMeasureDeleted>>(error)
+            : DeleteAsync(parsed, cancellationToken);
+
+    private const string NotFoundDetail = "Unit of measure not found.";
+
+    private static AppError NotFound() => AppError.NotFound(NotFoundDetail);
 
     private static AppError CodeTaken(string code) => AppError.CodeTaken($"A unit of measure with code '{code}' already exists.");
 
