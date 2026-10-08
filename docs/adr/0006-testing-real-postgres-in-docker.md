@@ -1,6 +1,9 @@
 # ADR-0006: Integration tests against real PostgreSQL via Testcontainers; SDK runs in Docker
 
-Status: accepted (2026-10-08) — the exact docker invocation is unverified until spec 001 is built
+Status: accepted (2026-10-08) — the exact docker invocation is unverified until spec 001 is built.
+Amended 2026-10-09: from spec 003 on the acceptance tests are written by a separate tester agent before the
+builder implements (`tester.md`); acceptance criteria are therefore black-box, and criteria that need access
+below the public surface are marked *(builder)* (architecture §9).
 
 ## Context
 The host has no .NET SDK; only Docker with `mcr.microsoft.com/dotnet/sdk:10.0` and `postgres:18`.

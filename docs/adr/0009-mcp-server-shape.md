@@ -1,6 +1,8 @@
 # ADR-0009: MCP server shape — official SDK, stateless Streamable HTTP, tools only, API-key bearer, JSON results
 
-Status: accepted (2026-10-08) — refines ADR-0005; first applied by spec 003
+Status: accepted (2026-10-08) — refines ADR-0005; first applied by spec 003.
+Confirmed by the owner on 2026-10-09: MCP clients authenticate with a static API key only (no OAuth for now),
+and rate limiting is not built yet (it stays on the roadmap and must precede production tenants).
 
 ## Context
 ADR-0005 fixed where the MCP server lives (inside `Xerp.Api`, calling Application in-process) and how tools are

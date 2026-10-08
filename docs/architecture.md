@@ -78,6 +78,8 @@ Rules:
   is permanent; keys are never deleted (they are the actors that audit fields point at); a key cannot revoke
   itself, so a tenant always keeps one active key. A plaintext key is returned once, over HTTP only — never
   through an MCP tool.
+- Owner decisions (2026-10-09): until the permissions spec any tenant key may manage keys; MCP clients use a
+  static API key (no OAuth yet); there is no rate limiting yet.
 - Roles/permissions per key are a later roadmap item. Human login for the
   external web client (e.g. OIDC mapped to the same actor model) is not planned here until that project asks for it.
 - Agents may post documents by default (owner answered "yes"; interpreted as "agents may post by default"),
@@ -100,6 +102,11 @@ Rules:
 - Master data has a server id (`id`, used for references) and a human/agent-friendly `code`, unique per tenant,
   case-insensitive. Lookup by code is `GET /<resource>/by-code/{code}`.
 - Create: `POST` -> `201` + `Location` + body. Replace: `PUT` (all fields) -> `200` + body. Delete: `204`.
+- Optional text (ADR-0011): omitted on create, `null`, empty and whitespace-only all mean "no value", stored
+  and returned as `null`; the property is always present in a representation and must be present (possibly
+  `null`) on `PUT`. An address is six optional flat fields — `addressLine1`, `addressLine2`, `postalCode`,
+  `city`, `region`, `countryCode` (two upper-case letters, form only) — with the same rules on every record
+  that has one.
 - References between records (ADR-0008): a request names another record by server id in a field `<role>Id`
   (`baseUnitId`); a representation returns it as an embedded summary `"<role>": { "id", "code", "name" }`.
   An inactive record cannot be newly referenced but existing references stay valid. A referenced record cannot
@@ -183,14 +190,26 @@ MCP maps the same error to a tool error with the same `code` (shape in section 7
 
 ## 9. Testing (ADR-0006)
 
-- xUnit. Test-first: the builder writes tests from a spec's acceptance criteria before the code.
+- xUnit. Test-first. From spec 003 on the acceptance tests are written by the **tester** (`tester.md`), on
+  branch `tests/NNN-name`, before the builder implements; the builder merges that branch and may not change
+  those tests. (Specs 001 and 002: the builder wrote them.)
+- Consequence for specs: an acceptance criterion is **black-box** — stated as requests and observable responses
+  on the public surface (HTTP `/api/v1`, MCP `/mcp`), with nothing that requires an internal type, the EF model
+  or a look into the database. A black-box test may configure the test host (settings such as
+  `Xerp:AdminKey`) and uses only operations that exist: tenants from `POST /api/v1/admin/tenants`, further
+  keys from `POST /api/v1/api-keys`.
+- What cannot be observed from outside (layering, the EF model, database constraints as a second barrier,
+  hashing at rest) is a criterion marked *(builder)*: the builder writes that test. *(manual)* criteria are
+  checked in review. A spec keeps *(builder)* criteria few; a business rule that needs one is in the wrong
+  place or is stated wrongly.
 - Unit tests: Domain/Application rules and the architecture dependency test. No I/O.
 - Integration tests: start the real API in-process (`WebApplicationFactory`) against a PostgreSQL started by
   Testcontainers (`postgres:18`), apply the real migrations, drive it over HTTP. Never the dev database, never
   an in-memory or SQLite provider (query filters, unique indexes and collation behaviour must be the real ones).
 - Tests must be independent: each creates its own tenants (unique codes), so tests can share one database
   container and run in parallel.
-- Each acceptance criterion maps to at least one named test. Each feature has a tenant-isolation test.
+- Each acceptance criterion maps to at least one named test. Each feature has a tenant-isolation test, over
+  HTTP and over MCP.
 
 ## 10. Build environment constraint
 

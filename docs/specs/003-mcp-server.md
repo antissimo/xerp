@@ -4,6 +4,10 @@ Status: ready for implementation once specs 001 and 002 are merged to `main`. Br
 Read first: `docs/architecture.md` (sections 4, 6, 7), specs 001 and 002, ADR-0003, ADR-0005, **ADR-0009**,
 **ADR-0010**. Why this is the third spec: `docs/roadmap.md` backlog item 3.
 
+Owner decisions (confirmed 2026-10-09, as written in this spec): no `api_key_create` MCP tool; any tenant key
+may manage keys until the permissions spec; MCP clients authenticate with a static API key only; no rate
+limiting yet.
+
 Everything specs 001 and 002 established applies unchanged unless this spec says otherwise. Rule, edge-case and
 criterion numbers are local to this spec; "001/R9" means rule R9 of spec 001.
 
@@ -239,13 +243,20 @@ MCP
   header or a plaintext key.
 - S6. Tool errors never contain stack traces, SQL, constraint names or other tenants' data (001/S6, 002/S2).
 - S7. Until permissions exist (roadmap item 6) every tenant key, of either actor type, may create keys over HTTP
-  and revoke other keys. This is the trust level of ADR-0003 and is stated in the builder's summary as a known
-  limitation, not hidden.
-- S8. Known gap, not to be solved here: no rate limiting on `/mcp` or `/api/v1` (ADR-0009, consequences).
+  and revoke other keys (owner decision, 2026-10-09). This is the trust level of ADR-0003 and is stated in the
+  builder's summary as a known limitation, not hidden.
+- S8. Known gap, accepted by the owner (2026-10-09), not to be solved here: no rate limiting on `/mcp` or
+  `/api/v1` (ADR-0009, consequences).
 
 ## 10. Acceptance criteria
 
 Conventions as in spec 001 §10. Additionally:
+- **Who tests what** (architecture §9). Criteria without a mark are black-box: they are verified only through
+  the public surface (HTTP and MCP) and belong to the tester (`tests/003-mcp-server`). Criteria marked
+  *(builder)* need access below the public surface (internal types, the EF model, the database) and are tested
+  by the builder. Criteria marked *(manual)* are checked in review. A black-box test needs nothing but HTTP
+  and MCP requests: further keys come from `POST /api/v1/api-keys`, and a host setting such as
+  `Xerp:Mcp:AllowedOrigins` is test-host configuration, not internal access.
 - "MCP client" = the official C# SDK's client connected to `/mcp` of the in-process test server with a given
   API key. "Tool error X" = a tool result with `isError == true`, exactly one `text` content block whose text
   parses as a JSON object with `code == "X"` and a non-empty `detail`, and no `structuredContent`.
@@ -260,12 +271,12 @@ Structure
   all tests of specs 001 and 002 pass and none was weakened, deleted or skipped. The builder's summary states
   the commands, the test counts, the SDK package version used and the MCP protocol revision negotiated.
 - AC-02 *(manual, by inspection)* Exactly one migration was added; earlier migration files are unchanged.
-- AC-03 (unit) No type in the namespace that holds the MCP tools (`Xerp.Api.Mcp` and below) has a constructor
+- AC-03 *(builder, unit)* No type in the namespace that holds the MCP tools (`Xerp.Api.Mcp` and below) has a constructor
   parameter, method parameter, field or property whose type is the DbContext, `IXerpDb` or any EF Core type.
-- AC-04 (unit) The mapping from an `AppError` to a tool result yields a tool error with the same `code`,
+- AC-04 *(builder, unit)* The mapping from an `AppError` to a tool result yields a tool error with the same `code`,
   `detail` and `errors`; the mapping from an arbitrary exception yields `INTERNAL_ERROR` whose text does not
   contain the exception's message or type name.
-- AC-05 (unit) The "exactly one of `id`, `code`" rule (R13) is tested on the Application operation, without MCP
+- AC-05 *(builder, unit)* The "exactly one of `id`, `code`" rule (R13) is tested on the Application operation, without MCP
   or HTTP: neither -> `VALIDATION_FAILED` with `errors` keys `id` and `code`; both -> the same.
 
 API keys — HTTP
@@ -275,7 +286,7 @@ API keys — HTTP
   `Location` ends with `/api/v1/api-keys/{id}`; `Cache-Control` contains `no-store`; no `tenantId`, no `keyHash`.
 - AC-11 `GET /whoami` with the new key -> `200`, same tenant as the creating key, `actor.apiKeyId ==` the new
   id, `actor.name == "claude-warehouse"`, `actor.actorType == "agent"`.
-- AC-12 After AC-10, the new `ApiKey` row's `KeyHash` equals the lower-case hex SHA-256 of the returned key and
+- AC-12 *(builder, database)* After AC-10, the new `ApiKey` row's `KeyHash` equals the lower-case hex SHA-256 of the returned key and
   no column contains the plaintext (as 001/AC-22).
 - AC-13 `POST /api-keys` with `"  bot  "` as name -> `201` with `name == "bot"`. Two keys with the same name ->
   both `201`, different ids, different `key` values.
