@@ -25,7 +25,8 @@ public static class Problems
         ErrorCodes.Unauthenticated => StatusCodes.Status401Unauthorized,
         ErrorCodes.Forbidden => StatusCodes.Status403Forbidden,
         ErrorCodes.NotFound => StatusCodes.Status404NotFound,
-        ErrorCodes.CodeTaken or ErrorCodes.InUse or ErrorCodes.InvalidState => StatusCodes.Status409Conflict,
+        ErrorCodes.CodeTaken or ErrorCodes.InUse or ErrorCodes.InvalidState
+            or ErrorCodes.ReferenceNotFound or ErrorCodes.ReferenceInactive => StatusCodes.Status409Conflict,
         _ => StatusCodes.Status500InternalServerError,
     };
 

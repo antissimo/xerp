@@ -188,7 +188,9 @@ public class ArticleTenantIsolationTests(XerpFixture app)
         db.Add(article);
 
         // The Application check is bypassed on purpose; the database is the authority (ADR-0008, decision 6).
-        await Assert.ThrowsAsync<ForeignKeyViolationException>(() => db.SaveChangesAsync());
+        var refused = await Assert.ThrowsAsync<ForeignKeyViolationException>(() => db.SaveChangesAsync());
+        Assert.False(refused.BlockedDelete);
+        Assert.Equal(DbNames.ArticleBaseUnitForeignKey, refused.ConstraintName);
         var rows = await app.ScalarAsync<long>("""SELECT count(*) FROM "Articles" WHERE "Id" = @id""", ("id", article.Id));
         Assert.Equal(0, rows);
         Assert.Equal(0, (await Art.ListAsync(b.Client)).Total());

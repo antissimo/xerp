@@ -14,6 +14,9 @@ public static class DbNames
 
     public const string TenantCodeIndex = "IX_Tenants_CodeLower";
     public const string UnitOfMeasureCodeIndex = "IX_UnitsOfMeasure_TenantId_CodeLower";
+    public const string ArticleCodeIndex = "IX_Articles_TenantId_CodeLower";
+
+    public const string ArticleBaseUnitForeignKey = "FK_Articles_UnitsOfMeasure_TenantId_BaseUnitId";
 }
 
 /// <summary>Functions that are evaluated by the database, never in memory.</summary>

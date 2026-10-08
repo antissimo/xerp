@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Xerp.Domain.Catalog;
 using Xerp.Domain.Inventory;
 using Xerp.Domain.Tenancy;
 
@@ -14,8 +15,10 @@ public interface IXerpDb
     DbSet<Tenant> Tenants { get; }
     DbSet<ApiKey> ApiKeys { get; }
     DbSet<UnitOfMeasure> UnitsOfMeasure { get; }
+    DbSet<Article> Articles { get; }
 
     /// <exception cref="UniqueConstraintViolationException">A unique index rejected the change.</exception>
+    /// <exception cref="ForeignKeyViolationException">A foreign key rejected the change.</exception>
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }
 

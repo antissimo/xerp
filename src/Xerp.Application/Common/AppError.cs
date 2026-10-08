@@ -33,6 +33,18 @@ public sealed record AppError(string Code, string Detail, IReadOnlyDictionary<st
 
     public static AppError CodeTaken(string detail) => new(ErrorCodes.CodeTaken, detail);
 
+    public static AppError InUse(string detail) => new(ErrorCodes.InUse, detail);
+
+    /// <summary>ADR-0008: a well-formed id in request field <paramref name="field"/> names no record of this tenant.</summary>
+    public static AppError ReferenceNotFound(string field, Guid id) =>
+        new(ErrorCodes.ReferenceNotFound, $"The record referenced by {field} does not exist.",
+            new Dictionary<string, string[]> { [field] = [$"No record with id '{id}' exists."] });
+
+    /// <summary>ADR-0008: the record named by request field <paramref name="field"/> is inactive and would be newly assigned.</summary>
+    public static AppError ReferenceInactive(string field, Guid id) =>
+        new(ErrorCodes.ReferenceInactive, $"The record referenced by {field} is inactive and cannot be newly assigned.",
+            new Dictionary<string, string[]> { [field] = [$"The record with id '{id}' is inactive."] });
+
     public static AppError Validation(IReadOnlyDictionary<string, string[]> errors) =>
         new(ErrorCodes.ValidationFailed, "One or more fields are invalid.", errors);
 

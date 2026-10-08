@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.Extensions.DependencyInjection;
+using Xerp.Application.Ports;
 using Xerp.Domain.Catalog;
 using Xerp.Domain.Common;
 using Xerp.Domain.Inventory;
@@ -82,10 +83,33 @@ public class ArticleStructureTests(XerpFixture app)
         var blocked = await Assert.ThrowsAsync<Npgsql.PostgresException>(() =>
             app.ExecuteSqlAsync("""DELETE FROM "UnitsOfMeasure" WHERE "Id" = @id""", ("id", unit)));
 
-        Assert.Equal(Npgsql.PostgresErrorCodes.ForeignKeyViolation, blocked.SqlState);
+        // PostgreSQL reports a foreign key declared ON DELETE RESTRICT with 23001 and one declared NO ACTION with 23503.
+        Assert.Contains(blocked.SqlState, new[] { Npgsql.PostgresErrorCodes.RestrictViolation, Npgsql.PostgresErrorCodes.ForeignKeyViolation });
+        Assert.Equal("FK_Articles_UnitsOfMeasure_TenantId_BaseUnitId", blocked.ConstraintName);
         Assert.Equal(1, await app.ScalarAsync<long>("""SELECT count(*) FROM "UnitsOfMeasure" WHERE "Id" = @id""", ("id", unit)));
         Assert.Equal(1, await app.ScalarAsync<long>("""SELECT count(*) FROM "Articles" WHERE "Id" = @id""", ("id", article.Id())));
     }
+
+    [Fact]
+    public async Task AC85_DbContext_translates_a_delete_blocked_by_the_foreign_key()
+    {
+        // The deterministic half of the AC-85 race: the Application pre-check is bypassed, so only the
+        // database can refuse, and Infrastructure must report it as a blocked delete (ADR-0008, decision 6).
+        var tenant = await app.NewTenantAsync();
+        var unit = await Art.UnitAsync(tenant.Client);
+        await Art.CreateAsync(tenant.Client, "A1", "Bolt", unit);
+
+        await using var db = new XerpDbContext(
+            new DbContextOptionsBuilder<XerpDbContext>().UseNpgsql(app.ConnectionString).Options,
+            new FixedTenant(tenant.Id, tenant.ApiKeyId));
+        db.UnitsOfMeasure.Remove(await db.UnitsOfMeasure.SingleAsync(u => u.Id == unit));
+
+        var blocked = await Assert.ThrowsAsync<ForeignKeyViolationException>(() => db.SaveChangesAsync());
+        Assert.True(blocked.BlockedDelete);
+        Assert.Equal(HttpStatusCode.OK, (await tenant.Client.GetAsync($"{Uom.Path}/{unit}")).StatusCode);
+    }
+
+    private sealed record FixedTenant(Guid? TenantId, Guid? ApiKeyId) : ITenantContext;
 
     [Fact]
     public async Task T5_Database_rejects_duplicate_article_codes_on_its_own()

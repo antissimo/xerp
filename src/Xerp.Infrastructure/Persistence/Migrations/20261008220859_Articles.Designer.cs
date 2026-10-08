@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Xerp.Infrastructure.Persistence;
@@ -11,9 +12,11 @@ using Xerp.Infrastructure.Persistence;
 namespace Xerp.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(XerpDbContext))]
-    partial class XerpDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261008220859_Articles")]
+    partial class Articles
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
