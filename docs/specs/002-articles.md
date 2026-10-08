@@ -30,10 +30,10 @@ In scope
 
 Out of scope
 - MCP server (the MCP signatures in section 5 are a contract for spec 003, **not** to be implemented now).
-- Stock, ledger entries, quantities on hand (spec 008). Until then nothing references an article, so an article
+- Stock, ledger entries, quantities on hand (spec 005). Until then nothing references an article, so an article
   can always be deleted.
-- Alternative units and conversion factors per article (spec 009); prices and price lists; tax classes
-  (spec 015); barcodes; article groups/categories; images/attachments; lots and serial numbers.
+- Alternative units and conversion factors per article (spec 007); prices and price lists; tax classes
+  (spec 014); barcodes; article groups/categories; images/attachments; lots and serial numbers.
 - Reference by code in request bodies (ADR-0008, decision 1).
 
 ## 3. Data
@@ -124,7 +124,7 @@ Description
 
 Type
 - R4. `type` is required and is exactly `"stock"` or `"service"` (lower-case; `"Stock"` is invalid).
-  `stock` = a physical item whose quantity will be tracked in the stock ledger (spec 008);
+  `stock` = a physical item whose quantity will be tracked in the stock ledger (spec 005);
   `service` = never stocked. In this spec the value is stored and filterable and has no other effect.
 
 Base unit
@@ -144,7 +144,7 @@ Create and replace
   silent clearing (same reasoning as 001/R5).
 - R12. Replace may change every field, including `code` (001/R6 applies: own code, or a change of letter case
   only, never conflicts), `type` and `baseUnitId`. Audit fields behave as 001/R7.
-  *Forward notice:* once stock ledger entries exist for an article (spec 008), `type` and `baseUnitId` will
+  *Forward notice:* once an article is used by a stock document (spec 005), `type` and `baseUnitId` will
   become unchangeable for that article. Clients must not rely on changing them after first use.
 - R13. Order of checks (ADR-0008, decision 7): request validation -> existence of the addressed article (`404`)
   -> base unit (`REFERENCE_NOT_FOUND`, then `REFERENCE_INACTIVE`) -> code uniqueness (`CODE_TAKEN`).
@@ -153,7 +153,7 @@ Create and replace
   `createdAt`, `createdBy`.
 
 Delete
-- R15. `DELETE /articles/{id}` removes the row. Nothing references an article yet; spec 008 introduces `IN_USE`
+- R15. `DELETE /articles/{id}` removes the row. Nothing references an article yet; spec 005 introduces `IN_USE`
   for articles.
 - R16. `DELETE /units-of-measure/{id}` fails with `409 IN_USE` while at least one article of the tenant —
   active or inactive — has it as base unit; the unit is left unchanged. Once no article references it, delete
@@ -243,9 +243,11 @@ Structure
   its delete behaviour is not cascade and not set-null. The test enumerates the model (it must fail for a future
   entity that violates this) and asserts that it found at least the `Article` -> `UnitOfMeasure` key.
 - AC-05 (integration, below HTTP) Inserting, with raw SQL, an article row with tenant B's `TenantId` and the id
-  of a unit of tenant A as base unit fails with a foreign-key violation and stores no row.
-- AC-06 (integration, below HTTP) Deleting, with raw SQL, a unit row that an article references fails with a
-  foreign-key violation; both rows still exist.
+  of a unit of tenant A as base unit fails with an integrity-constraint violation raised by the foreign key
+  (SQLSTATE `23503` or `23001`) and stores no row.
+- AC-06 (integration, below HTTP) Deleting, with raw SQL, a unit row that an article references fails with an
+  integrity-constraint violation raised by the foreign key (`23001` for `RESTRICT`, or `23503`); both rows
+  still exist.
 
 Authentication
 - AC-10 `GET /api/v1/articles`, `GET /api/v1/articles/{uuid}`, `POST /api/v1/articles` with no `Authorization`
@@ -402,7 +404,7 @@ Errors
   `IN_USE` on the ordinary path), but AC-85 only passes if the foreign-key violation raised by the database is
   translated in Infrastructure — Application must not reference Npgsql. Reuse the mechanism spec 001 built for
   `CODE_TAKEN`, extended to tell a violated reference on write from a blocked delete.
-- Build the reference check and the `{ id, code, name }` summary so that specs 004 and 008 can reuse them for
+- Build the reference check and the `{ id, code, name }` summary so that specs 004 and 005 can reuse them for
   partners, warehouses and document lines; do not build a generic framework beyond what two call sites need.
 - `PUT` must distinguish an omitted `description` from `"description": null` (R11, AC-51 vs AC-52).
 - List queries must not issue one query per article for `baseUnit` (join or include).
