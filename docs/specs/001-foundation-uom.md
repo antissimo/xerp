@@ -41,7 +41,7 @@ Removed by this spec (they return in specs 002 and 004)
 Out of scope
 - MCP server and CLI (the MCP signatures in section 5 are a contract for spec 003, **not** to be implemented now).
 - Permissions/roles, API key management endpoints (list/create/revoke), tenant update/deactivate endpoints.
-- UoM conversions, UoM categories, rounding precision (spec 009).
+- UoM conversions, UoM categories, rounding precision (spec 007).
 - Audit log, optimistic concurrency, rate limiting, row-level security.
 
 ## 3. Data
@@ -215,7 +215,7 @@ Tenant provisioning and keys
 ## 9. Security requirements
 
 - S1. All `/api/v1` routes require authentication; `/health` does not. No other unauthenticated route exposes
-  tenant data. (No OpenAPI document is served by spec 001; it is delivered by spec 003a — see
+  tenant data. (No OpenAPI document is served by spec 001; it is delivered by spec 018 (formerly 003a) — see
   `docs/roadmap.md`.)
 - S2. `Authorization` must be `Bearer <key>`. Missing header, another scheme, unknown key, key with
   `IsActive = false`, or key of a tenant with `IsActive = false` -> `401 UNAUTHENTICATED` with header

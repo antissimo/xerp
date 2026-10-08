@@ -35,9 +35,9 @@ In scope
 Out of scope
 - `api_key_create` as a tool (ADR-0010, point 5) and any tool for tenant provisioning.
 - MCP resources, prompts, sampling, elicitation, tasks, notifications, sessions, resumability.
-- OAuth-based MCP authorization (ADR-0009); permissions per key, key expiry, rotation, rename (roadmap item 6).
+- OAuth-based MCP authorization (ADR-0009); permissions per key, key expiry, rotation, rename (roadmap item 17).
 - Rate limiting (roadmap, later). A stdio transport or a separate bridge process.
-- The OpenAPI document (spec 003a).
+- The OpenAPI document (spec 018, formerly 003a).
 - Any change to the behaviour of the HTTP operations of specs 001 and 002.
 
 ## 3. Data
@@ -134,7 +134,8 @@ Tool metadata (returned by `tools/list`)
   enums for `type` (`stock`, `service`) and `actorType` (`human`, `agent`), `additionalProperties: false`.
   `description` of `article_update` is `string | null`.
 - `outputSchema`: describes the success object.
-- `annotations`:
+- `annotations` — every value in the table is sent explicitly, also where it equals the MCP default
+  (`docs/questions/003-q.md`, T-Q2):
 
 | Tools | `readOnlyHint` | `destructiveHint` | `idempotentHint` | `openWorldHint` |
 |---|---|---|---|---|
@@ -177,9 +178,9 @@ MCP
 - R13. `*_get` with `id` or `code`: exactly one of the two must be present and non-null; both or neither ->
   `VALIDATION_FAILED` with `errors` keys `id` and `code`. This rule lives in the Application layer.
 - R14. Arguments use JSON types, not strings: `limit`/`offset` numbers, `isActive` boolean. A wrong JSON type,
-  a missing required argument, an unknown argument or `arguments` that is not an object -> tool error
-  `VALIDATION_FAILED` with non-empty `errors` (for a missing or rule-violating argument: the key is the
-  argument's name, as over HTTP). It is never a JSON-RPC error and never `INTERNAL_ERROR`.
+  a missing required argument or an unknown argument -> tool error `VALIDATION_FAILED` whose `errors` key is
+  the argument's name, as over HTTP (001/E4). It is never a JSON-RPC error and never `INTERNAL_ERROR`.
+  (`arguments` that is not an object is not specified beyond "never HTTP `500`"; T-Q3.)
 - R15. An `id` argument that addresses the record (`uom_get`, `*_update`, `*_delete`, `api_key_get`,
   `api_key_revoke`) and is a string but not a UUID -> `NOT_FOUND`, as a malformed `{id}` path segment over HTTP
   (001/E6). A reference argument (`baseUnitId`) that is not a UUID -> `VALIDATION_FAILED` (002/E3).
@@ -242,7 +243,7 @@ MCP
 - S5. Logs may record tool name, key id, tenant id and resulting `code`; they never record the `Authorization`
   header or a plaintext key.
 - S6. Tool errors never contain stack traces, SQL, constraint names or other tenants' data (001/S6, 002/S2).
-- S7. Until permissions exist (roadmap item 6) every tenant key, of either actor type, may create keys over HTTP
+- S7. Until permissions exist (roadmap item 17) every tenant key, of either actor type, may create keys over HTTP
   and revoke other keys (owner decision, 2026-10-09). This is the trust level of ADR-0003 and is stated in the
   builder's summary as a known limitation, not hidden.
 - S8. Known gap, accepted by the owner (2026-10-09), not to be solved here: no rate limiting on `/mcp` or
@@ -308,7 +309,7 @@ API keys — HTTP
 - AC-19 Key A revokes key B: `POST /api-keys/{B}/revoke` -> `200` with `isActive == false`, a `revokedAt`, and
   `revokedBy == A`. A following `GET /whoami` with B's key -> `401` problem with code `UNAUTHENTICATED`.
   `GET /api-keys/{B}` with A -> `200`, still `isActive == false`.
-- AC-20 Revoking B a second time -> `200`; `revokedAt` and `revokedBy` are identical to those of the first
+- AC-20 Revoking B a second time, with a third key C -> `200`; `revokedAt` and `revokedBy` are identical to those of the first
   response.
 - AC-21 `POST /api-keys/{own id}/revoke` -> `409`, problem with code `CANNOT_REVOKE_SELF`; the key still
   authenticates.
@@ -386,7 +387,8 @@ MCP — tool errors
 - AC-70 `uom_create` with `{ "name": "x" }` (no `code`) -> tool error `VALIDATION_FAILED` with `errors` key
   `code`; with `{ "code": "a b", "name": "" }` -> `errors` keys `code` and `name`. No unit is created.
 - AC-71 `uom_create` with an unknown argument (`"tenantId"` or `"foo"`), with `"name": 123`, and `uom_list` with
-  `{ "limit": "10" }` -> tool error `VALIDATION_FAILED` with non-empty `errors` — not a JSON-RPC error.
+  `{ "limit": "10" }` -> tool error `VALIDATION_FAILED` with `errors` key `tenantId` / `foo`, `name`, `limit`
+  respectively — not a JSON-RPC error.
   `whoami` with `{ "x": 1 }` -> tool error `VALIDATION_FAILED`.
 - AC-72 `uom_list` with `{ "limit": 0 }` and `{ "limit": 501 }` -> tool error `VALIDATION_FAILED` with `errors`
   key `limit`; `{ "offset": -1 }` -> `errors` key `offset`.
