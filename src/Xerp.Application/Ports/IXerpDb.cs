@@ -1,0 +1,31 @@
+using Microsoft.EntityFrameworkCore;
+using Xerp.Domain.Inventory;
+using Xerp.Domain.Tenancy;
+
+namespace Xerp.Application.Ports;
+
+/// <summary>
+/// The database as Application sees it (ADR-0001). Every tenant-owned set is already filtered to the
+/// current tenant by the implementation; Application code never filters by tenant itself and never
+/// calls IgnoreQueryFilters().
+/// </summary>
+public interface IXerpDb
+{
+    DbSet<Tenant> Tenants { get; }
+    DbSet<ApiKey> ApiKeys { get; }
+    DbSet<UnitOfMeasure> UnitsOfMeasure { get; }
+
+    /// <exception cref="UniqueConstraintViolationException">A unique index rejected the change.</exception>
+    Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Thrown by <see cref="IXerpDb.SaveChangesAsync"/> when the database rejects a change because of a
+/// unique index. Infrastructure translates the provider's error into this type because Application
+/// cannot see Npgsql.
+/// </summary>
+public sealed class UniqueConstraintViolationException(string? constraintName, Exception inner)
+    : Exception($"Unique constraint '{constraintName}' was violated.", inner)
+{
+    public string? ConstraintName { get; } = constraintName;
+}

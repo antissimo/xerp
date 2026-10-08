@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Xerp.Domain/Xerp.Domain.csproj" />
+    <Project Path="src/Xerp.Application/Xerp.Application.csproj" />
+    <Project Path="src/Xerp.Infrastructure/Xerp.Infrastructure.csproj" />
+    <Project Path="src/Xerp.Api/Xerp.Api.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Xerp.UnitTests/Xerp.UnitTests.csproj" />
+    <Project Path="tests/Xerp.IntegrationTests/Xerp.IntegrationTests.csproj" />
+  </Folder>
+</Solution>
