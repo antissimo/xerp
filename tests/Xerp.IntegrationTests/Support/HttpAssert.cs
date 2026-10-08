@@ -72,7 +72,7 @@ public static class HttpAssert
     }
 
     /// <summary>S6: no stack traces, SQL or connection details in an error body.</summary>
-    private static void AssertLeaksNothing(string body)
+    internal static void AssertLeaksNothing(string body)
     {
         foreach (var marker in new[] { "   at ", "Exception", "Npgsql", "SELECT ", "INSERT ", "Host=", "Password", "duplicate key" })
             Assert.DoesNotContain(marker, body, StringComparison.OrdinalIgnoreCase);
