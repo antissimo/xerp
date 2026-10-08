@@ -50,12 +50,25 @@ public static class ArticleRules
 {
     public const int DescriptionMaxLength = 2000;
 
-    /// <summary>Trims the input; empty becomes null. False when the result is longer than the maximum.</summary>
+    /// <summary>
+    /// Trims the input; empty becomes null. False when the result is longer than the maximum or contains
+    /// a control character other than line feed, carriage return or tab (R3).
+    /// </summary>
     public static bool TryNormalizeDescription(string? input, out string? description)
     {
         var trimmed = input?.Trim();
         description = string.IsNullOrEmpty(trimmed) ? null : trimmed;
-        return description is null || description.Length <= DescriptionMaxLength;
+        return description is null || (description.Length <= DescriptionMaxLength && !HasForbiddenControlCharacters(description));
+    }
+
+    private static bool HasForbiddenControlCharacters(string text)
+    {
+        foreach (var c in text)
+        {
+            if (char.IsControl(c) && c is not ('\n' or '\r' or '\t'))
+                return true;
+        }
+        return false;
     }
 
     /// <summary>The normalised description, or an <see cref="ArgumentException"/> when it is too long.</summary>

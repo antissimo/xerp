@@ -19,7 +19,7 @@ public static class ArticleEndpoints
                 return Problems.From(input.Error);
             var result = await operations.ListAsync(input.Value, ct);
             return result.IsSuccess ? Results.Ok(result.Value) : Problems.From(result.Error);
-        });
+        }).AcceptsQuery("search", "type", "baseUnitId", "isActive", "limit", "offset");
 
         // A malformed id does not match the route and ends as NOT_FOUND like any unknown path (E11).
         articles.MapGet("/{id:guid}", async (Guid id, ArticleOperations operations, CancellationToken ct) =>

@@ -66,7 +66,7 @@ public static class ArticleValidation
     private static string? Description(ValidationErrors errors, string? input)
     {
         if (!ArticleRules.TryNormalizeDescription(input, out var description))
-            errors.Add("description", $"description must be at most {ArticleRules.DescriptionMaxLength} characters.");
+            errors.Add("description", $"description must be at most {ArticleRules.DescriptionMaxLength} characters and contain no control characters other than line breaks and tabs.");
         return description;
     }
 
