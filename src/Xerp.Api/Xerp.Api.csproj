@@ -3,5 +3,6 @@
     <ProjectReference Include="../Xerp.Application/Xerp.Application.csproj" />
     <ProjectReference Include="../Xerp.Infrastructure/Xerp.Infrastructure.csproj" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" />
   </ItemGroup>
 </Project>

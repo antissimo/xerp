@@ -22,9 +22,9 @@ public class ArticleTenantIsolationTests(XerpFixture app)
     {
         var a = await app.NewTenantAsync();
         var b = await app.NewTenantAsync();
-        var unitA = await Art.UnitAsync(a.Client, "pcs", "Piece A");
-        var unitB = await Art.UnitAsync(b.Client, "pcs", "Piece B");
-        var articleA = await Art.CreateAsync(a.Client, "X1", "Article of A", unitA);
+        var unitA = await ArticleApi.UnitAsync(a.Client, "pcs", "Piece A");
+        var unitB = await ArticleApi.UnitAsync(b.Client, "pcs", "Piece B");
+        var articleA = await ArticleApi.CreateAsync(a.Client, "X1", "Article of A", unitA);
         return (a, unitA, articleA, b, unitB);
     }
 
@@ -33,13 +33,13 @@ public class ArticleTenantIsolationTests(XerpFixture app)
     {
         var (a, unitA, _, b, _) = await TwoTenantsAsync();
 
-        Assert.Equal("""{"items":[],"total":0,"limit":50,"offset":0}""", (await Art.ListAsync(b.Client)).GetRawText());
-        Assert.Equal(0, (await Art.ListAsync(b.Client, "?search=X1")).Total());
-        Assert.Equal(0, (await Art.ListAsync(b.Client, "?search=Article")).Total());
-        Assert.Equal(0, (await Art.ListAsync(b.Client, "?type=stock")).Total());
-        Assert.Equal(0, (await Art.ListAsync(b.Client, $"?baseUnitId={unitA}")).Total());
-        Assert.Empty((await Art.ListAsync(b.Client, $"?baseUnitId={unitA}&limit=500")).Codes());
-        Assert.Equal(1, (await Art.ListAsync(a.Client, $"?baseUnitId={unitA}")).Total());
+        Assert.Equal("""{"items":[],"total":0,"limit":50,"offset":0}""", (await ArticleApi.ListAsync(b.Client)).GetRawText());
+        Assert.Equal(0, (await ArticleApi.ListAsync(b.Client, "?search=X1")).Total());
+        Assert.Equal(0, (await ArticleApi.ListAsync(b.Client, "?search=Article")).Total());
+        Assert.Equal(0, (await ArticleApi.ListAsync(b.Client, "?type=stock")).Total());
+        Assert.Equal(0, (await ArticleApi.ListAsync(b.Client, $"?baseUnitId={unitA}")).Total());
+        Assert.Empty((await ArticleApi.ListAsync(b.Client, $"?baseUnitId={unitA}&limit=500")).Codes());
+        Assert.Equal(1, (await ArticleApi.ListAsync(a.Client, $"?baseUnitId={unitA}")).Total());
     }
 
     [Fact]
@@ -47,8 +47,8 @@ public class ArticleTenantIsolationTests(XerpFixture app)
     {
         var (_, _, articleA, b, _) = await TwoTenantsAsync();
 
-        using var byId = await b.Client.GetAsync($"{Art.Path}/{articleA.Id()}");
-        using var byCode = await b.Client.GetAsync($"{Art.Path}/by-code/X1");
+        using var byId = await b.Client.GetAsync($"{ArticleApi.Path}/{articleA.Id()}");
+        using var byCode = await b.Client.GetAsync($"{ArticleApi.Path}/by-code/X1");
 
         await HttpAssert.NotFoundAsync(byId);
         await HttpAssert.NotFoundAsync(byCode);
@@ -59,10 +59,10 @@ public class ArticleTenantIsolationTests(XerpFixture app)
     {
         var (a, _, articleA, b, unitB) = await TwoTenantsAsync();
 
-        using var put = await Art.PutAsync(b.Client, articleA.Id(), Art.ReplaceBody("hacked", "Hacked", unitB, isActive: false));
+        using var put = await ArticleApi.PutAsync(b.Client, articleA.Id(), ArticleApi.ReplaceBody("hacked", "Hacked", unitB, isActive: false));
 
         await HttpAssert.NotFoundAsync(put);
-        Assert.Equal(articleA.ToString(), (await Art.GetAsync(a.Client, articleA.Id())).ToString());
+        Assert.Equal(articleA.ToString(), (await ArticleApi.GetAsync(a.Client, articleA.Id())).ToString());
     }
 
     [Fact]
@@ -70,10 +70,10 @@ public class ArticleTenantIsolationTests(XerpFixture app)
     {
         var (a, _, articleA, b, _) = await TwoTenantsAsync();
 
-        using var delete = await b.Client.DeleteAsync($"{Art.Path}/{articleA.Id()}");
+        using var delete = await b.Client.DeleteAsync($"{ArticleApi.Path}/{articleA.Id()}");
 
         await HttpAssert.NotFoundAsync(delete);
-        Assert.Equal(articleA.ToString(), (await Art.GetAsync(a.Client, articleA.Id())).ToString());
+        Assert.Equal(articleA.ToString(), (await ArticleApi.GetAsync(a.Client, articleA.Id())).ToString());
     }
 
     [Fact]
@@ -81,11 +81,11 @@ public class ArticleTenantIsolationTests(XerpFixture app)
     {
         var (a, unitA, articleA, b, unitB) = await TwoTenantsAsync();
 
-        var articleB = await Art.CreateAsync(b.Client, "X1", "Article of B", unitB);
+        var articleB = await ArticleApi.CreateAsync(b.Client, "X1", "Article of B", unitB);
 
         Assert.NotEqual(articleA.Id(), articleB.Id());
-        using var byCodeA = await a.Client.GetAsync($"{Art.Path}/by-code/X1");
-        using var byCodeB = await b.Client.GetAsync($"{Art.Path}/by-code/X1");
+        using var byCodeA = await a.Client.GetAsync($"{ArticleApi.Path}/by-code/X1");
+        using var byCodeB = await b.Client.GetAsync($"{ArticleApi.Path}/by-code/X1");
         var foundA = await HttpAssert.JsonAsync(byCodeA, HttpStatusCode.OK);
         var foundB = await HttpAssert.JsonAsync(byCodeB, HttpStatusCode.OK);
         Assert.Equal(articleA.ToString(), foundA.ToString());
@@ -101,12 +101,12 @@ public class ArticleTenantIsolationTests(XerpFixture app)
     {
         var (a, unitA, _, b, unitB) = await TwoTenantsAsync();
         var random = Guid.CreateVersion7();
-        var own = await Art.CreateAsync(b.Client, "B1", "Article of B", unitB);
+        var own = await ArticleApi.CreateAsync(b.Client, "B1", "Article of B", unitB);
 
-        using var postForeign = await Art.PostAsync(b.Client, "B2", "New", unitA);
-        using var postRandom = await Art.PostAsync(b.Client, "B2", "New", random);
-        using var putForeign = await Art.PutAsync(b.Client, own.Id(), Art.ReplaceBody("B1", "Changed", unitA));
-        using var putRandom = await Art.PutAsync(b.Client, own.Id(), Art.ReplaceBody("B1", "Changed", random));
+        using var postForeign = await ArticleApi.PostAsync(b.Client, "B2", "New", unitA);
+        using var postRandom = await ArticleApi.PostAsync(b.Client, "B2", "New", random);
+        using var putForeign = await ArticleApi.PutAsync(b.Client, own.Id(), ArticleApi.ReplaceBody("B1", "Changed", unitA));
+        using var putRandom = await ArticleApi.PutAsync(b.Client, own.Id(), ArticleApi.ReplaceBody("B1", "Changed", random));
 
         var bodies = new[]
         {
@@ -118,9 +118,9 @@ public class ArticleTenantIsolationTests(XerpFixture app)
         Assert.Equal(bodies[1], bodies[0]);
         Assert.Equal(bodies[3], bodies[2]);
         Assert.All(bodies, body => Assert.DoesNotContain("Piece A", body));
-        Assert.Equal(["B1"], (await Art.ListAsync(b.Client)).Codes());
-        Assert.Equal(own.ToString(), (await Art.GetAsync(b.Client, own.Id())).ToString());
-        Assert.Equal(1, (await Art.ListAsync(a.Client)).Total());
+        Assert.Equal(["B1"], (await ArticleApi.ListAsync(b.Client)).Codes());
+        Assert.Equal(own.ToString(), (await ArticleApi.GetAsync(b.Client, own.Id())).ToString());
+        Assert.Equal(1, (await ArticleApi.ListAsync(a.Client)).Total());
     }
 
     [Fact]
@@ -128,9 +128,9 @@ public class ArticleTenantIsolationTests(XerpFixture app)
     {
         var a = await app.NewTenantAsync();
         var b = await app.NewTenantAsync();
-        var kgA = await Art.UnitAsync(a.Client, "kg", "Kilogram");
-        var kgB = await Art.UnitAsync(b.Client, "kg", "Kilogram");
-        await Art.CreateAsync(a.Client, "A1", "Sold by weight", kgA);
+        var kgA = await ArticleApi.UnitAsync(a.Client, "kg", "Kilogram");
+        var kgB = await ArticleApi.UnitAsync(b.Client, "kg", "Kilogram");
+        await ArticleApi.CreateAsync(a.Client, "A1", "Sold by weight", kgA);
 
         using var deleteB = await b.Client.DeleteAsync($"{Uom.Path}/{kgB}");
         using var deleteAsB = await b.Client.DeleteAsync($"{Uom.Path}/{kgA}");
@@ -154,8 +154,8 @@ public class ArticleTenantIsolationTests(XerpFixture app)
         await Assert.ThrowsAnyAsync<Exception>(() => db.SaveChangesAsync());
         var rows = await app.ScalarAsync<long>("""SELECT count(*) FROM "Articles" WHERE "Id" = @id""", ("id", article.Id));
         Assert.Equal(0, rows);
-        Assert.Equal(1, (await Art.ListAsync(a.Client)).Total());
-        Assert.Equal(0, (await Art.ListAsync(b.Client)).Total());
+        Assert.Equal(1, (await ArticleApi.ListAsync(a.Client)).Total());
+        Assert.Equal(0, (await ArticleApi.ListAsync(b.Client)).Total());
     }
 
     [Fact]
@@ -193,7 +193,7 @@ public class ArticleTenantIsolationTests(XerpFixture app)
         Assert.Equal(DbNames.ArticleBaseUnitForeignKey, refused.ConstraintName);
         var rows = await app.ScalarAsync<long>("""SELECT count(*) FROM "Articles" WHERE "Id" = @id""", ("id", article.Id));
         Assert.Equal(0, rows);
-        Assert.Equal(0, (await Art.ListAsync(b.Client)).Total());
-        Assert.Equal(1, (await Art.ListAsync(a.Client)).Total());
+        Assert.Equal(0, (await ArticleApi.ListAsync(b.Client)).Total());
+        Assert.Equal(1, (await ArticleApi.ListAsync(a.Client)).Total());
     }
 }

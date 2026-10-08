@@ -15,7 +15,7 @@ public class UnitOfMeasureInUseTests(XerpFixture app)
     {
         var tenant = await app.NewTenantAsync();
         var unit = await Uom.CreateAsync(tenant.Client, "pcs", "Piece");
-        await Art.CreateAsync(tenant.Client, "A1", "Bolt", unit.Id(), isActive: articleIsActive);
+        await ArticleApi.CreateAsync(tenant.Client, "A1", "Bolt", unit.Id(), isActive: articleIsActive);
 
         using var delete = await tenant.Client.DeleteAsync($"{Uom.Path}/{unit.Id()}");
 
@@ -27,12 +27,12 @@ public class UnitOfMeasureInUseTests(XerpFixture app)
     public async Task AC82_Unit_can_be_deleted_once_its_only_article_is_deleted()
     {
         var tenant = await app.NewTenantAsync();
-        var unit = await Art.UnitAsync(tenant.Client);
-        var article = await Art.CreateAsync(tenant.Client, "A1", "Bolt", unit);
+        var unit = await ArticleApi.UnitAsync(tenant.Client);
+        var article = await ArticleApi.CreateAsync(tenant.Client, "A1", "Bolt", unit);
         using (var blocked = await tenant.Client.DeleteAsync($"{Uom.Path}/{unit}"))
             await HttpAssert.InUseAsync(blocked);
 
-        using (var deleteArticle = await tenant.Client.DeleteAsync($"{Art.Path}/{article.Id()}"))
+        using (var deleteArticle = await tenant.Client.DeleteAsync($"{ArticleApi.Path}/{article.Id()}"))
             Assert.Equal(HttpStatusCode.NoContent, deleteArticle.StatusCode);
         using var delete = await tenant.Client.DeleteAsync($"{Uom.Path}/{unit}");
 
@@ -45,11 +45,11 @@ public class UnitOfMeasureInUseTests(XerpFixture app)
     public async Task AC82_Unit_can_be_deleted_once_its_only_article_moves_to_another_unit()
     {
         var tenant = await app.NewTenantAsync();
-        var unit = await Art.UnitAsync(tenant.Client, "pcs", "Piece");
-        var other = await Art.UnitAsync(tenant.Client, "kg", "Kilogram");
-        var article = await Art.CreateAsync(tenant.Client, "A1", "Bolt", unit);
+        var unit = await ArticleApi.UnitAsync(tenant.Client, "pcs", "Piece");
+        var other = await ArticleApi.UnitAsync(tenant.Client, "kg", "Kilogram");
+        var article = await ArticleApi.CreateAsync(tenant.Client, "A1", "Bolt", unit);
 
-        using (var move = await Art.PutAsync(tenant.Client, article.Id(), Art.ReplaceBody("A1", "Bolt", other)))
+        using (var move = await ArticleApi.PutAsync(tenant.Client, article.Id(), ArticleApi.ReplaceBody("A1", "Bolt", other)))
             Assert.Equal(HttpStatusCode.OK, move.StatusCode);
         using var delete = await tenant.Client.DeleteAsync($"{Uom.Path}/{unit}");
         using var deleteOther = await tenant.Client.DeleteAsync($"{Uom.Path}/{other}");
@@ -62,9 +62,9 @@ public class UnitOfMeasureInUseTests(XerpFixture app)
     public async Task AC83_Unreferenced_unit_is_deleted_as_before()
     {
         var tenant = await app.NewTenantAsync();
-        var used = await Art.UnitAsync(tenant.Client, "pcs", "Piece");
-        var unused = await Art.UnitAsync(tenant.Client, "kg", "Kilogram");
-        await Art.CreateAsync(tenant.Client, "A1", "Bolt", used);
+        var used = await ArticleApi.UnitAsync(tenant.Client, "pcs", "Piece");
+        var unused = await ArticleApi.UnitAsync(tenant.Client, "kg", "Kilogram");
+        await ArticleApi.CreateAsync(tenant.Client, "A1", "Bolt", used);
 
         using var delete = await tenant.Client.DeleteAsync($"{Uom.Path}/{unused}");
 
@@ -77,8 +77,8 @@ public class UnitOfMeasureInUseTests(XerpFixture app)
     public async Task AC84_Referenced_unit_can_be_deactivated_and_renamed()
     {
         var tenant = await app.NewTenantAsync();
-        var unit = await Art.UnitAsync(tenant.Client, "pcs", "Piece");
-        var article = await Art.CreateAsync(tenant.Client, "A1", "Bolt", unit);
+        var unit = await ArticleApi.UnitAsync(tenant.Client, "pcs", "Piece");
+        var article = await ArticleApi.CreateAsync(tenant.Client, "A1", "Bolt", unit);
 
         using var response = await tenant.Client.PutAsJsonAsync($"{Uom.Path}/{unit}", new { code = "kom", name = "Komad", isActive = false });
 
@@ -86,7 +86,7 @@ public class UnitOfMeasureInUseTests(XerpFixture app)
         Assert.Equal("kom", updated.Str("code"));
         Assert.Equal("Komad", updated.Str("name"));
         Assert.False(updated.GetProperty("isActive").GetBoolean());
-        var after = await Art.GetAsync(tenant.Client, article.Id());
+        var after = await ArticleApi.GetAsync(tenant.Client, article.Id());
         Assert.Equal(unit, after.BaseUnitId());
         Assert.Equal("kom", after.GetProperty("baseUnit").Str("code"));
     }
@@ -99,19 +99,19 @@ public class UnitOfMeasureInUseTests(XerpFixture app)
 
         for (var round = 0; round < 20; round++)
         {
-            var unit = await Art.UnitAsync(tenant.Client, $"u{round}", $"Unit {round}");
+            var unit = await ArticleApi.UnitAsync(tenant.Client, $"u{round}", $"Unit {round}");
 
             // Alternate which request is sent first so that both orders occur.
             Task<HttpResponseMessage> postTask, deleteTask;
             if (round % 2 == 0)
             {
-                postTask = Art.PostAsync(tenant.Client, $"A{round}", "Racer", unit);
+                postTask = ArticleApi.PostAsync(tenant.Client, $"A{round}", "Racer", unit);
                 deleteTask = tenant.Client.DeleteAsync($"{Uom.Path}/{unit}");
             }
             else
             {
                 deleteTask = tenant.Client.DeleteAsync($"{Uom.Path}/{unit}");
-                postTask = Art.PostAsync(tenant.Client, $"A{round}", "Racer", unit);
+                postTask = ArticleApi.PostAsync(tenant.Client, $"A{round}", "Racer", unit);
             }
             using var post = await postTask;
             using var delete = await deleteTask;
@@ -132,7 +132,7 @@ public class UnitOfMeasureInUseTests(XerpFixture app)
         }
 
         // Every article that exists points at a unit that exists.
-        var articles = await Art.ListAsync(tenant.Client, "?limit=500");
+        var articles = await ArticleApi.ListAsync(tenant.Client, "?limit=500");
         Assert.Equal(created, articles.Total());
         var units = (await Uom.ListAsync(tenant.Client, "?limit=500")).GetProperty("items").EnumerateArray().Select(u => u.Id()).ToHashSet();
         Assert.Equal(created, units.Count);
