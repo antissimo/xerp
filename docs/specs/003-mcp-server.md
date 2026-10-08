@@ -33,12 +33,15 @@ Out of scope
 - MCP resources, prompts, sampling, elicitation, tasks, notifications, sessions, resumability.
 - OAuth-based MCP authorization (ADR-0009); permissions per key, key expiry, rotation, rename (roadmap item 6).
 - Rate limiting (roadmap, later). A stdio transport or a separate bridge process.
+- The OpenAPI document (spec 003a).
 - Any change to the behaviour of the HTTP operations of specs 001 and 002.
 
 ## 3. Data
 
 `ApiKey` gains three nullable columns: `CreatedBy` (id of the key that created it; `null` for a tenant's
 `initial` key), `RevokedAt`, `RevokedBy`. Existing columns (001 §3) are unchanged. Rows are never deleted.
+`CreatedBy` and `RevokedBy` are foreign keys `(TenantId, CreatedBy)` / `(TenantId, RevokedBy)` ->
+`ApiKey (TenantId, Id)`, `ON DELETE RESTRICT`, like every audit column (architecture §8).
 Invariant: `IsActive = false` exactly when `RevokedAt` is set — except for rows deactivated outside the
 application (001/AC-20 does this in a test), which the code must tolerate.
 
@@ -139,7 +142,8 @@ Tool metadata (returned by `tools/list`)
 ## 6. Business rules
 
 API keys
-- R1. `name`: trimmed; 1–100 characters after trimming. Names need not be unique.
+- R1. `name`: trimmed; 1–100 characters after trimming; no control characters (001/R4). Names need not be
+  unique.
 - R2. `actorType`: required, exactly `"human"` or `"agent"`; fixed for the life of the key.
 - R3. A created key has the format of 001/R13, is stored only as its SHA-256 hash (001/S5), is active, belongs
   to the caller's tenant and has `createdBy` = the acting key. The plaintext appears only in the `201` response
@@ -155,6 +159,8 @@ API keys
   always retains at least one active key.
 - R9. A revoked key is rejected from the next request on (`401 UNAUTHENTICATED`, 001/S2), on `/api/v1` and on
   `/mcp` alike. Records it created keep their `createdBy` / `updatedBy`.
+- R9a. Query strings and bodies follow 001/R14–R16 on every API key route (unknown query parameters rejected
+  under their own name; no input may cause `500`).
 - R10. List: `search` as 001/R9 but matching `name` only; `actorType` and `isActive` filter when present;
   ordering by `createdAt` ascending, then `id`; `limit`, `offset`, `total` as 001/R9.
 - R11. There is no interface restriction by `actorType`: a `human` key may use `/mcp`, an `agent` key may use
@@ -275,7 +281,8 @@ API keys — HTTP
   both `201`, different ids, different `key` values.
 - AC-14 `POST /api-keys` with `name` missing, `null`, `""`, `"   "`, or 101 characters -> `400`
   `VALIDATION_FAILED` with `errors` key `name`; a 100-character name -> `201`. With `actorType` missing, `null`,
-  `"Agent"`, `"robot"` -> `400` with `errors` key `actorType`.
+  `"Agent"`, `"robot"` -> `400` with `errors` key `actorType`. With `name` = `"a\u0000b"` or `"a\nb"` -> `400`
+  with `errors` key `name`. `GET /api-keys?foo=1` -> `400` with `errors` key `foo`.
 - AC-15 `POST /api-keys` with an extra property (`"key"`, `"isActive"`, `"tenantId"`, `"foo"`) or malformed
   JSON -> `400` `VALIDATION_FAILED`, non-empty `errors`; the key list is unchanged.
 - AC-16 `GET /api-keys/{id}` -> `200` with the representation of AC-10 without `key`. For the tenant's
@@ -433,6 +440,6 @@ Errors
 - HTTP and MCP parity tests are the template for all later specs: keep the helper that compares a tool's
   `structuredContent` with an HTTP body reusable.
 - Report in the summary: SDK version, protocol revision, and a transcript of a real MCP client (for example
-  `claude mcp add --transport http xerp http://localhost:8080/mcp --header "Authorization: Bearer …"`, or the
+  `claude mcp add --transport http xerp http://localhost:8000/mcp --header "Authorization: Bearer …"`, or the
   MCP inspector) listing the tools against `docker compose up` *(manual)*.
 - Anything unclear or contradictory: `docs/questions/003-q.md`, then continue with the rest.

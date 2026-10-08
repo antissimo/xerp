@@ -88,7 +88,13 @@ Rules:
 - Base path `/api/v1`. `/health` is outside it and unauthenticated.
 - JSON, camelCase properties, UTF-8. Timestamps are UTC ISO 8601. Ids are server-generated UUIDv7.
 - Unknown JSON properties in a request body are rejected (`400 VALIDATION_FAILED`) so that an agent's typo is
-  an error, not a silently ignored field.
+  an error, not a silently ignored field. The same holds for query strings: a query parameter an operation does
+  not define is rejected under its own name. Property and parameter names are case-sensitive.
+- No request may fail in the database because of its content; `500` is never the answer to client input.
+  Single-line text (codes, names) contains no control characters; multi-line text allows only LF, CR and TAB.
+- Under `/api/v1` the kind of credential is checked before the route: `/api/v1/admin/*` needs the admin key,
+  everything else a tenant key (`403` otherwise), whether or not the path exists. An unknown path and an
+  unsupported method on a known path are both `404 NOT_FOUND`.
 - Collections: `GET` returns `{ "items": [...], "total": n, "limit": n, "offset": n }`;
   `limit` default 50, range 1–500; `offset` >= 0; out-of-range values are rejected, not clamped.
 - Master data has a server id (`id`, used for references) and a human/agent-friendly `code`, unique per tenant,
@@ -117,7 +123,7 @@ Every non-2xx response under `/api/v1` is `application/problem+json` (RFC 9457) 
 | 400 | `VALIDATION_FAILED` | Malformed JSON, unknown property, or field rule violated — anything decidable from the request alone. `errors` maps camelCase field name -> messages. |
 | 401 | `UNAUTHENTICATED` | Missing, malformed, unknown or disabled credential. Sent with `WWW-Authenticate: Bearer`. |
 | 403 | `FORBIDDEN` | Valid credential, operation not allowed for it. |
-| 404 | `NOT_FOUND` | No such record in this tenant (also: other tenant's record, malformed id). |
+| 404 | `NOT_FOUND` | No such record in this tenant (also: other tenant's record, malformed id), no such path, or method not supported on the path. |
 | 409 | `CODE_TAKEN` | Unique code already used in this tenant. |
 | 409 | `IN_USE` | Record is referenced and cannot be deleted. |
 | 409 | `REFERENCE_NOT_FOUND` | A `<role>Id` in the body is well-formed but no such record exists in this tenant (also: other tenant's record). `errors` has the field's key. |
@@ -157,6 +163,8 @@ MCP maps the same error to a tool error with the same `code` (shape in section 7
 - The CLI and the web UI are not built in this repository. They are ordinary HTTP API clients with their own
   API keys; nothing in the backend is specific to them. Because they are developed separately, the HTTP API must
   not change incompatibly within `/api/v1`, and the OpenAPI document is the description they build against.
+  It does not exist yet: spec 003a delivers it (served in every environment to any authenticated tenant key,
+  and committed to the repository so that a contract change is visible in a diff).
 - Every spec defines both the HTTP and the MCP signature of each operation. Specs 001 and 002 carry their MCP
   signatures as contract only; spec 003 implements them. From spec 004 on, a spec's tools are implemented with it,
   including tool metadata (description with error codes, schemas, annotations) and an HTTP/MCP parity test.
@@ -167,6 +175,9 @@ MCP maps the same error to a tool error with the same `code` (shape in section 7
   (acceptable while there is one instance; revisit before production).
 - Money and quantities are `decimal` / `numeric`, never floating point.
 - Audit columns on every tenant-owned row: `CreatedAt`, `UpdatedAt`, `CreatedBy`, `UpdatedBy`.
+  Columns that hold an actor (`CreatedBy`, `UpdatedBy`, `RevokedBy`, …) are real foreign keys
+  `(TenantId, <column>)` -> `ApiKeys (TenantId, Id)` with `ON DELETE RESTRICT`: an actor can never belong to
+  another tenant, and an API key that has written anything can be revoked but never deleted (ADR-0010).
 - Ledger tables (stock ledger, journal lines; later) are append-only: no `UPDATE`, no `DELETE`; corrections are
   reversing entries (ADR-0007).
 
