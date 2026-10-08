@@ -20,12 +20,14 @@ src/
                                ports (IXerpDb, ITenantContext, IClock ...). References Domain only.
   Xerp.Infrastructure/         EF Core DbContext, migrations, Npgsql, key hashing, clock. References Application.
   Xerp.Api/                    ASP.NET Core host: HTTP endpoints, authentication, error mapping, (later) MCP endpoint.
-  Xerp.Cli/                    (later) command-line client over the HTTP API.
 tests/
   Xerp.UnitTests/              Domain + Application rules, architecture (dependency) tests. No database.
   Xerp.IntegrationTests/       HTTP-level tests against the real API + a throwaway PostgreSQL.
-web/                           (later) React + TypeScript client.
 ```
+
+Scope of this repository (owner decision 2026-10-08): the backend — the four projects above — and the MCP server
+hosted in `Xerp.Api`. The CLI and the React web UI are separate projects in their own repositories; they consume
+the HTTP API, which is therefore a published contract (versioned under `/api/v1`, stable error codes).
 
 Dependency rule (enforced by a test):
 
@@ -37,7 +39,7 @@ Dependency rule (enforced by a test):
 | Api | Application, Infrastructure (composition root only) | — |
 
 Rules:
-- **Business rules live only in Domain and Application.** An endpoint, MCP tool or CLI command does three things:
+- **Business rules live only in Domain and Application.** An endpoint or MCP tool does three things:
   bind input, call one Application operation, map the result. If a rule can only be tested through HTTP, it is in
   the wrong layer.
 - Application operations take plain DTOs and return a result (value or `AppError`); they never see `HttpContext`.
@@ -71,8 +73,10 @@ Rules:
 - Tenants are provisioned through `/api/v1/admin/*`, authenticated with a platform admin key taken from
   configuration (`Xerp:AdminKey`, env `Xerp__AdminKey`). The admin key has no tenant and cannot call tenant routes.
 - Every write stamps `CreatedBy` / `UpdatedBy` with the acting API key id.
-- Roles/permissions per key, key management by tenant users, and human login (OIDC) for the web UI are later
-  roadmap items. Until permissions exist, every tenant key can do everything inside its tenant.
+- Roles/permissions per key and key management by tenant users are later roadmap items. Human login for the
+  external web client (e.g. OIDC mapped to the same actor model) is not planned here until that project asks for it.
+- Agents may post documents by default (owner answered "yes"; interpreted as "agents may post by default"),
+  restrictable per key once permissions exist. Until permissions exist, every tenant key can do everything inside its tenant.
 
 ## 5. HTTP API conventions
 
@@ -112,21 +116,23 @@ Specs add feature-specific codes; this table is the registry and is updated with
 Application defines the errors (`AppError { Code, Detail, Errors }`); Api maps code -> HTTP status in one place;
 MCP maps the same error to a tool error with the same `code`.
 
-## 7. API, MCP and CLI (ADR-0005)
+## 7. API and MCP; external clients (ADR-0005, amended)
 
 ```
- Web (React) ──HTTP──┐
- CLI ─────────HTTP───┤
-                     ├─► Xerp.Api ──► Xerp.Application ──► Xerp.Domain
- Agent ──MCP (HTTP)──┘      (HTTP endpoints and MCP tools           │
-                             are siblings, both thin)        Xerp.Infrastructure ──► PostgreSQL
+ Web UI (separate project) ──HTTP──┐
+ CLI    (separate project) ──HTTP──┤
+                                   ├─► Xerp.Api ──► Xerp.Application ──► Xerp.Domain
+ Agent ───────────────MCP (HTTP)───┘      (HTTP endpoints and MCP tools           │
+                                           are siblings, both thin)        Xerp.Infrastructure ──► PostgreSQL
 ```
 
 - The MCP server is hosted inside `Xerp.Api` (Streamable HTTP at `/mcp`), authenticated by the same API key,
   and calls Application operations in-process. It does not call the HTTP API and has no rules of its own.
 - MCP tools are named `<resource>_<verb>` in snake_case (`uom_list`, `article_create`). One tool = one
   Application operation = one HTTP endpoint, with the same field names, limits and error codes.
-- The CLI is a separate executable that talks to the HTTP API (so it works against a remote server).
+- The CLI and the web UI are not built in this repository. They are ordinary HTTP API clients with their own
+  API keys; nothing in the backend is specific to them. Because they are developed separately, the HTTP API must
+  not change incompatibly within `/api/v1`, and the OpenAPI document is the description they build against.
 - Every spec defines both the HTTP and the MCP signature of each operation. Until the MCP server exists
   (roadmap item 3) the MCP signatures in a spec are a contract to be honoured later, not something to implement.
 

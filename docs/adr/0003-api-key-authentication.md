@@ -1,6 +1,6 @@
 # ADR-0003: API keys as the first credential; tenant and actor derive from the key
 
-Status: accepted (2026-10-08) — bootstrap mechanism to be confirmed by the owner
+Status: accepted (2026-10-08); bootstrap via config admin key confirmed by the owner on 2026-10-08
 
 ## Context
 Tenant scoping needs a trustworthy source of the tenant, and "AI is a user" needs every agent to be an
@@ -27,6 +27,14 @@ reject every request.
 ## Consequences
 - A leaked key is full access to one tenant until permissions (roadmap) and key revocation endpoints exist.
 - SHA-256 without salt is adequate only because keys are 256-bit random values, not passwords.
-- The admin key is a single shared secret in configuration: acceptable for bootstrap, not for production
-  operations. Owner to confirm or replace.
+- The admin key is a single shared secret in configuration: accepted by the owner as the bootstrap mechanism; revisit before
+  production operations.
 - `actorType` is self-declared at key creation; it is an audit label, not a security boundary.
+
+## Amendment (2026-10-08, owner decisions)
+- The CLI and the web UI are separate projects. They authenticate to the HTTP API with API keys like any other
+  client. Human login for the web client (OIDC or similar) is no longer a planned item of this repository; it
+  will be specified only when that project needs it.
+- Agents may post documents by default (owner answered "yes" to "may agents post by default, or only prepare
+  drafts?"; interpreted as "may post by default"). `actorType` therefore does not by itself restrict anything;
+  restrictions come from per-key permissions (roadmap item 6).

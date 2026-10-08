@@ -41,7 +41,7 @@ were not confirmed against a page opened in this iteration.
 - ERPNext `docstatus` (0 draft / 1 submitted / 2 cancelled) page returned HTTP 500; the cancel-and-amend
   behaviour is confirmed only by the Stock Entry page.
 - Open-source code (Odoo `stock.move`, ERPNext doctypes) was not read; only documentation.
-- Croatian requirements (OIB validation, fiscalisation, VAT rates, legal invoice numbering) were not researched.
+- Country-specific requirements were not researched and, by owner decision, are outside the core roadmap.
 
 ## 2. Sequencing decision: spec 001 is a vertical slice that brings the foundation
 
@@ -63,6 +63,9 @@ on `main`. The builder's pre-created branch `feat/001-articles` should be replac
 
 ## 3. Backlog
 
+Scope (owner decisions, 2026-10-08): backend and MCP server only; jurisdiction-neutral; hosted multi-tenant SaaS
+with one tenant = one legal entity.
+
 | # | Spec | Modelled on | Why here |
 |---|---|---|---|
 | 1 | **001 Foundation + units of measure** — layers, tenants, API keys, error model, test harness, UoM CRUD. *Written.* | Odoo/ERPNext shared-schema company scoping; UoM list as in BC "Units of Measure". | Everything else depends on it; see section 2. |
@@ -70,7 +73,7 @@ on `main`. The builder's pre-created branch `feat/001-articles` should be replac
 | 3 | **003 MCP server** — `/mcp` endpoint, tools for all existing operations, tool-error mapping, API-key management endpoints (create/revoke keys, including `agent` keys). | ADR-0005. | The product's primary user gets its interface as soon as there are two resources to prove the pattern; later specs then ship HTTP + MCP together. |
 | 4 | **004 Partners and warehouses** — partner with `isCustomer`/`isSupplier`, tax id, address; warehouse. Both tenant-scoped, with MCP tools. | SAP B1 business partner; ERPNext warehouse. | Completes the masters every document needs; restores the scaffold entities. |
 | 5 | **005 Audit log** — append-only record of every write: actor, actor type, operation, entity, before/after; query endpoint/tool. | BC change log / posted-entry audit trail *(unverified)*; vision principle 4. | Must exist before agents are allowed to post anything of consequence. |
-| 6 | **006 Permissions** — roles/scopes per API key (read, write masters, create drafts, post), `FORBIDDEN` paths, default agent role. | BC permission sets and roles. | Gate for "agent may prepare, human posts" before the first posting operation. |
+| 6 | **006 Permissions** — roles/scopes per API key (read, write masters, create drafts, post), `FORBIDDEN` paths. Default: a new key, human or agent, may post (owner answered "yes"; interpreted as "agents may post by default"); posting can be removed per key. | BC permission sets and roles. | The means to restrict an agent to drafts must exist before the first posting operation. |
 | 7 | **007 Number series** — per-tenant series per document type, prefix/year pattern, gapless flag, concurrency-safe allocation. | BC No. Series (gaps not allowed by default; date-effective lines); ERPNext naming series tokens. | Posting needs final document numbers; must exist before the first postable document. |
 | 8 | **008 Stock ledger + stock documents** — append-only stock ledger (item, warehouse, signed base-unit quantity, document reference); receipt/issue/transfer documents `draft -> posted`; reversal; stock-on-hand query; negative-stock rule. | ERPNext Stock Entry (Material Receipt/Issue/Transfer) and Stock Ledger Entry; BC Item Ledger Entry. | The core of inventory; all later flows only add ways to produce these entries. Likely split into two specs (ledger + receipt/issue, then transfer + reversal). |
 | 9 | **009 Item unit conversions** — per-item alternative units with factor to base unit; documents accept any item unit, ledger stores base unit; rounding precision. | BC Item Units of Measure ("Qty. per Unit of Measure", rounding precision); ERPNext conversion table. | Needed before purchase/sales lines (boxes bought, pieces stocked); not needed for the first ledger. |
@@ -79,17 +82,20 @@ on `main`. The builder's pre-created branch `feat/001-articles` should be replac
 | 12 | **012 Sales orders -> delivery** — optional quotation, reserved (committed) quantity, partial deliveries, delivery posts to stock ledger. | SAP B1 (order raises committed, delivery reduces stock); BC partial shipments; Odoo quotation -> sales order. | Mirror of 011 plus availability. |
 | 13 | **013 Inventory valuation** — cost on inbound entries, moving average per item, value of stock report. | BC value entries; ERPNext Moving Average; Odoo AVCO. | Needs purchase prices (011); prerequisite for COGS. |
 | 14 | **014 Chart of accounts + journal entries** — accounts with categories, balanced manual journals, post/reverse, trial balance, accounting periods. | BC chart of accounts and account categories; SAP B1 reversal-only journals. | Foundation of all financial posting. |
-| 15 | **015 Taxes + sales/purchase invoices** — VAT codes, invoices created from deliveries/receipts or stand-alone, posting to G/L through posting configuration, gapless invoice numbers, credit notes. | SAP B1 A/R invoice postings; BC General Posting Setup, corrective credit memo; Odoo invoicing policy. | Needs 007, 011/012, 014. Jurisdiction-specific rules enter here — owner decision on Croatia-first. |
+| 15 | **015 Taxes + sales/purchase invoices** — generic tax codes (rate, included/excluded, tax accounts) with no country-specific rules, invoices created from deliveries/receipts or stand-alone, posting to G/L through posting configuration, gapless invoice numbers, credit notes. | SAP B1 A/R invoice postings; BC General Posting Setup, corrective credit memo; Odoo invoicing policy. | Needs 007, 011/012, 014. Jurisdiction-neutral by owner decision. |
 | 16 | **016 Payments and open items** — incoming/outgoing payments, application to invoices, partner balances, aging. | SAP B1 incoming payments; BC customer ledger entries and application. | Closes order-to-cash and procure-to-pay. |
-| 17 | **017 CLI** — `xerp` command over the HTTP API, generated from the same operation list. | ADR-0005. | Cheap once operations are stable; can be pulled earlier if the owner wants it for daily use. |
-| 18 | **018 Row-level security** — PostgreSQL RLS policies as a second tenant barrier; non-owner runtime DB role. | ADR-0002. | Hardening; must precede any production tenant. Can be pulled earlier without affecting features. |
-| 19 | **019 Web UI** — React + TypeScript client: review/approve agent drafts, masters, documents; human login (OIDC). | — | Humans supervise; assumed later than the agent surface (owner to confirm). |
-| 20 | Later: perpetual inventory posting (stock -> G/L), price lists and discounts, bins/locations, lots/serials, multi-currency, returns, fixed reporting, optimistic concurrency (`ETag`/`If-Match`) on masters. | — | Each depends on the core above. |
+| 17 | **017 Row-level security** — PostgreSQL RLS policies as a second tenant barrier; non-owner runtime DB role. | ADR-0002. | Hardening; must precede any production tenant. Can be pulled earlier without affecting features. |
+| 18 | Later: perpetual inventory posting (stock -> G/L), price lists and discounts, bins/locations, lots/serials, multi-currency, returns, fixed reporting, optimistic concurrency (`ETag`/`If-Match`) on masters, human login for external clients, country localisation packs (outside the core). | — | Each depends on the core above. |
+
+Removed on 2026-10-08 by owner decision: the former items "017 CLI" and "019 Web UI". Both are separate projects
+outside this repository; they consume the HTTP API (ADR-0005 amendment).
 
 ## 4. Rules for the backlog
 
 - A spec must leave `dotnet build` and `dotnet test` green and `main` free of un-tenanted queries.
 - From item 3 on, every operation ships with its HTTP endpoint and its MCP tool in the same spec.
+- The HTTP API is consumed by separately developed clients (CLI, web UI): no incompatible change within `/api/v1`.
+- The core stays jurisdiction-neutral: no country-specific tax, identifier or fiscalisation rules.
 - No posting operation (item 8 onward) is released before audit log (5), permissions (6) and number series (7).
 
 ## 5. Sources opened on 2026-10-08
