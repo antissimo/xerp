@@ -122,7 +122,7 @@ Arguments are a JSON object; the input schema of every tool is closed (`addition
 | `article_delete` | `{ id }` | `{ "deleted": true }` | `DELETE /articles/{id}` | `NOT_FOUND` |
 | `api_key_list` | `{ search?, actorType?, isActive?, limit?, offset? }` | list envelope of ApiKey | `GET /api-keys` | `VALIDATION_FAILED` |
 | `api_key_get` | `{ id }` | ApiKey | `GET /api-keys/{id}` | `NOT_FOUND` |
-| `api_key_revoke` | `{ id }` | ApiKey | `POST /api-keys/{id}/revoke` | `NOT_FOUND`, `CANNOT_REVOKE_SELF` |
+| `api_key_revoke` | `{ id }` | ApiKey | `POST /api-keys/{id}/revoke` | `NOT_FOUND`, `CANNOT_REVOKE_SELF`, `UNAUTHENTICATED` (only when the acting key was itself revoked while the call ran, R8) |
 
 These 14 tools are the complete list. Any tool can additionally return `INTERNAL_ERROR`.
 
@@ -184,6 +184,8 @@ MCP
 - R15. An `id` argument that addresses the record (`uom_get`, `*_update`, `*_delete`, `api_key_get`,
   `api_key_revoke`) and is a string but not a UUID -> `NOT_FOUND`, as a malformed `{id}` path segment over HTTP
   (001/E6). A reference argument (`baseUnitId`) that is not a UUID -> `VALIDATION_FAILED` (002/E3).
+  An addressing `id` that is missing, `null`, empty or not a JSON string -> `VALIDATION_FAILED` with
+  `errors.id` (R14); it may be reported alone, before the other arguments are validated (003-q, B-Q3).
 - R16. Writes through a tool are attributed exactly as over HTTP: `createdBy` / `updatedBy` / `revokedBy` are
   the id of the key that authenticated the MCP request.
 - R17. An unexpected exception inside a tool -> tool error `INTERNAL_ERROR` with a generic `detail`; nothing of

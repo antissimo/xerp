@@ -5,6 +5,8 @@ Branches: `tests/005-stock-ledger` (tester), `feat/005-stock-ledger` (builder).
 Read first: `docs/architecture.md`, specs 002 and 004 (articles, warehouses), ADR-0007, ADR-0008,
 **ADR-0012**. Why this is the fifth spec: `docs/roadmap.md` section 3 (business functionality first).
 Second half of the stock core — transfers and reversal — is spec 006.
+Spec 006 adds properties to the representations of §4.1 and §4.3 (`toWarehouse`, `reversalOf`, `reversedBy`,
+`document.isReversal`) and makes `type` `"transfer"` valid; tests of this spec that pin those are changed there.
 
 **Inherited, not re-specified** (roadmap §4): authentication and credential kinds, strict bodies and query
 strings, the problem document, the list envelope, trimming and control-character rules, reference rules
