@@ -46,6 +46,9 @@ Indexes and keys
 - Foreign key `(Article.TenantId, Article.BaseUnitId)` -> `(UnitOfMeasure.TenantId, UnitOfMeasure.Id)`,
   `ON DELETE RESTRICT` (or `NO ACTION`); no cascade. `UnitOfMeasure` gets the unique key on `(TenantId, Id)`
   that this requires.
+- `CreatedBy` and `UpdatedBy` are foreign keys `(TenantId, CreatedBy)` / `(TenantId, UpdatedBy)` ->
+  `ApiKey (TenantId, Id)`, `ON DELETE RESTRICT`, exactly as spec 001 built them for `UnitOfMeasure`
+  (`docs/questions/001-q.md`, Q2; architecture §8).
 - An index that makes "articles by base unit" efficient (the foreign-key columns).
 
 Migration: one **new** migration is added on top of spec 001's initial migration, which is not edited.
@@ -111,11 +114,13 @@ Code and name
 - R1. `code` follows 001/R1–R3 (trimmed; `^[\p{L}\p{N}._-]{1,50}$`; stored as entered; unique and looked up
   case-insensitively **within the tenant's articles**). Article codes and unit-of-measure codes are separate
   namespaces: an article may have the code `kg`.
-- R2. `name` follows 001/R4 (trimmed; 1–200 characters).
+- R2. `name` follows 001/R4 (trimmed; 1–200 characters; no control characters).
 
 Description
 - R3. Optional free text. Trimmed; an empty or whitespace-only value is stored and returned as `null`; maximum
-  2000 characters after trimming. Line breaks inside the text are preserved.
+  2000 characters after trimming. Line breaks inside the text are preserved: of the control characters
+  (001/R4) only line feed (U+000A), carriage return (U+000D) and tab (U+0009) are allowed; any other —
+  NUL in particular — gives `400` with `errors.description`.
 
 Type
 - R4. `type` is required and is exactly `"stock"` or `"service"` (lower-case; `"Stock"` is invalid).
@@ -156,6 +161,8 @@ Delete
 - R17. Deactivating a unit (`isActive: false`) and changing its code or name are always allowed, referenced or not.
 
 List
+- R17a. Query strings and bodies follow 001/R14–R16: unknown query parameters are rejected under their own
+  name, on every article route; no input may cause `500`.
 - R18. As 001/R9 for `search` (trimmed, max 100, case-insensitive substring of `code` or `name`, wildcards
   literal; `description` is not searched), `isActive`, `limit`, `offset`, `total` and ordering (by code,
   case-insensitive, ascending).
@@ -172,7 +179,9 @@ List
   `errors.baseUnitId`. A JSON number or object in its place -> `400` with non-empty `errors` (key not specified,
   001/E4).
 - E4. `description` of 2001 characters -> `400` with `errors.description`; exactly 2000 -> accepted;
-  `""` or `"   "` -> accepted, stored as `null`.
+  `""` or `"   "` -> accepted, stored as `null`. `description` containing `\u0000` or `\u0007` -> `400` with
+  `errors.description`; containing `\n`, `\r\n` or `\t` -> accepted. `name` containing `\u0000` or `\n` -> `400`
+  with `errors.name`.
 - E5. `baseUnitId` = a random UUID, or the id of a unit that was deleted -> `409 REFERENCE_NOT_FOUND`.
 - E6. A request with an invalid `name` **and** an unknown `baseUnitId` -> `400` (validation first).
   A request with an unknown `baseUnitId` **and** a code already taken -> `409 REFERENCE_NOT_FOUND`.
@@ -274,6 +283,9 @@ Create and read
 - AC-30 `POST` with an extra property (`"id"`, `"tenantId"`, `"baseUnit"`, `"baseUnitCode"` or `"foo"`), with
   malformed JSON, or with an empty body -> `400` `VALIDATION_FAILED`, non-empty `errors`; the tenant's article
   list is still empty.
+- AC-34 `POST` with `description` = `"a\u0000b"` or `"a\u0007b"` -> `400` `VALIDATION_FAILED` with `errors`
+  key `description`; with `description` = `"a\r\n\tb"` -> `201`, returned unchanged. `POST` and `PUT` with
+  `name` = `"a\u0000b"` or `"a\nb"` -> `400` with `errors` key `name`. No response is `500`.
 - AC-31 `POST` of code `ART-1` twice, and of `art-1` after `ART-1` -> second response `409`, problem with code
   `CODE_TAKEN`.
 - AC-32 Ten parallel `POST`s of the same new article code in one tenant -> exactly one `201`, nine
@@ -332,7 +344,8 @@ List
 - AC-72 With 3 articles: `limit=2` -> 2 items, `total == 3`; `limit=2&offset=2` -> the third by code;
   `offset=10` -> 0 items, `total == 3`.
 - AC-73 `limit=0`, `limit=501`, `limit=abc` -> `400` with `errors` key `limit`; `offset=-1` -> `400` with
-  `errors` key `offset`.
+  `errors` key `offset`. `GET /articles?foo=1`, `?baseunitid=<uuid>` and `GET /articles/{id}?x=1` -> `400` with
+  `errors` key `foo`, `baseunitid`, `x` (001/R15). `search=a%00b` -> `400` with `errors` key `search`.
 - AC-74 `isActive=true` / `isActive=false` / absent return active / inactive / all; `total` reflects the filter;
   `isActive=maybe` -> `400` with `errors` key `isActive`.
 - AC-75 With two `stock` articles and one `service` article: `type=stock` returns the two, `type=service` the
