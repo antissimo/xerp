@@ -7,6 +7,7 @@ Read first: `docs/architecture.md`, specs 002 and 004 (articles, warehouses), AD
 Second half of the stock core — transfers and reversal — is spec 006.
 Spec 006 adds properties to the representations of §4.1 and §4.3 (`toWarehouse`, `reversalOf`, `reversedBy`,
 `document.isReversal`) and makes `type` `"transfer"` valid; tests of this spec that pin those are changed there.
+Spec 007 adds `unitId` to a line and `factor`, `baseUnit`, `baseQuantity` to its representation (007/AC-01).
 
 **Inherited, not re-specified** (roadmap §4): authentication and credential kinds, strict bodies and query
 strings, the problem document, the list envelope, trimming and control-character rules, reference rules
