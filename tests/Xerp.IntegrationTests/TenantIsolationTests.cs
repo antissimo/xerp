@@ -138,10 +138,8 @@ public class TenantIsolationTests(XerpFixture app)
         Assert.Equal(b.ApiKeyId, meB.GetProperty("actor").GetProperty("apiKeyId").GetGuid());
     }
 
-    [Theory]
-    [InlineData("?tenantId={0}")]
-    [InlineData("?tenant={0}")]
-    public async Task T1_No_query_parameter_or_header_selects_a_tenant(string queryTemplate)
+    [Fact]
+    public async Task T1_No_query_parameter_or_header_selects_a_tenant()
     {
         var a = await app.NewTenantAsync();
         var b = await app.NewTenantAsync();
@@ -150,11 +148,19 @@ public class TenantIsolationTests(XerpFixture app)
         client.DefaultRequestHeaders.Add("X-Tenant", a.Id.ToString());
         client.DefaultRequestHeaders.Add("X-Tenant-Id", a.Id.ToString());
 
-        var list = await Uom.ListAsync(client, string.Format(queryTemplate, a.Id));
-        using var whoami = await client.GetAsync($"/api/v1/whoami{string.Format(queryTemplate, a.Id)}");
-
+        // Headers are ignored; a tenant in the query string is an unknown parameter (R15).
+        var list = await Uom.ListAsync(client);
+        using var whoami = await client.GetAsync("/api/v1/whoami");
         Assert.Equal(0, list.Total());
         Assert.Equal(b.Id, (await HttpAssert.JsonAsync(whoami, HttpStatusCode.OK)).GetProperty("tenant").GetProperty("id").GetGuid());
+
+        foreach (var name in new[] { "tenantId", "tenant" })
+        {
+            using var listWithQuery = await client.GetAsync($"{Uom.Path}?{name}={a.Id}");
+            using var whoamiWithQuery = await client.GetAsync($"/api/v1/whoami?{name}={a.Id}");
+            await HttpAssert.ValidationAsync(listWithQuery, name);
+            await HttpAssert.ValidationAsync(whoamiWithQuery, name);
+        }
     }
 
     [Fact]

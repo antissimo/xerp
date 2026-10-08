@@ -1,3 +1,5 @@
+using Xerp.Domain.Common;
+
 namespace Xerp.Application.Common;
 
 /// <summary>The list rules every collection shares (spec 001, R9): search text and paging are rejected, not clamped.</summary>
@@ -15,6 +17,8 @@ public static class ListRules
             return null;
         if (search.Length > MaxSearchLength)
             errors.Add("search", $"search must be at most {MaxSearchLength} characters.");
+        else if (TextRules.HasControlCharacters(search))
+            errors.Add("search", "search must not contain control characters.");
         return search;
     }
 

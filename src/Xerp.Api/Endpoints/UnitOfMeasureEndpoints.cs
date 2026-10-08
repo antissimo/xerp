@@ -19,7 +19,7 @@ public static class UnitOfMeasureEndpoints
                 return Problems.From(input.Error);
             var result = await operations.ListAsync(input.Value, ct);
             return result.IsSuccess ? Results.Ok(result.Value) : Problems.From(result.Error);
-        });
+        }).AcceptsQuery("search", "isActive", "limit", "offset");
 
         // A malformed id does not match the route and ends as NOT_FOUND like any unknown path (E6).
         units.MapGet("/{id:guid}", async (Guid id, UnitOfMeasureOperations operations, CancellationToken ct) =>

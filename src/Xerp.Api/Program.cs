@@ -43,7 +43,7 @@ app.MapGet("/health", async (XerpDbContext db, CancellationToken ct) =>
         ? Results.Ok(new { status = "ok", db = "ok" })
         : Results.Json(new { status = "degraded", db = "down" }, statusCode: StatusCodes.Status503ServiceUnavailable));
 
-var v1 = app.MapGroup("/api/v1");
+var v1 = app.MapGroup("/api/v1").RejectUndefinedQueryParameters();
 v1.MapTenantEndpoints();
 v1.MapUnitOfMeasureEndpoints();
 v1.MapArticleEndpoints();

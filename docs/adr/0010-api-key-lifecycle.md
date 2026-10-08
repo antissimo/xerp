@@ -1,7 +1,8 @@
 # ADR-0010: API key lifecycle — create, revoke, never delete; no self-revocation; secrets never through MCP
 
 Status: accepted (2026-10-08) — extends ADR-0003; first applied by spec 003.
-Point 5 (no `api_key_create` tool) is the architect's default and is **awaiting owner confirmation**.
+Confirmed by the owner on 2026-10-09 as written, including point 5 (no `api_key_create` MCP tool) and the
+consequence that any tenant key may manage keys until the permissions spec (roadmap item 6).
 
 ## Context
 Since spec 001 a tenant has exactly one key (`initial`, `human`), created with the tenant. An agent can only be
@@ -35,7 +36,7 @@ managing keys.
 - **Only `human` keys may manage keys.** Would make `actorType` a security boundary, which ADR-0003 says it is
   not, and it is self-declared anyway. Real restriction comes with permissions (roadmap item 6). Rejected.
 - **`api_key_create` as an MCP tool.** Full parity, and lets an orchestrating agent provision sub-agents by
-  itself. Rejected as the default because of point 5; can be added later behind a permission.
+  itself. Rejected because of point 5 (owner confirmed 2026-10-09); can be reconsidered behind a permission.
 - **Expiry dates, rotation, scopes.** Useful; belong to the permissions spec. Not now.
 
 ## Consequences

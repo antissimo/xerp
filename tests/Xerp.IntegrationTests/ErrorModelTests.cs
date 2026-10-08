@@ -60,7 +60,6 @@ public class ErrorModelTests(XerpFixture app)
 
         using var response = await tenant.Client.DeleteAsync(Uom.Path);
 
-        Assert.True(response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed);
-        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        await HttpAssert.NotFoundAsync(response);
     }
 }
