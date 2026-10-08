@@ -37,7 +37,7 @@ public class StructureTests(XerpFixture app)
     }
 
     [Fact]
-    public async Task AC06_Database_has_exactly_the_tables_of_spec_001_each_with_TenantId_except_Tenants()
+    public async Task AC06_Database_has_exactly_the_specified_tables_each_with_TenantId_except_Tenants()
     {
         await using var connection = await app.OpenDbAsync();
         var tables = new List<string>();
@@ -48,7 +48,7 @@ public class StructureTests(XerpFixture app)
             while (await reader.ReadAsync())
                 tables.Add(reader.GetString(0));
 
-        Assert.Equal(["ApiKeys", "Tenants", "UnitsOfMeasure"], tables);
+        Assert.Equal(["ApiKeys", "Articles", "Tenants", "UnitsOfMeasure"], tables); // spec 002 adds Articles
 
         foreach (var table in tables.Where(t => t != "Tenants"))
         {

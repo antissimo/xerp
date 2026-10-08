@@ -9,6 +9,8 @@ public static class ErrorCodes
     public const string NotFound = "NOT_FOUND";
     public const string CodeTaken = "CODE_TAKEN";
     public const string InUse = "IN_USE";
+    public const string ReferenceNotFound = "REFERENCE_NOT_FOUND";
+    public const string ReferenceInactive = "REFERENCE_INACTIVE";
     public const string InvalidState = "INVALID_STATE";
     public const string InternalError = "INTERNAL_ERROR";
 }
