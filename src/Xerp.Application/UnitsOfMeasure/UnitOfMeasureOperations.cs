@@ -120,10 +120,20 @@ public sealed class UnitOfMeasureOperations(IXerpDb db, ITenantContext context, 
         var unit = await db.UnitsOfMeasure.SingleOrDefaultAsync(u => u.Id == id, cancellationToken);
         if (unit is null)
             return NotFound();
+        // Active and inactive referrers both count (spec 002, R16). The detail says how many, never which.
+        var articles = await db.Articles.CountAsync(a => a.BaseUnitId == id, cancellationToken);
+        if (articles > 0)
+            return InUse($"The unit of measure is the base unit of {articles} article(s).");
+
         db.UnitsOfMeasure.Remove(unit);
         try
         {
             await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (ForeignKeyViolationException ex) when (ex.BlockedDelete)
+        {
+            // Something started to reference the unit after the check above: the foreign key is the authority.
+            return InUse("The unit of measure is referenced by other records.");
         }
         catch (DbUpdateConcurrencyException)
         {
@@ -139,6 +149,9 @@ public sealed class UnitOfMeasureOperations(IXerpDb db, ITenantContext context, 
 
     private Guid ActorKeyId() =>
         context.ApiKeyId ?? throw new InvalidOperationException("A unit of measure can only be written by a tenant API key.");
+
+    private static AppError InUse(string detail) =>
+        AppError.InUse(detail + " Deactivate it instead (isActive = false), or remove the references first.");
 
     private static AppError NotFound() => AppError.NotFound("Unit of measure not found.");
 

@@ -6,9 +6,9 @@ namespace Xerp.Application.UnitsOfMeasure;
 /// <summary>Input rules for units of measure (spec 001, R1-R5, R9). No I/O.</summary>
 public static class UnitOfMeasureValidation
 {
-    public const int DefaultLimit = 50;
-    public const int MaxLimit = 500;
-    public const int MaxSearchLength = 100;
+    public const int DefaultLimit = ListRules.DefaultLimit;
+    public const int MaxLimit = ListRules.MaxLimit;
+    public const int MaxSearchLength = ListRules.MaxSearchLength;
 
     public static Result<UnitOfMeasureValues> Create(CreateUnitOfMeasureInput input)
     {
@@ -35,19 +35,9 @@ public static class UnitOfMeasureValidation
     public static Result<UnitOfMeasureListQuery> List(ListUnitsOfMeasureInput input)
     {
         var errors = new ValidationErrors();
-        var search = input.Search?.Trim();
-        if (string.IsNullOrEmpty(search))
-            search = null;
-        else if (search.Length > MaxSearchLength)
-            errors.Add("search", $"search must be at most {MaxSearchLength} characters.");
-        else if (TextRules.HasControlCharacters(search))
-            errors.Add("search", "search must not contain control characters.");
-        var limit = input.Limit ?? DefaultLimit;
-        if (limit < 1 || limit > MaxLimit)
-            errors.Add("limit", $"limit must be between 1 and {MaxLimit}.");
-        var offset = input.Offset ?? 0;
-        if (offset < 0)
-            errors.Add("offset", "offset must be 0 or greater.");
+        var search = ListRules.Search(errors, input.Search);
+        var limit = ListRules.Limit(errors, input.Limit);
+        var offset = ListRules.Offset(errors, input.Offset);
         if (errors.Any)
             return errors.ToError();
         return new UnitOfMeasureListQuery(search, input.IsActive, limit, offset);
