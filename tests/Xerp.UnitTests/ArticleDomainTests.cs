@@ -115,4 +115,22 @@ public class ArticleDomainTests
         Assert.Equal("Name", article.Name);
         Assert.Equal(ArticleType.Stock, article.Type);
     }
+
+    [Theory]
+    [InlineData("a\u0000b")]
+    [InlineData("a\u0007b")]
+    [InlineData("a\u000bb")]
+    [InlineData("a\u007fb")]
+    [InlineData("a\u0085b")]
+    public void R3_Description_with_a_control_character_other_than_line_break_or_tab_is_rejected(string input)
+    {
+        Assert.False(ArticleRules.TryNormalizeDescription(input, out _));
+    }
+
+    [Fact]
+    public void R3_Description_keeps_line_feed_carriage_return_and_tab()
+    {
+        Assert.True(ArticleRules.TryNormalizeDescription("a\r\n\tb\nc", out var description));
+        Assert.Equal("a\r\n\tb\nc", description);
+    }
 }
