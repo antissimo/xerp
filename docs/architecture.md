@@ -57,7 +57,8 @@ Rules:
   3. On save, the DbContext stamps `TenantId` on added entities and refuses to save an entity whose
      `TenantId` differs from the current tenant.
   4. Every unique index and every foreign key between tenant-owned tables includes `TenantId`
-     (uniqueness is per tenant; a row can never reference another tenant's row).
+     (uniqueness is per tenant; a row can never reference another tenant's row). Foreign keys restrict
+     deletes; nothing cascades (ADR-0008). A model test enforces this from spec 002 on.
   5. `IgnoreQueryFilters()` is forbidden outside the authentication lookup (which has no tenant yet).
   6. A model test asserts that every entity type except `Tenant` is tenant-owned and filtered.
 - A record of another tenant is indistinguishable from a missing record: `404 NOT_FOUND`, never `403`.
@@ -89,6 +90,13 @@ Rules:
 - Master data has a server id (`id`, used for references) and a human/agent-friendly `code`, unique per tenant,
   case-insensitive. Lookup by code is `GET /<resource>/by-code/{code}`.
 - Create: `POST` -> `201` + `Location` + body. Replace: `PUT` (all fields) -> `200` + body. Delete: `204`.
+- References between records (ADR-0008): a request names another record by server id in a field `<role>Id`
+  (`baseUnitId`); a representation returns it as an embedded summary `"<role>": { "id", "code", "name" }`.
+  An inactive record cannot be newly referenced but existing references stay valid. A referenced record cannot
+  be deleted (`IN_USE`); it is retired with `isActive = false`. Every spec that adds a reference adds a list
+  filter by it (`GET /articles?baseUnitId=`).
+- Order of checks in a write: validation (`400`) -> addressed record exists (`404`) -> references
+  (`409 REFERENCE_*`) -> uniqueness (`409 CODE_TAKEN`).
 
 ## 6. Error model (ADR-0004)
 
@@ -102,12 +110,14 @@ Every non-2xx response under `/api/v1` is `application/problem+json` (RFC 9457) 
 
 | HTTP | `code` | Meaning |
 |---|---|---|
-| 400 | `VALIDATION_FAILED` | Malformed JSON, unknown property, or field rule violated. `errors` maps camelCase field name -> messages. |
+| 400 | `VALIDATION_FAILED` | Malformed JSON, unknown property, or field rule violated — anything decidable from the request alone. `errors` maps camelCase field name -> messages. |
 | 401 | `UNAUTHENTICATED` | Missing, malformed, unknown or disabled credential. Sent with `WWW-Authenticate: Bearer`. |
 | 403 | `FORBIDDEN` | Valid credential, operation not allowed for it. |
 | 404 | `NOT_FOUND` | No such record in this tenant (also: other tenant's record, malformed id). |
 | 409 | `CODE_TAKEN` | Unique code already used in this tenant. |
 | 409 | `IN_USE` | Record is referenced and cannot be deleted. |
+| 409 | `REFERENCE_NOT_FOUND` | A `<role>Id` in the body is well-formed but no such record exists in this tenant (also: other tenant's record). `errors` has the field's key. |
+| 409 | `REFERENCE_INACTIVE` | A `<role>Id` in the body points at an inactive record that is being newly assigned. `errors` has the field's key. |
 | 409 | `INVALID_STATE` | (later) Operation not allowed in the document's current status. |
 | 500 | `INTERNAL_ERROR` | Unexpected. No stack trace or SQL in the body. |
 
