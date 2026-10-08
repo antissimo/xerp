@@ -36,10 +36,11 @@ public class McpToolErrorTests(XerpFixture app)
         var (tenant, mcp) = await ConnectAsync();
         await using var _ = mcp;
 
-        McpAssert.ValidationWithErrors(await mcp.CallAsync("uom_create", new { code = "kg", name = "Kilogram", tenantId = Guid.NewGuid() }));
-        McpAssert.ValidationWithErrors(await mcp.CallAsync("uom_create", new { code = "kg", name = "Kilogram", foo = 1 }));
-        McpAssert.ValidationWithErrors(await mcp.CallAsync("uom_create", new { code = "kg", name = 123 }));
-        McpAssert.ValidationWithErrors(await mcp.CallAsync("uom_list", new { limit = "10" }));
+        // The errors key is the argument's name, as over HTTP (001/E4; spec 003 R14 as amended).
+        await mcp.ErrorAsync("uom_create", new { code = "kg", name = "Kilogram", tenantId = Guid.NewGuid() }, "VALIDATION_FAILED", "tenantId");
+        await mcp.ErrorAsync("uom_create", new { code = "kg", name = "Kilogram", foo = 1 }, "VALIDATION_FAILED", "foo");
+        await mcp.ErrorAsync("uom_create", new { code = "kg", name = 123 }, "VALIDATION_FAILED", "name");
+        await mcp.ErrorAsync("uom_list", new { limit = "10" }, "VALIDATION_FAILED", "limit");
         await mcp.ErrorAsync("whoami", new { x = 1 }, "VALIDATION_FAILED");
 
         Assert.Equal(0, (await Uom.ListAsync(tenant.Client)).Total());
