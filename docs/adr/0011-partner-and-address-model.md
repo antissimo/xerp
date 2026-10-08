@@ -12,7 +12,7 @@ choice with its alternatives and fixes the parts the roadmap left open.
 
 ## Decision
 1. **One `Partner` master with two role flags**, `isCustomer` and `isSupplier`. At least one must be `true`.
-   A counterparty that is both is one record with one code, one balance later (roadmap item 16).
+   A counterparty that is both is one record with one code, one balance later (roadmap item 15).
 2. **The roles are plain booleans in the same record**, not sub-records. Role-specific data (payment terms,
    price list, posting group) arrives with the specs that need it and will then decide where it lives.
 3. **The address is six optional flat fields on the owning record**: `addressLine1`, `addressLine2`,
@@ -44,7 +44,7 @@ choice with its alternatives and fixes the parts the roadmap left open.
   `errors` key = one tool argument.
 - **Addresses as a sub-resource** (several per partner: billing, shipping). The right model once delivery and
   invoice addresses differ; needs its own operations and a "default" rule. Deferred to the sales/purchase
-  document specs (011, 012), which will know what they need. The six fields then remain the partner's main
+  document specs (009, 010), which will know what they need. The six fields then remain the partner's main
   address.
 - **Validate `countryCode` against ISO 3166-1.** Catches `XX`, but the list changes, .NET's region data depends
   on the globalisation mode of the container, and an embedded list is one more thing to maintain. Rejected for

@@ -3,6 +3,11 @@
 Status: accepted (2026-10-08) — refines ADR-0005; first applied by spec 003.
 Confirmed by the owner on 2026-10-09: MCP clients authenticate with a static API key only (no OAuth for now),
 and rate limiting is not built yet (it stays on the roadmap and must precede production tenants).
+SDK facts verified by the tester on 2026-10-09 (`docs/questions/003-q.md`, T-Q5), which this ADR had left
+unverified: `ModelContextProtocol` / `ModelContextProtocol.AspNetCore` 2.2.0; `WithHttpTransport(o =>
+o.Stateless = true)` issues no session id and answers `GET`/`DELETE` with `405`; negotiated revision
+`2026-07-28`; the generated input schema has no `additionalProperties: false` (the server must add it and
+enforce it); default capabilities include `logging` (tolerated).
 
 ## Context
 ADR-0005 fixed where the MCP server lives (inside `Xerp.Api`, calling Application in-process) and how tools are

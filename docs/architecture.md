@@ -170,7 +170,7 @@ MCP maps the same error to a tool error with the same `code` (shape in section 7
 - The CLI and the web UI are not built in this repository. They are ordinary HTTP API clients with their own
   API keys; nothing in the backend is specific to them. Because they are developed separately, the HTTP API must
   not change incompatibly within `/api/v1`, and the OpenAPI document is the description they build against.
-  It does not exist yet: spec 003a delivers it (served in every environment to any authenticated tenant key,
+  It does not exist yet: spec 018 delivers it (served in every environment to any authenticated tenant key,
   and committed to the repository so that a contract change is visible in a diff).
 - Every spec defines both the HTTP and the MCP signature of each operation. Specs 001 and 002 carry their MCP
   signatures as contract only; spec 003 implements them. From spec 004 on, a spec's tools are implemented with it,

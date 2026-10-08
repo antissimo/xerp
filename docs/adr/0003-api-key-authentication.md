@@ -37,4 +37,4 @@ reject every request.
   will be specified only when that project needs it.
 - Agents may post documents by default (owner answered "yes" to "may agents post by default, or only prepare
   drafts?"; interpreted as "may post by default"). `actorType` therefore does not by itself restrict anything;
-  restrictions come from per-key permissions (roadmap item 6).
+  restrictions come from per-key permissions (roadmap item 17).

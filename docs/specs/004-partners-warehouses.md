@@ -8,8 +8,7 @@ Read first: `docs/architecture.md` (sections 5, 7, 9), specs 001, 002 and 003, A
 Everything specs 001–003 established applies unchanged unless this spec says otherwise: authentication, tenant
 context, error model, list envelope, code and name rules, query-string and body rules, audit fields, MCP result
 mapping, test infrastructure. Rule, edge-case and criterion numbers are local to this spec; "001/R9" means rule
-R9 of spec 001. Spec 003a (OpenAPI) is not a prerequisite; if it is merged first, its committed document is
-regenerated with this spec's routes.
+R9 of spec 001. The OpenAPI document (spec 018) is not a prerequisite.
 
 ## 1. Goal
 
@@ -17,7 +16,7 @@ Complete the masters every later document needs. After this spec:
 
 - a tenant key can list, read, create, replace and delete its tenant's **partners** — the companies and people
   it sells to and buys from — with roles (`isCustomer`, `isSupplier`), an optional tax id and an address;
-- a tenant key can do the same with its **warehouses** — the places where stock will be kept (spec 008);
+- a tenant key can do the same with its **warehouses** — the places where stock will be kept (spec 005);
 - every one of these operations exists as an HTTP endpoint **and** an MCP tool, built together for the first
   time (architecture §7), with a parity test;
 - the acceptance tests are, for the first time, written by the tester from the criteria of this spec.
@@ -33,8 +32,8 @@ In scope
 4. The shared address fields and the "optional text" rule (ADR-0011), implemented once.
 
 Out of scope
-- Anything that references a partner or a warehouse: stock (008), orders (011, 012), invoices (015), payments
-  (016). Until then both can always be deleted.
+- Anything that references a partner or a warehouse: stock (005), orders (009, 010), invoices (014), payments
+  (015). Until then both can always be deleted.
 - Several addresses per partner, contact persons, e-mail, phone, bank accounts, payment terms, credit limits,
   currencies, price lists, partner groups, posting configuration.
 - Validation of tax ids or addresses against any country's rules; a list of countries (ADR-0011).
@@ -190,7 +189,7 @@ Common to both resources
 - R11. Order of checks: request validation (`400`, all invalid fields reported together) -> existence of the
   addressed record (`404`) -> code uniqueness (`409 CODE_TAKEN`).
 - R12. Delete removes the row. Nothing references a partner or a warehouse yet.
-  *Forward notice:* from the specs that add stock and documents (008, 011, 012), a referenced partner or
+  *Forward notice:* from the specs that add stock and documents (005, 009, 010), a referenced partner or
   warehouse will answer `409 IN_USE` and is retired with `isActive: false` instead (ADR-0008).
 - R13. List: `search`, `isActive`, `limit`, `offset`, `total` and ordering (by code, case-insensitive,
   ascending) as 001/R9. Filters combine with AND.
