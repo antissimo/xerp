@@ -40,6 +40,8 @@ public static class UnitOfMeasureValidation
             search = null;
         else if (search.Length > MaxSearchLength)
             errors.Add("search", $"search must be at most {MaxSearchLength} characters.");
+        else if (TextRules.HasControlCharacters(search))
+            errors.Add("search", "search must not contain control characters.");
         var limit = input.Limit ?? DefaultLimit;
         if (limit < 1 || limit > MaxLimit)
             errors.Add("limit", $"limit must be between 1 and {MaxLimit}.");
