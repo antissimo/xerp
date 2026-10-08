@@ -112,8 +112,14 @@ Rules:
   An inactive record cannot be newly referenced but existing references stay valid. A referenced record cannot
   be deleted (`IN_USE`); it is retired with `isActive = false`. Every spec that adds a reference adds a list
   filter by it (`GET /articles?baseUnitId=`).
-- Order of checks in a write: validation (`400`) -> addressed record exists (`404`) -> references
-  (`409 REFERENCE_*`) -> uniqueness (`409 CODE_TAKEN`).
+- Order of checks in a write: validation (`400`) -> addressed record exists (`404`) -> state
+  (`409 INVALID_STATE`) -> references (`409 REFERENCE_*`) -> uniqueness (`409 CODE_TAKEN`).
+- Documents (ADR-0007, ADR-0012): a document has a header and `lines`; it is created and replaced as a whole
+  while `draft`, and changes state through action routes (`POST /<resource>/{id}/post`). A posted document is
+  immutable and has a `number`, `postedAt`, `postedBy`; lookup by number is `GET /<resource>/by-number/{number}`.
+  An error about a line is keyed `lines[i].<field>` with a zero-based index into the request's array.
+- Quantities are exact decimals sent as JSON numbers: at most 6 decimal places and 15 significant digits;
+  a quoted number is a wrong type. Consumers compare numerically (`10` equals `10.000000`).
 
 ## 6. Error model (ADR-0004)
 
@@ -132,11 +138,13 @@ Every non-2xx response under `/api/v1` is `application/problem+json` (RFC 9457) 
 | 403 | `FORBIDDEN` | Valid credential, operation not allowed for it. |
 | 404 | `NOT_FOUND` | No such record in this tenant (also: other tenant's record, malformed id), no such path, or method not supported on the path. |
 | 409 | `CODE_TAKEN` | Unique code already used in this tenant. |
-| 409 | `IN_USE` | Record is referenced and cannot be deleted. |
+| 409 | `IN_USE` | Record is referenced and cannot be deleted; or a field that is frozen while the record is used would change (`errors` names the fields). |
 | 409 | `REFERENCE_NOT_FOUND` | A `<role>Id` in the body is well-formed but no such record exists in this tenant (also: other tenant's record). `errors` has the field's key. |
 | 409 | `REFERENCE_INACTIVE` | A `<role>Id` in the body points at an inactive record that is being newly assigned. `errors` has the field's key. |
 | 409 | `CANNOT_REVOKE_SELF` | An API key tried to revoke itself. |
-| 409 | `INVALID_STATE` | (later) Operation not allowed in the document's current status. |
+| 409 | `INVALID_STATE` | Operation not allowed in the document's current status (e.g. replace, delete or post of a posted document). |
+| 409 | `INSUFFICIENT_STOCK` | Posting would make stock on hand negative. `errors` has `lines[i].quantity` for the short lines. |
+| 409 | `ARTICLE_NOT_STOCKED` | A stock document line names a `service` article. `errors` has `lines[i].articleId`. |
 | 500 | `INTERNAL_ERROR` | Unexpected. No stack trace or SQL in the body. |
 
 `code` values are part of the contract: clients and tests branch on `code`, never on `detail` text.
@@ -185,8 +193,9 @@ MCP maps the same error to a tool error with the same `code` (shape in section 7
   Columns that hold an actor (`CreatedBy`, `UpdatedBy`, `RevokedBy`, …) are real foreign keys
   `(TenantId, <column>)` -> `ApiKeys (TenantId, Id)` with `ON DELETE RESTRICT`: an actor can never belong to
   another tenant, and an API key that has written anything can be revoked but never deleted (ADR-0010).
-- Ledger tables (stock ledger, journal lines; later) are append-only: no `UPDATE`, no `DELETE`; corrections are
-  reversing entries (ADR-0007).
+- Ledger tables (stock ledger from spec 005; journal lines later) are append-only: no `UPDATE`, no `DELETE`;
+  corrections are reversing entries (ADR-0007). Stock on hand is the sum of the stock ledger and is never
+  negative (ADR-0012). Document numbers are gapless per tenant and document type and are assigned at posting.
 
 ## 9. Testing (ADR-0006)
 
