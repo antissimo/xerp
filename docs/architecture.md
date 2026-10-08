@@ -57,7 +57,8 @@ Rules:
   3. On save, the DbContext stamps `TenantId` on added entities and refuses to save an entity whose
      `TenantId` differs from the current tenant.
   4. Every unique index and every foreign key between tenant-owned tables includes `TenantId`
-     (uniqueness is per tenant; a row can never reference another tenant's row).
+     (uniqueness is per tenant; a row can never reference another tenant's row). Foreign keys restrict
+     deletes; nothing cascades (ADR-0008). A model test enforces this from spec 002 on.
   5. `IgnoreQueryFilters()` is forbidden outside the authentication lookup (which has no tenant yet).
   6. A model test asserts that every entity type except `Tenant` is tenant-owned and filtered.
 - A record of another tenant is indistinguishable from a missing record: `404 NOT_FOUND`, never `403`.
@@ -73,7 +74,11 @@ Rules:
 - Tenants are provisioned through `/api/v1/admin/*`, authenticated with a platform admin key taken from
   configuration (`Xerp:AdminKey`, env `Xerp__AdminKey`). The admin key has no tenant and cannot call tenant routes.
 - Every write stamps `CreatedBy` / `UpdatedBy` with the acting API key id.
-- Roles/permissions per key and key management by tenant users are later roadmap items. Human login for the
+- Key lifecycle (ADR-0010, spec 003): a tenant key can create, list and revoke keys of its tenant. Revocation
+  is permanent; keys are never deleted (they are the actors that audit fields point at); a key cannot revoke
+  itself, so a tenant always keeps one active key. A plaintext key is returned once, over HTTP only — never
+  through an MCP tool.
+- Roles/permissions per key are a later roadmap item. Human login for the
   external web client (e.g. OIDC mapped to the same actor model) is not planned here until that project asks for it.
 - Agents may post documents by default (owner answered "yes"; interpreted as "agents may post by default"),
   restrictable per key once permissions exist. Until permissions exist, every tenant key can do everything inside its tenant.
@@ -89,6 +94,13 @@ Rules:
 - Master data has a server id (`id`, used for references) and a human/agent-friendly `code`, unique per tenant,
   case-insensitive. Lookup by code is `GET /<resource>/by-code/{code}`.
 - Create: `POST` -> `201` + `Location` + body. Replace: `PUT` (all fields) -> `200` + body. Delete: `204`.
+- References between records (ADR-0008): a request names another record by server id in a field `<role>Id`
+  (`baseUnitId`); a representation returns it as an embedded summary `"<role>": { "id", "code", "name" }`.
+  An inactive record cannot be newly referenced but existing references stay valid. A referenced record cannot
+  be deleted (`IN_USE`); it is retired with `isActive = false`. Every spec that adds a reference adds a list
+  filter by it (`GET /articles?baseUnitId=`).
+- Order of checks in a write: validation (`400`) -> addressed record exists (`404`) -> references
+  (`409 REFERENCE_*`) -> uniqueness (`409 CODE_TAKEN`).
 
 ## 6. Error model (ADR-0004)
 
@@ -102,21 +114,24 @@ Every non-2xx response under `/api/v1` is `application/problem+json` (RFC 9457) 
 
 | HTTP | `code` | Meaning |
 |---|---|---|
-| 400 | `VALIDATION_FAILED` | Malformed JSON, unknown property, or field rule violated. `errors` maps camelCase field name -> messages. |
+| 400 | `VALIDATION_FAILED` | Malformed JSON, unknown property, or field rule violated — anything decidable from the request alone. `errors` maps camelCase field name -> messages. |
 | 401 | `UNAUTHENTICATED` | Missing, malformed, unknown or disabled credential. Sent with `WWW-Authenticate: Bearer`. |
 | 403 | `FORBIDDEN` | Valid credential, operation not allowed for it. |
 | 404 | `NOT_FOUND` | No such record in this tenant (also: other tenant's record, malformed id). |
 | 409 | `CODE_TAKEN` | Unique code already used in this tenant. |
 | 409 | `IN_USE` | Record is referenced and cannot be deleted. |
+| 409 | `REFERENCE_NOT_FOUND` | A `<role>Id` in the body is well-formed but no such record exists in this tenant (also: other tenant's record). `errors` has the field's key. |
+| 409 | `REFERENCE_INACTIVE` | A `<role>Id` in the body points at an inactive record that is being newly assigned. `errors` has the field's key. |
+| 409 | `CANNOT_REVOKE_SELF` | An API key tried to revoke itself. |
 | 409 | `INVALID_STATE` | (later) Operation not allowed in the document's current status. |
 | 500 | `INTERNAL_ERROR` | Unexpected. No stack trace or SQL in the body. |
 
 `code` values are part of the contract: clients and tests branch on `code`, never on `detail` text.
 Specs add feature-specific codes; this table is the registry and is updated with them.
 Application defines the errors (`AppError { Code, Detail, Errors }`); Api maps code -> HTTP status in one place;
-MCP maps the same error to a tool error with the same `code`.
+MCP maps the same error to a tool error with the same `code` (shape in section 7).
 
-## 7. API and MCP; external clients (ADR-0005, amended)
+## 7. API and MCP; external clients (ADR-0005 amended, ADR-0009)
 
 ```
  Web UI (separate project) ──HTTP──┐
@@ -130,11 +145,21 @@ MCP maps the same error to a tool error with the same `code`.
   and calls Application operations in-process. It does not call the HTTP API and has no rules of its own.
 - MCP tools are named `<resource>_<verb>` in snake_case (`uom_list`, `article_create`). One tool = one
   Application operation = one HTTP endpoint, with the same field names, limits and error codes.
+- MCP shape (ADR-0009): official C# SDK; stateless (no MCP session; every request carries the API key);
+  tools only. Authentication and `Origin` failures are HTTP `401`/`403` problem documents. A tool's arguments
+  are the HTTP operation's path, query and body fields in one closed JSON object.
+  Success: `structuredContent` = the HTTP response body (or `{ "deleted": true }` for `204`), plus the same JSON
+  as one text block; every tool declares an `outputSchema`.
+  Error: `isError: true` and one text block containing `{ "code", "detail", "errors"? }`, no
+  `structuredContent`. Validation failures are tool errors (`VALIDATION_FAILED`), never JSON-RPC errors.
+- Operations deliberately without an MCP tool: tenant provisioning (admin key, no tenant context) and API key
+  creation (its result is a secret; ADR-0010). Every other operation has a tool; a test pins the exact tool list.
 - The CLI and the web UI are not built in this repository. They are ordinary HTTP API clients with their own
   API keys; nothing in the backend is specific to them. Because they are developed separately, the HTTP API must
   not change incompatibly within `/api/v1`, and the OpenAPI document is the description they build against.
-- Every spec defines both the HTTP and the MCP signature of each operation. Until the MCP server exists
-  (roadmap item 3) the MCP signatures in a spec are a contract to be honoured later, not something to implement.
+- Every spec defines both the HTTP and the MCP signature of each operation. Specs 001 and 002 carry their MCP
+  signatures as contract only; spec 003 implements them. From spec 004 on, a spec's tools are implemented with it,
+  including tool metadata (description with error codes, schemas, annotations) and an HTTP/MCP parity test.
 
 ## 8. Data conventions
 
