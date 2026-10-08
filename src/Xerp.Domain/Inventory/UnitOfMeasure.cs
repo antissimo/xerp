@@ -20,8 +20,27 @@ public sealed class UnitOfMeasure : ITenantOwned
     public Guid UpdatedBy { get; private set; }
 
     public static UnitOfMeasure Create(string code, string name, bool isActive, DateTime now, Guid actorKeyId) =>
-        throw new NotImplementedException();
+        new()
+        {
+            Id = Guid.CreateVersion7(),
+            Code = CodeRules.Normalize(code, nameof(code)),
+            Name = NameRules.Normalize(name, nameof(name)),
+            IsActive = isActive,
+            CreatedAt = now,
+            UpdatedAt = now,
+            CreatedBy = actorKeyId,
+            UpdatedBy = actorKeyId,
+        };
 
-    public void Replace(string code, string name, bool isActive, DateTime now, Guid actorKeyId) =>
-        throw new NotImplementedException();
+    public void Replace(string code, string name, bool isActive, DateTime now, Guid actorKeyId)
+    {
+        // Validate both before assigning either, so a rejected replace leaves the unit untouched.
+        var newCode = CodeRules.Normalize(code, nameof(code));
+        var newName = NameRules.Normalize(name, nameof(name));
+        Code = newCode;
+        Name = newName;
+        IsActive = isActive;
+        UpdatedAt = now;
+        UpdatedBy = actorKeyId;
+    }
 }

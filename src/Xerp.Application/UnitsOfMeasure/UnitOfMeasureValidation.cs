@@ -1,4 +1,5 @@
 using Xerp.Application.Common;
+using Xerp.Domain.Common;
 
 namespace Xerp.Application.UnitsOfMeasure;
 
@@ -9,9 +10,44 @@ public static class UnitOfMeasureValidation
     public const int MaxLimit = 500;
     public const int MaxSearchLength = 100;
 
-    public static Result<UnitOfMeasureValues> Create(CreateUnitOfMeasureInput input) => throw new NotImplementedException();
+    public static Result<UnitOfMeasureValues> Create(CreateUnitOfMeasureInput input)
+    {
+        var errors = new ValidationErrors();
+        var code = errors.Code(input.Code);
+        var name = errors.Name(input.Name);
+        if (errors.Any)
+            return errors.ToError();
+        return new UnitOfMeasureValues(code, name, input.IsActive ?? true);
+    }
 
-    public static Result<UnitOfMeasureValues> Replace(ReplaceUnitOfMeasureInput input) => throw new NotImplementedException();
+    public static Result<UnitOfMeasureValues> Replace(ReplaceUnitOfMeasureInput input)
+    {
+        var errors = new ValidationErrors();
+        var code = errors.Code(input.Code);
+        var name = errors.Name(input.Name);
+        if (input.IsActive is null)
+            errors.Add("isActive", "isActive is required.");
+        if (errors.Any)
+            return errors.ToError();
+        return new UnitOfMeasureValues(code, name, input.IsActive!.Value);
+    }
 
-    public static Result<UnitOfMeasureListQuery> List(ListUnitsOfMeasureInput input) => throw new NotImplementedException();
+    public static Result<UnitOfMeasureListQuery> List(ListUnitsOfMeasureInput input)
+    {
+        var errors = new ValidationErrors();
+        var search = input.Search?.Trim();
+        if (string.IsNullOrEmpty(search))
+            search = null;
+        else if (search.Length > MaxSearchLength)
+            errors.Add("search", $"search must be at most {MaxSearchLength} characters.");
+        var limit = input.Limit ?? DefaultLimit;
+        if (limit < 1 || limit > MaxLimit)
+            errors.Add("limit", $"limit must be between 1 and {MaxLimit}.");
+        var offset = input.Offset ?? 0;
+        if (offset < 0)
+            errors.Add("offset", "offset must be 0 or greater.");
+        if (errors.Any)
+            return errors.ToError();
+        return new UnitOfMeasureListQuery(search, input.IsActive, limit, offset);
+    }
 }

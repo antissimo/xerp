@@ -19,6 +19,14 @@ public static class ErrorCodes
 /// </summary>
 public sealed record AppError(string Code, string Detail, IReadOnlyDictionary<string, string[]>? Errors = null)
 {
+    public static AppError Unauthenticated(string detail = "A valid API key is required.") =>
+        new(ErrorCodes.Unauthenticated, detail);
+
+    public static AppError Forbidden(string detail = "This credential is not allowed to perform the operation.") =>
+        new(ErrorCodes.Forbidden, detail);
+
+    public static AppError Internal() => new(ErrorCodes.InternalError, "An unexpected error occurred.");
+
     public static AppError NotFound(string detail) => new(ErrorCodes.NotFound, detail);
 
     public static AppError CodeTaken(string detail) => new(ErrorCodes.CodeTaken, detail);

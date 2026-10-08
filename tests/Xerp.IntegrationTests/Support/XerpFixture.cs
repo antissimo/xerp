@@ -18,8 +18,7 @@ public sealed class XerpFixture : IAsyncLifetime
 {
     public const string AdminKey = "test-admin-key-0123456789-abcdefghijklmnop";
 
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
-        .WithImage("postgres:18")
+    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:18")
         .WithDatabase("xerp_test")
         .WithUsername("xerp_test")
         .WithPassword("xerp_test")

@@ -23,3 +23,6 @@ public sealed record UnitOfMeasureValues(string Code, string Name, bool IsActive
 
 /// <summary>Validated list query. <c>Search</c> is null when there is no text filter.</summary>
 public sealed record UnitOfMeasureListQuery(string? Search, bool? IsActive, int Limit, int Offset);
+
+/// <summary>The result of a delete (MCP: <c>{ "deleted": true }</c>; HTTP: 204).</summary>
+public sealed record UnitOfMeasureDeleted(bool Deleted = true);
