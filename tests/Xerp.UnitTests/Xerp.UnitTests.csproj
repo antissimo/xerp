@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Xerp.Domain/Xerp.Domain.csproj" />
+    <ProjectReference Include="../../src/Xerp.Application/Xerp.Application.csproj" />
+    <ProjectReference Include="../../src/Xerp.Infrastructure/Xerp.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

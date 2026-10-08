@@ -17,8 +17,12 @@ services:
     # Not published to the host on purpose: the API is the only way in.
 
   api:
-    build: ./api
+    build:
+      context: .
+      dockerfile: src/Xerp.Api/Dockerfile
     environment:
+      # Platform admin key for /api/v1/admin/*. Unset or shorter than 32 characters = admin routes reject everything.
+      Xerp__AdminKey: ${XERP_ADMIN_KEY:-}
       ConnectionStrings__Default: Host=db;Port=5432;Database=${POSTGRES_DB:-xerp};Username=${POSTGRES_USER:-xerp};Password=${POSTGRES_PASSWORD:-xerp}
     ports:
       - "127.0.0.1:${XERP_API_PORT:-8000}:8000"
