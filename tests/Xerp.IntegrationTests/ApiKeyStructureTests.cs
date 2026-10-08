@@ -73,7 +73,7 @@ public class ApiKeyStructureTests(XerpFixture app)
         var files = Directory.EnumerateFiles(Path.Combine(root!.FullName, "src"), "*.cs", SearchOption.AllDirectories)
             .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}"))
             .Where(f => File.ReadLines(f).Any(line => line.Contains("IgnoreQueryFilters(") && !line.TrimStart().StartsWith("//")))
-            .Select(Path.GetFileName)
+            .Select(f => Path.GetFileName(f)!)
             .ToArray();
 
         Assert.Equal(["ApiKeyLookup.cs"], files);
