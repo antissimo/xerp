@@ -307,7 +307,7 @@ public class StockDocumentDraftTests(XerpFixture app)
     [InlineData("documentDate", "\"\"")]
     [InlineData("documentDate", "\"2026-10-09T10:00:00Z\"")]
     [InlineData("documentDate", null)]
-    [InlineData("type", "\"transfer\"")]
+    [InlineData("type", "\"return\"")] // spec 006 made "transfer" a valid type
     [InlineData("type", "\"Receipt\"")]
     [InlineData("type", null)]
     [InlineData("warehouseId", "\"abc\"")]

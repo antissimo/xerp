@@ -368,7 +368,7 @@ public class StockNumberingAndQueryTests(XerpFixture app)
     }
 
     [Theory]
-    [InlineData("?type=transfer", "type")]
+    [InlineData("?type=return", "type")] // spec 006 made "transfer" a valid filter value
     [InlineData("?type=Receipt", "type")]
     [InlineData("?status=Posted", "status")]
     [InlineData("?warehouseId=abc", "warehouseId")]
