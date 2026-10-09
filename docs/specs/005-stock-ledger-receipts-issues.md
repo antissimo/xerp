@@ -1,13 +1,13 @@
 # Spec 005 — Stock ledger, receipts and issues
 
 Status: ready for the tester and the builder once specs 001–004 are merged to `main`.
-Branches: `tests/005-stock-ledger` (tester), `feat/005-stock-ledger` (builder).
+Branches: `tests/005-stock-ledger-receipts-issues` (tester), `feat/005-stock-ledger-receipts-issues` (builder).
 Read first: `docs/architecture.md`, specs 002 and 004 (articles, warehouses), ADR-0007, ADR-0008,
 **ADR-0012**. Why this is the fifth spec: `docs/roadmap.md` section 3 (business functionality first).
 Second half of the stock core — transfers and reversal — is spec 006.
 Spec 006 adds properties to the representations of §4.1 and §4.3 (`toWarehouse`, `reversalOf`, `reversedBy`,
 `document.isReversal`) and makes `type` `"transfer"` valid; tests of this spec that pin those are changed there.
-Spec 007 adds `unitId` to a line and `factor`, `baseUnit`, `baseQuantity` to its representation (007/AC-01).
+Spec 007 adds `unitId` to a line and `factor`, `baseUnit`, `baseQuantity` to its representation (007/AC-01). Spec 008 adds `type` `"count"` and `bookQuantity`, `differenceQuantity` on a line.
 
 **Inherited, not re-specified** (roadmap §4): authentication and credential kinds, strict bodies and query
 strings, the problem document, the list envelope, trimming and control-character rules, reference rules
@@ -228,7 +228,8 @@ Effects on masters
   re-coded.
 - R26. A used article's `type` and `baseUnitId` are frozen: a `PUT /articles/{id}` that changes either ->
   `409 IN_USE` with `errors` keys naming the changed frozen fields; nothing is changed. A `PUT` that keeps both
-  values succeeds. The check comes after `404` and before the reference checks of 002/R13.
+  values succeeds. The check comes after `404` and before the reference checks of 002/R13: a changed
+  `baseUnitId` is `IN_USE` whatever it points at, also an unknown or inactive unit (`005-q.md`, T-Q3).
 - R27. Deleting the last draft that uses an article or warehouse makes it unused again. Posted documents are
   never deleted, so an article or warehouse on a posted document stays used for good.
 - R28. A unit of measure used as base unit of an article stays `IN_USE` as in spec 002 (unchanged).
@@ -439,7 +440,8 @@ MCP
   `stock_document_post` of an issue beyond stock -> `INSUFFICIENT_STOCK` (`lines[0].quantity`);
   `stock_document_post` / `_update` / `_delete` of a posted document -> `INVALID_STATE`;
   `stock_document_create` with service article -> `ARTICLE_NOT_STOCKED` (`lines[0].articleId`); with quantity
-  `0` -> `VALIDATION_FAILED` (`lines[0].quantity`); with quantity `"5"` -> `VALIDATION_FAILED`;
+  `0` -> `VALIDATION_FAILED` (`lines[0].quantity`); with quantity `"5"` -> `VALIDATION_FAILED` (key `lines` or
+  `lines[0].quantity`, not asserted; `005-q.md`, T-Q6);
   `stock_document_get` with `{}` -> `VALIDATION_FAILED` (`id`, `number`); `article_delete` of a used article
   -> `IN_USE`.
 - AC-84 A draft created over HTTP by key H and posted through `stock_document_post` by key M has
