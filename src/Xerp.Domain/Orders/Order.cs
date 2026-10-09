@@ -63,7 +63,7 @@ public readonly record struct OrderLineEntry(Guid ArticleId, Guid UnitId, decima
 /// writes a ledger entry; it is fulfilled by stock documents linked to it, and only the fulfilled quantity of
 /// its lines follows them. What is common to every kind of order is here; a kind adds its name.
 /// </summary>
-public abstract class Order<TLine> : ITenantOwned where TLine : OrderLine
+public abstract class Order<TLine> : ITenantOwned, IFulfilledOrder where TLine : OrderLine
 {
     public const int ReferenceMaxLength = StockDocument.ReferenceMaxLength;
     public const int NoteMaxLength = StockDocument.NoteMaxLength;
@@ -84,10 +84,13 @@ public abstract class Order<TLine> : ITenantOwned where TLine : OrderLine
 
     public DateOnly OrderDate { get; private set; }
 
-    /// <summary>When fulfilment is due - the expected date of a purchase order; never earlier than <see cref="OrderDate"/>.</summary>
+    /// <summary>
+    /// When fulfilment is due - the expected date of a purchase order, the date the customer requested on a
+    /// sales order; never earlier than <see cref="OrderDate"/>.
+    /// </summary>
     public DateOnly? DueDate { get; private set; }
 
-    /// <summary>The other party: the supplier of a purchase order.</summary>
+    /// <summary>The other party: the supplier of a purchase order, the customer of a sales order.</summary>
     public Guid PartnerId { get; private set; }
 
     /// <summary>The warehouse the order is fulfilled in (ADR-0016, decision 8).</summary>
@@ -328,7 +331,7 @@ public abstract class OrderLine : ITenantOwned
 
     /// <summary>
     /// Progress (R25): the sum of the base quantities of the stock document lines that name this line on
-    /// posted, not reversed, documents - received, for a purchase order. Always between zero and
+    /// posted, not reversed, documents - received, for a purchase order; delivered, for a sales order. Always between zero and
     /// <see cref="BaseQuantity"/> (R27).
     /// </summary>
     public decimal FulfilledBaseQuantity { get; private set; }
@@ -390,4 +393,33 @@ public sealed class PurchaseOrderLine : OrderLine
     private PurchaseOrderLine() { }
 
     internal PurchaseOrderLine(Guid orderId, int lineNo, OrderLineEntry entry) : base(orderId, lineNo, entry) { }
+}
+
+/// <summary>
+/// A sales order (spec 010; ADR-0017): goods a customer (<see cref="Order{TLine}.PartnerId"/>) ordered, shipped
+/// from a warehouse and fulfilled by issues linked to it; its due date is the date the customer requested.
+/// Everything it does is what <see cref="Order{TLine}"/> does.
+/// </summary>
+public sealed class SalesOrder : Order<SalesOrderLine>
+{
+    private SalesOrder() { }
+
+    public static SalesOrder Create(
+        DateOnly orderDate, DateOnly? requestedDate, Guid customerId, Guid warehouseId, string? reference, string? note,
+        IReadOnlyList<OrderLineEntry> lines, DateTime now, Guid actorKeyId)
+    {
+        var order = new SalesOrder();
+        order.Start(orderDate, requestedDate, customerId, warehouseId, reference, note, lines, now, actorKeyId);
+        return order;
+    }
+
+    protected override SalesOrderLine NewLine(int lineNo, OrderLineEntry entry) => new(Id, lineNo, entry);
+}
+
+/// <summary>A line of a sales order; its fulfilled quantity is what was delivered.</summary>
+public sealed class SalesOrderLine : OrderLine
+{
+    private SalesOrderLine() { }
+
+    internal SalesOrderLine(Guid orderId, int lineNo, OrderLineEntry entry) : base(orderId, lineNo, entry) { }
 }

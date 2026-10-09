@@ -37,6 +37,7 @@ builder.Services.AddScoped<WarehouseOperations>();
 builder.Services.AddScoped<StockDocumentOperations>();
 builder.Services.AddScoped<StockQueries>();
 builder.Services.AddScoped<PurchaseOrderOperations>();
+builder.Services.AddScoped<SalesOrderOperations>();
 builder.Services.AddScoped<ApiKeyOperations>();
 builder.Services.AddXerpMcpServer();
 
@@ -67,6 +68,7 @@ v1.MapPartnerEndpoints();
 v1.MapWarehouseEndpoints();
 v1.MapStockEndpoints();
 v1.MapPurchaseOrderEndpoints();
+v1.MapSalesOrderEndpoints();
 v1.MapApiKeyEndpoints();
 
 // One operation = one HTTP endpoint + one MCP tool; both call the same Application operations.

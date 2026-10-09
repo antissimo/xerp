@@ -1,7 +1,9 @@
 using System.Globalization;
 using Xerp.Application.Common;
+using Xerp.Application.Orders;
 using Xerp.Domain.Common;
 using Xerp.Domain.Inventory;
+using Xerp.Domain.Orders;
 
 namespace Xerp.Application.Stock;
 
@@ -22,7 +24,6 @@ public static class StockDocumentValidation
 
     public const string ToWarehouseField = "toWarehouseId";
     public const string UnitField = "unitId";
-    public const string PurchaseOrderField = OrderLinkChecks.PurchaseOrderField;
     private const string OrderLineField = StockLineChecks.OrderLineField;
 
     public static string LineKey(int index, string field) => $"lines[{index}].{field}";
@@ -32,19 +33,24 @@ public static class StockDocumentValidation
         var errors = new ValidationErrors();
         if (!StockDocumentTypeNames.TryParse(input.Type, out var type))
             errors.Add("type", string.IsNullOrEmpty(input.Type) ? "type is required. " + TypeMessage : TypeMessage);
-        // Spec 009, R18: the type decides about purchaseOrderId only. A document that sends one is judged as
-        // linked, whatever its type, so a valid orderLineNo on its lines is not reported with it.
-        var linked = input.PurchaseOrderId is not null;
-        Guid? purchaseOrderId = null;
-        if (linked)
+        // Spec 009, R18; spec 010, R6, E11: the type decides about the link fields only - each is reported
+        // when the type cannot carry it, so of two links at least one is. A document that sends a link is
+        // judged as linked, whatever its type, so a valid orderLineNo on its lines is not reported with it.
+        OrderLink? link = null;
+        var linked = false;
+        foreach (var kind in OrderKind.All)
         {
-            if (!errors.Has("type") && type != StockDocumentType.Receipt)
-                errors.Add(PurchaseOrderField,
-                    $"purchaseOrderId is only for a receipt: goods of a purchase order are received with a receipt. For {(type == StockDocumentType.Issue ? "an" : "a")} {type.ToName()} leave it out or pass null.");
-            else if (Guid.TryParse(input.PurchaseOrderId, out var parsed))
-                purchaseOrderId = parsed;
+            if ((kind.Side == OrderSide.Sales ? input.SalesOrderId : input.PurchaseOrderId) is not { } given)
+                continue;
+            linked = true;
+            if (!errors.Has("type") && type != kind.FulfilledBy)
+                errors.Add(kind.LinkField,
+                    $"{kind.LinkField} is only for a document of type {kind.FulfilledBy.ToName()}: that is what fulfils a {kind.Name}. "
+                    + $"For {(type == StockDocumentType.Issue ? "an" : "a")} {type.ToName()} leave it out or pass null.");
+            else if (Guid.TryParse(given, out var parsed))
+                link = new OrderLink(kind.Side, parsed);
             else
-                errors.Add(PurchaseOrderField, "purchaseOrderId must be the id (UUID) of a purchase order, not its number.");
+                errors.Add(kind.LinkField, $"{kind.LinkField} must be the id (UUID) of a {kind.Name}, not its number.");
         }
         // An unknown type is judged like a receipt: a quantity greater than 0, repeats allowed.
         var values = Values(errors, type, linked, input.DocumentDate, input.WarehouseId, input.ToWarehouseId, input.Reference, input.Note, input.Lines);
@@ -54,7 +60,7 @@ public static class StockDocumentValidation
             errors.Add(ToWarehouseField, message);
         if (errors.Any)
             return errors.ToError();
-        return new NewStockDocumentValues(type, values, purchaseOrderId);
+        return new NewStockDocumentValues(type, values, link);
     }
 
     public static Result<StockDocumentValues> Replace(ReplaceStockDocumentInput input)
@@ -280,13 +286,14 @@ public static class StockDocumentValidation
             else errors.Add("status", StatusMessage);
         }
         var warehouseId = OptionalId(errors, input.WarehouseId, "warehouseId");
-        var purchaseOrderId = OptionalId(errors, input.PurchaseOrderId, PurchaseOrderField);
+        var purchaseOrderId = OptionalId(errors, input.PurchaseOrderId, OrderKind.Purchase.LinkField);
+        var salesOrderId = OptionalId(errors, input.SalesOrderId, OrderKind.Sales.LinkField);
         var search = ListRules.Search(errors, input.Search);
         var limit = ListRules.Limit(errors, input.Limit);
         var offset = ListRules.Offset(errors, input.Offset);
         if (errors.Any)
             return errors.ToError();
-        return new StockDocumentListQuery(type, status, warehouseId, search, limit, offset, purchaseOrderId);
+        return new StockDocumentListQuery(type, status, warehouseId, search, limit, offset, purchaseOrderId, salesOrderId);
     }
 
     public static Result<StockOnHandQuery> OnHand(ListStockOnHandInput input)

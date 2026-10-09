@@ -32,6 +32,8 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
     public DbSet<DocumentCounter> DocumentCounters => Set<DocumentCounter>();
     public DbSet<PurchaseOrder> PurchaseOrders => Set<PurchaseOrder>();
     public DbSet<PurchaseOrderLine> PurchaseOrderLines => Set<PurchaseOrderLine>();
+    public DbSet<SalesOrder> SalesOrders => Set<SalesOrder>();
+    public DbSet<SalesOrderLine> SalesOrderLines => Set<SalesOrderLine>();
 
     private Guid? CurrentTenantId => tenant.TenantId;
 
@@ -239,7 +241,13 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
                 .HasForeignKey(d => new { d.TenantId, d.PurchaseOrderId })
                 .HasPrincipalKey(o => new { o.TenantId, o.Id })
                 .OnDelete(DeleteBehavior.Restrict);
+            // Spec 010: the order an issue delivers.
+            e.HasOne<SalesOrder>().WithMany()
+                .HasForeignKey(d => new { d.TenantId, d.SalesOrderId })
+                .HasPrincipalKey(o => new { o.TenantId, o.Id })
+                .OnDelete(DeleteBehavior.Restrict);
             e.Ignore(d => d.Fulfilment);
+            e.Ignore(d => d.Link);
         });
 
         modelBuilder.Entity<StockDocumentLine>(e =>
@@ -273,84 +281,18 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
                 .HasPrincipalKey(o => new { o.TenantId, o.OrderId, o.LineNo })
                 .OnDelete(DeleteBehavior.Restrict)
                 .HasConstraintName("FK_StockDocumentLines_PurchaseOrderLines_OrderLine");
+            // Spec 010: the same for a line of a delivery; OrderLineNo serves both links.
+            e.HasOne<SalesOrderLine>().WithMany()
+                .HasForeignKey(l => new { l.TenantId, l.SalesOrderId, l.OrderLineNo })
+                .HasPrincipalKey(o => new { o.TenantId, o.OrderId, o.LineNo })
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_StockDocumentLines_SalesOrderLines_OrderLine");
         });
 
-        // Spec 009 / ADR-0016. Every key includes TenantId and restricts deletes: a master an order names
-        // cannot be deleted, and lines go only with their draft.
-        modelBuilder.Entity<PurchaseOrder>(e =>
-        {
-            e.ToTable("PurchaseOrders");
-            e.Property(o => o.Id).ValueGeneratedNever();
-            e.Property(o => o.Status).HasMaxLength(20).HasConversion(v => v.ToName(), v => OrderStatusNames.Parse(v));
-            e.Property(o => o.Number).HasMaxLength(PurchaseOrder.NumberMaxLength);
-            // What every order has, under the names a purchase order gives it.
-            e.Property(o => o.PartnerId).HasColumnName("SupplierId");
-            e.Property(o => o.DueDate).HasColumnName("ExpectedDate");
-            e.Property(o => o.Reference).HasMaxLength(PurchaseOrder.ReferenceMaxLength);
-            e.Property(o => o.Note).HasMaxLength(PurchaseOrder.NoteMaxLength);
-            e.Ignore(o => o.FulfilmentStatus);
-            e.Ignore(o => o.Outstanding);
-            // Drafts have no number; PostgreSQL does not compare NULLs, so only confirmed orders are constrained.
-            e.HasIndex(o => new { o.TenantId, o.Number }).IsUnique();
-            e.HasAlternateKey(o => new { o.TenantId, o.Id });
-            e.HasMany(o => o.Lines).WithOne()
-                .HasForeignKey(l => new { l.TenantId, l.OrderId })
-                .HasPrincipalKey(o => new { o.TenantId, o.Id })
-                .OnDelete(DeleteBehavior.Restrict);
-            e.Navigation(o => o.Lines).UsePropertyAccessMode(PropertyAccessMode.Field);
-            // Its index (TenantId, SupplierId) also serves "orders by supplier" and "is this partner used".
-            e.HasOne<Partner>().WithMany()
-                .HasForeignKey(o => new { o.TenantId, o.PartnerId })
-                .HasPrincipalKey(p => new { p.TenantId, p.Id })
-                .OnDelete(DeleteBehavior.Restrict);
-            e.HasOne<Warehouse>().WithMany()
-                .HasForeignKey(o => new { o.TenantId, o.WarehouseId })
-                .HasPrincipalKey(w => new { w.TenantId, w.Id })
-                .OnDelete(DeleteBehavior.Restrict);
-            e.HasOne<ApiKey>().WithMany()
-                .HasForeignKey(o => new { o.TenantId, o.CreatedBy })
-                .HasPrincipalKey(k => new { k.TenantId, k.Id })
-                .OnDelete(DeleteBehavior.Restrict);
-            e.HasOne<ApiKey>().WithMany()
-                .HasForeignKey(o => new { o.TenantId, o.UpdatedBy })
-                .HasPrincipalKey(k => new { k.TenantId, k.Id })
-                .OnDelete(DeleteBehavior.Restrict);
-            e.HasOne<ApiKey>().WithMany()
-                .HasForeignKey(o => new { o.TenantId, o.ConfirmedBy })
-                .HasPrincipalKey(k => new { k.TenantId, k.Id })
-                .OnDelete(DeleteBehavior.Restrict);
-            e.HasOne<ApiKey>().WithMany()
-                .HasForeignKey(o => new { o.TenantId, o.ClosedBy })
-                .HasPrincipalKey(k => new { k.TenantId, k.Id })
-                .OnDelete(DeleteBehavior.Restrict);
-        });
-
-        // Frozen at confirmation: article, unit, quantity, unit price, factor, base quantity. Progress, the one
-        // column that moves afterwards: ReceivedBaseQuantity, written by the posting and the reversal of a
-        // linked receipt (spec 009, R25, section 11).
-        modelBuilder.Entity<PurchaseOrderLine>(e =>
-        {
-            e.ToTable("PurchaseOrderLines");
-            e.Property(l => l.Id).ValueGeneratedNever();
-            e.Property(l => l.Quantity).HasPrecision(18, QuantityRules.DecimalPlaces);
-            e.Property(l => l.UnitPrice).HasPrecision(18, PriceRules.DecimalPlaces);
-            e.Property(l => l.Factor).HasPrecision(12, UnitConversion.FactorDecimalPlaces);
-            e.Property(l => l.BaseQuantity).HasPrecision(18, QuantityRules.DecimalPlaces);
-            e.Property(l => l.FulfilledBaseQuantity).HasColumnName("ReceivedBaseQuantity").HasPrecision(18, QuantityRules.DecimalPlaces);
-            e.Ignore(l => l.LineAmount);
-            e.Ignore(l => l.Entry);
-            // Unique (TenantId, OrderId, LineNo); a line of a linked stock document references it.
-            e.HasAlternateKey(l => new { l.TenantId, l.OrderId, l.LineNo });
-            // Its index (TenantId, ArticleId) also serves "is this article used" and the incoming quantity.
-            e.HasOne<Article>().WithMany()
-                .HasForeignKey(l => new { l.TenantId, l.ArticleId })
-                .HasPrincipalKey(a => new { a.TenantId, a.Id })
-                .OnDelete(DeleteBehavior.Restrict);
-            e.HasOne<UnitOfMeasure>().WithMany()
-                .HasForeignKey(l => new { l.TenantId, l.UnitId })
-                .HasPrincipalKey(u => new { u.TenantId, u.Id })
-                .OnDelete(DeleteBehavior.Restrict);
-        });
+        // Spec 009 / ADR-0016, spec 010 / ADR-0017: one mapping for every kind of order; a kind names its
+        // tables and what it calls the partner, the due date and the progress.
+        MapOrder<PurchaseOrder, PurchaseOrderLine>(modelBuilder, "PurchaseOrders", "PurchaseOrderLines", "SupplierId", "ExpectedDate", "ReceivedBaseQuantity");
+        MapOrder<SalesOrder, SalesOrderLine>(modelBuilder, "SalesOrders", "SalesOrderLines", "CustomerId", "RequestedDate", "DeliveredBaseQuantity");
 
         modelBuilder.Entity<StockLedgerEntry>(e =>
         {
@@ -421,11 +363,97 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
         return result;
     }
 
+    private static void MapOrder<TOrder, TLine>(
+        ModelBuilder modelBuilder, string table, string lineTable, string partnerColumn, string dueDateColumn, string fulfilledColumn)
+        where TOrder : Order<TLine>
+        where TLine : OrderLine
+    {
+        // Every key includes TenantId and restricts deletes: a master an order names
+        // cannot be deleted, and lines go only with their draft.
+        modelBuilder.Entity<TOrder>(e =>
+        {
+            e.ToTable(table);
+            e.Property(o => o.Id).ValueGeneratedNever();
+            e.Property(o => o.Status).HasMaxLength(20).HasConversion(v => v.ToName(), v => OrderStatusNames.Parse(v));
+            e.Property(o => o.Number).HasMaxLength(StockDocument.NumberMaxLength);
+            // What every order has, under the names its kind gives it.
+            e.Property(o => o.PartnerId).HasColumnName(partnerColumn);
+            e.Property(o => o.DueDate).HasColumnName(dueDateColumn);
+            e.Property(o => o.Reference).HasMaxLength(StockDocument.ReferenceMaxLength);
+            e.Property(o => o.Note).HasMaxLength(StockDocument.NoteMaxLength);
+            e.Ignore(o => o.FulfilmentStatus);
+            e.Ignore(o => o.Outstanding);
+            // Drafts have no number; PostgreSQL does not compare NULLs, so only confirmed orders are constrained.
+            e.HasIndex(o => new { o.TenantId, o.Number }).IsUnique();
+            e.HasAlternateKey(o => new { o.TenantId, o.Id });
+            e.HasMany(o => o.Lines).WithOne()
+                .HasForeignKey(l => new { l.TenantId, l.OrderId })
+                .HasPrincipalKey(o => new { o.TenantId, o.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.Navigation(o => o.Lines).UsePropertyAccessMode(PropertyAccessMode.Field);
+            // Its index (TenantId, partner) also serves "orders by partner" and "is this partner used".
+            e.HasOne<Partner>().WithMany()
+                .HasForeignKey(o => new { o.TenantId, o.PartnerId })
+                .HasPrincipalKey(p => new { p.TenantId, p.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<Warehouse>().WithMany()
+                .HasForeignKey(o => new { o.TenantId, o.WarehouseId })
+                .HasPrincipalKey(w => new { w.TenantId, w.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<ApiKey>().WithMany()
+                .HasForeignKey(o => new { o.TenantId, o.CreatedBy })
+                .HasPrincipalKey(k => new { k.TenantId, k.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<ApiKey>().WithMany()
+                .HasForeignKey(o => new { o.TenantId, o.UpdatedBy })
+                .HasPrincipalKey(k => new { k.TenantId, k.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<ApiKey>().WithMany()
+                .HasForeignKey(o => new { o.TenantId, o.ConfirmedBy })
+                .HasPrincipalKey(k => new { k.TenantId, k.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<ApiKey>().WithMany()
+                .HasForeignKey(o => new { o.TenantId, o.ClosedBy })
+                .HasPrincipalKey(k => new { k.TenantId, k.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Frozen at confirmation: article, unit, quantity, unit price, factor, base quantity. Progress, the one
+        // column that moves afterwards: the fulfilled quantity, written by the posting and the reversal of a
+        // linked stock document (spec 009, R25, section 11).
+        modelBuilder.Entity<TLine>(e =>
+        {
+            e.ToTable(lineTable);
+            e.Property(l => l.Id).ValueGeneratedNever();
+            e.Property(l => l.Quantity).HasPrecision(18, QuantityRules.DecimalPlaces);
+            e.Property(l => l.UnitPrice).HasPrecision(18, PriceRules.DecimalPlaces);
+            e.Property(l => l.Factor).HasPrecision(12, UnitConversion.FactorDecimalPlaces);
+            e.Property(l => l.BaseQuantity).HasPrecision(18, QuantityRules.DecimalPlaces);
+            e.Property(l => l.FulfilledBaseQuantity).HasColumnName(fulfilledColumn).HasPrecision(18, QuantityRules.DecimalPlaces);
+            e.Ignore(l => l.LineAmount);
+            e.Ignore(l => l.Entry);
+            // Unique (TenantId, OrderId, LineNo); a line of a linked stock document references it.
+            e.HasAlternateKey(l => new { l.TenantId, l.OrderId, l.LineNo });
+            // Its index (TenantId, ArticleId) also serves "is this article used" and the incoming or reserved quantity.
+            e.HasOne<Article>().WithMany()
+                .HasForeignKey(l => new { l.TenantId, l.ArticleId })
+                .HasPrincipalKey(a => new { a.TenantId, a.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<UnitOfMeasure>().WithMany()
+                .HasForeignKey(l => new { l.TenantId, l.UnitId })
+                .HasPrincipalKey(u => new { u.TenantId, u.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+    }
+
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         EnforceTenant();
-        if (EnforceConfirmedOrderIsImmutable() is { Count: > 0 } orderIds
-            && PurchaseOrders.Any(o => orderIds.Contains(o.Id) && o.Status != OrderStatus.Draft))
+        if (EnforceConfirmedOrderIsImmutable<PurchaseOrder, PurchaseOrderLine>() is { Count: > 0 } purchaseOrderIds
+            && PurchaseOrders.Any(o => purchaseOrderIds.Contains(o.Id) && o.Status != OrderStatus.Draft))
+            throw ConfirmedOrderChanged();
+        if (EnforceConfirmedOrderIsImmutable<SalesOrder, SalesOrderLine>() is { Count: > 0 } salesOrderIds
+            && SalesOrders.Any(o => salesOrderIds.Contains(o.Id) && o.Status != OrderStatus.Draft))
             throw ConfirmedOrderChanged();
         if (EnforcePostedIsImmutable() is { Count: > 0 } documentIds
             && StockDocuments.Any(d => documentIds.Contains(d.Id) && d.Status != StockDocumentStatus.Draft))
@@ -443,8 +471,11 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
     public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
         EnforceTenant();
-        if (EnforceConfirmedOrderIsImmutable() is { Count: > 0 } orderIds
-            && await PurchaseOrders.AnyAsync(o => orderIds.Contains(o.Id) && o.Status != OrderStatus.Draft, cancellationToken))
+        if (EnforceConfirmedOrderIsImmutable<PurchaseOrder, PurchaseOrderLine>() is { Count: > 0 } purchaseOrderIds
+            && await PurchaseOrders.AnyAsync(o => purchaseOrderIds.Contains(o.Id) && o.Status != OrderStatus.Draft, cancellationToken))
+            throw ConfirmedOrderChanged();
+        if (EnforceConfirmedOrderIsImmutable<SalesOrder, SalesOrderLine>() is { Count: > 0 } salesOrderIds
+            && await SalesOrders.AnyAsync(o => salesOrderIds.Contains(o.Id) && o.Status != OrderStatus.Draft, cancellationToken))
             throw ConfirmedOrderChanged();
         if (EnforcePostedIsImmutable() is { Count: > 0 } documentIds
             && await StockDocuments.AnyAsync(d => documentIds.Contains(d.Id) && d.Status != StockDocumentStatus.Draft, cancellationToken))
@@ -547,43 +578,47 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
         new("A posted stock document and its lines are immutable; the only change it accepts is its reversal.");
 
     /// <summary>
-    /// Spec 009, S3 and AC-02: a confirmed or closed order is immutable, whatever code asks for the save. The
+    /// Spec 009, S3 and AC-02; spec 010, AC-02: a confirmed or closed order of any kind is immutable, whatever code asks for the save. The
     /// one change the order itself accepts is <c>confirmed &lt;-&gt; closed</c> with <c>ClosedAt</c> and
-    /// <c>ClosedBy</c>; the one change its lines accept is progress - the received quantity, which is not part
+    /// <c>ClosedBy</c>; the one change its lines accept is progress - the fulfilled quantity, which is not part
     /// of what was ordered. Throws when the order is tracked; returns the ids of orders that are not tracked
     /// but whose lines are being changed in what is frozen, for the caller to look up.
     /// </summary>
-    private List<Guid> EnforceConfirmedOrderIsImmutable()
+    private List<Guid> EnforceConfirmedOrderIsImmutable<TOrder, TLine>()
+        where TOrder : Order<TLine>
+        where TLine : OrderLine
     {
-        var orders = ChangeTracker.Entries<PurchaseOrder>().ToDictionary(o => o.Entity.Id);
+        var orders = ChangeTracker.Entries<TOrder>().ToDictionary(o => o.Entity.Id);
         foreach (var order in orders.Values)
         {
-            if (order.State is not (EntityState.Modified or EntityState.Deleted) || WasDraft(order))
+            if (order.State is not (EntityState.Modified or EntityState.Deleted) || WasDraft<TOrder, TLine>(order))
                 continue;
-            if (order.State == EntityState.Deleted || !IsCloseOrReopen(order))
+            if (order.State == EntityState.Deleted || !IsCloseOrReopen<TOrder, TLine>(order))
                 throw ConfirmedOrderChanged();
         }
 
         var untracked = new List<Guid>();
-        foreach (var line in ChangeTracker.Entries<PurchaseOrderLine>())
+        foreach (var line in ChangeTracker.Entries<TLine>())
         {
             if (line.State is not (EntityState.Added or EntityState.Modified or EntityState.Deleted))
                 continue;
             if (line.State == EntityState.Modified
-                && line.Properties.All(p => !p.IsModified || p.Metadata.Name == nameof(PurchaseOrderLine.FulfilledBaseQuantity)))
+                && line.Properties.All(p => !p.IsModified || p.Metadata.Name == nameof(OrderLine.FulfilledBaseQuantity)))
                 continue;
             foreach (var orderId in new[] { line.Property(l => l.OrderId).OriginalValue, line.Property(l => l.OrderId).CurrentValue }.Distinct())
             {
                 if (!orders.TryGetValue(orderId, out var order))
                     untracked.Add(orderId);
-                else if (order.State != EntityState.Added && !WasDraft(order))
+                else if (order.State != EntityState.Added && !WasDraft<TOrder, TLine>(order))
                     throw ConfirmedOrderChanged();
             }
         }
         return untracked;
     }
 
-    private static bool WasDraft(Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<PurchaseOrder> order) =>
+    private static bool WasDraft<TOrder, TLine>(Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<TOrder> order)
+        where TOrder : Order<TLine>
+        where TLine : OrderLine =>
         order.Property(o => o.Status).OriginalValue == OrderStatus.Draft;
 
     /// <summary>
@@ -591,10 +626,12 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
     /// <c>Status</c>, <c>ClosedAt</c> and <c>ClosedBy</c> changed, between <c>confirmed</c> without and
     /// <c>closed</c> with the two.
     /// </summary>
-    private static bool IsCloseOrReopen(Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<PurchaseOrder> order)
+    private static bool IsCloseOrReopen<TOrder, TLine>(Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<TOrder> order)
+        where TOrder : Order<TLine>
+        where TLine : OrderLine
     {
         if (order.Properties.Any(p => p.IsModified
-                && p.Metadata.Name is not (nameof(PurchaseOrder.Status) or nameof(PurchaseOrder.ClosedAt) or nameof(PurchaseOrder.ClosedBy))))
+                && p.Metadata.Name is not (nameof(Order<TLine>.Status) or nameof(Order<TLine>.ClosedAt) or nameof(Order<TLine>.ClosedBy))))
             return false;
         var status = order.Property(o => o.Status);
         var closed = order.Entity.ClosedAt is not null && order.Entity.ClosedBy is not null;

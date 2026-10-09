@@ -112,4 +112,118 @@ public sealed record OrderListQuery(
     OrderStatus? Status, FulfilmentStatus? Fulfilment, Guid? PartnerId, Guid? WarehouseId, string? Search, int Limit, int Offset);
 
 /// <summary>The result of a delete (MCP: <c>{ "deleted": true }</c>; HTTP: 204).</summary>
-public sealed record PurchaseOrderDeleted(bool Deleted = true);
+public sealed record OrderDeleted(bool Deleted = true);
+
+/// <summary>
+/// A line of a sales order (spec 010, 4.1): <see cref="PurchaseOrderLineDto"/> mirrored.
+/// <c>DeliveredBaseQuantity</c> is what posted deliveries took out for this line and
+/// <c>OutstandingBaseQuantity</c> what can still be delivered - and is reserved - both in base units.
+/// </summary>
+public sealed record SalesOrderLineDto(
+    int LineNo, ReferenceSummary Article, ReferenceSummary Unit, decimal Quantity,
+    decimal UnitPrice, decimal LineAmount,
+    decimal Factor, ReferenceSummary BaseUnit, decimal BaseQuantity,
+    decimal DeliveredBaseQuantity, decimal OutstandingBaseQuantity);
+
+/// <summary>A sales order (spec 010, 4.1). Every property is always present.</summary>
+public sealed record SalesOrderDto(
+    Guid Id,
+    string Status,
+    string? Number,
+    DateOnly OrderDate,
+    DateOnly? RequestedDate,
+    ReferenceSummary Customer,
+    ReferenceSummary Warehouse,
+    string? Reference,
+    string? Note,
+    string DeliveryStatus,
+    IReadOnlyList<SalesOrderLineDto> Lines,
+    decimal TotalAmount,
+    DateTime CreatedAt,
+    DateTime UpdatedAt,
+    Guid CreatedBy,
+    Guid UpdatedBy,
+    DateTime? ConfirmedAt,
+    Guid? ConfirmedBy,
+    DateTime? ClosedAt,
+    Guid? ClosedBy);
+
+/// <summary>A sales order as a list shows it: without its lines, with their count.</summary>
+public sealed record SalesOrderSummaryDto(
+    Guid Id,
+    string Status,
+    string? Number,
+    DateOnly OrderDate,
+    DateOnly? RequestedDate,
+    ReferenceSummary Customer,
+    ReferenceSummary Warehouse,
+    string? Reference,
+    string? Note,
+    string DeliveryStatus,
+    int LineCount,
+    decimal TotalAmount,
+    DateTime CreatedAt,
+    DateTime UpdatedAt,
+    Guid CreatedBy,
+    Guid UpdatedBy,
+    DateTime? ConfirmedAt,
+    Guid? ConfirmedBy,
+    DateTime? ClosedAt,
+    Guid? ClosedBy);
+
+public sealed record CreateSalesOrderInput(
+    string? OrderDate = null, string? CustomerId = null, string? WarehouseId = null,
+    IReadOnlyList<OrderLineInput?>? Lines = null, string? RequestedDate = null, string? Reference = null, string? Note = null);
+
+/// <summary>
+/// All seven fields must be present (spec 010, R1); <c>RequestedDate</c>, <c>Reference</c> and <c>Note</c> may
+/// be null but must have been given.
+/// </summary>
+public sealed record ReplaceSalesOrderInput : TrackedInput
+{
+    private readonly string? _requestedDate;
+    private readonly string? _reference;
+    private readonly string? _note;
+
+    public string? OrderDate { get; init; }
+    public string? RequestedDate { get => _requestedDate; init => _requestedDate = Given(value); }
+    public string? CustomerId { get; init; }
+    public string? WarehouseId { get; init; }
+    public string? Reference { get => _reference; init => _reference = Given(value); }
+    public string? Note { get => _note; init => _note = Given(value); }
+    public IReadOnlyList<OrderLineInput?>? Lines { get; init; }
+}
+
+public sealed record ListSalesOrdersInput(
+    string? Status = null, string? DeliveryStatus = null, string? CustomerId = null, string? WarehouseId = null,
+    string? Search = null, int? Limit = null, int? Offset = null);
+
+/// <summary>
+/// An order request of any kind, under the names every kind shares: what <see cref="OrderOperations{TOrder,TLine,TDto,TSummary}"/>
+/// works with. <c>DueDateGiven</c>, <c>ReferenceGiven</c> and <c>NoteGiven</c> are false when a replace omitted the field.
+/// </summary>
+public sealed record OrderInput(
+    string? OrderDate, string? DueDate, string? PartnerId, string? WarehouseId, string? Reference, string? Note,
+    IReadOnlyList<OrderLineInput?>? Lines, bool DueDateGiven = true, bool ReferenceGiven = true, bool NoteGiven = true);
+
+/// <summary>The filters of an order list of any kind, as received.</summary>
+public sealed record OrderListInput(
+    string? Status, string? Fulfilment, string? PartnerId, string? WarehouseId, string? Search, int? Limit, int? Offset);
+
+/// <summary>A line of an order of any kind as it is shown; each kind gives the fulfilled quantity its own name.</summary>
+public sealed record OrderLineView(
+    int LineNo, ReferenceSummary Article, ReferenceSummary Unit, decimal Quantity,
+    decimal UnitPrice, decimal LineAmount,
+    decimal Factor, ReferenceSummary BaseUnit, decimal BaseQuantity,
+    decimal FulfilledBaseQuantity, decimal OutstandingBaseQuantity);
+
+/// <summary>
+/// An order of any kind as it is shown, with or without its lines (a list has only their count); each kind
+/// gives the partner, the due date and the progress their own names.
+/// </summary>
+public sealed record OrderView(
+    Guid Id, string Status, string? Number, DateOnly OrderDate, DateOnly? DueDate,
+    ReferenceSummary Partner, ReferenceSummary Warehouse, string? Reference, string? Note,
+    string FulfilmentStatus, IReadOnlyList<OrderLineView> Lines, int LineCount, decimal TotalAmount,
+    DateTime CreatedAt, DateTime UpdatedAt, Guid CreatedBy, Guid UpdatedBy,
+    DateTime? ConfirmedAt, Guid? ConfirmedBy, DateTime? ClosedAt, Guid? ClosedBy);

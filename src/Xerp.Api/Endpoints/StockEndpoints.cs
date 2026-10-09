@@ -20,12 +20,12 @@ public static class StockEndpoints
             var binder = new QueryBinder(request.Query);
             var input = new ListStockDocumentsInput(
                 binder.Text("type"), binder.Text("status"), binder.Text("warehouseId"), binder.Text("search"),
-                binder.Int("limit"), binder.Int("offset"), binder.Text("purchaseOrderId"));
+                binder.Int("limit"), binder.Int("offset"), binder.Text("purchaseOrderId"), binder.Text("salesOrderId"));
             if (binder.Error is { } error)
                 return Problems.From(error);
             var result = await operations.ListAsync(input, ct);
             return result.IsSuccess ? Results.Ok(result.Value) : Problems.From(result.Error);
-        }).AcceptsQuery("type", "status", "warehouseId", "purchaseOrderId", "search", "limit", "offset");
+        }).AcceptsQuery("type", "status", "warehouseId", "purchaseOrderId", "salesOrderId", "search", "limit", "offset");
 
         // A malformed id does not match the route and ends as NOT_FOUND like any unknown path.
         documents.MapGet("/{id:guid}", async (Guid id, StockDocumentOperations operations, CancellationToken ct) =>

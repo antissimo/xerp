@@ -16,8 +16,6 @@ public sealed record LinkedOrderFacts(Guid Id, OrderStatus Status, Guid Warehous
 /// </summary>
 public static class OrderLinkChecks
 {
-    public const string PurchaseOrderField = "purchaseOrderId";
-
     private const string ArticleField = "articleId";
     private const string QuantityField = "quantity";
     private const string WarehouseField = "warehouseId";
@@ -35,7 +33,7 @@ public static class OrderLinkChecks
         if (status == OrderStatus.Confirmed)
             return null;
         var why = status == OrderStatus.Draft
-            ? "The order is still a draft: it orders nothing until it is confirmed."
+            ? "The order is still a draft: it commits nothing until it is confirmed."
             : "The order is closed: nothing more is received or delivered against it until it is reopened.";
         return new AppError(ErrorCodes.OrderNotOpen,
             why + (saving ? " Nothing was saved." : " Nothing was posted and the document is still a draft.")
