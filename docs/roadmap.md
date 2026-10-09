@@ -93,6 +93,7 @@ What stays ahead of posting, and why:
 | 8 | **008 Stock count / adjustment** — a `count` stock document: counted quantity per article, book quantity recorded at save, posting writes the difference and is refused if stock moved since (ADR-0015). *Written.* | ERPNext Stock Reconciliation; Odoo inventory adjustment. | Opening balances and corrections; makes inventory usable on its own. |
 | 9 | **009 Purchase orders -> goods receipt** — order (`draft -> confirmed <-> closed`) with supplier, warehouse and lines with unit and unit price; a goods receipt is a `receipt` stock document linked to the order and its lines; received quantity per line in base units, never above the ordered quantity; reversal gives it back; `incomingQuantity` in stock on hand (ADR-0016). *Written.* | SAP B1 base/target documents; BC "Qty. to Receive". | Inbound before outbound: stock must exist before it can be sold. |
 | 10 | **010 Sales orders -> delivery** — the mirror of 009: order with customer, warehouse, lines and prices; a delivery is an `issue` stock document linked to the order, refused above the ordered quantity and above stock on hand; `reservedQuantity` and `availableQuantity` in stock on hand, informational (ADR-0017). No quotation document: a draft order is the offer. *Written.* | SAP B1 (order raises committed, delivery reduces stock); BC partial shipments. | Mirror of 009 plus availability. |
+| — | **MVP boundary (owner decision, 2026-10-09).** Specs 001–010 are the MVP; everything below is post-MVP and is not written until the owner says so. See "MVP boundary" under the table. | — | — |
 | 11 | **011 Inventory valuation** — cost on inbound entries, moving average per item, value of stock report. | BC value entries; ERPNext Moving Average; Odoo AVCO. | Needs purchase prices (009); prerequisite for COGS. |
 | 12 | **012 Chart of accounts + journal entries** — accounts with categories, balanced manual journals, post/reverse, trial balance, accounting periods. | BC chart of accounts and account categories; SAP B1 reversal-only journals. | Foundation of all financial posting. |
 | 13 | **013 Number series** — per-tenant configurable series per document type (prefix/year pattern, date-effective lines, gapless flag), replacing the fixed patterns of 005. | BC No. Series (gaps not allowed by default); ERPNext naming series tokens. | Legal numbering of invoices must be configurable; nothing before invoices needs more than the fixed counter. |
@@ -104,6 +105,34 @@ What stays ahead of posting, and why:
 | 19 | **019 Row-level security** *(platform)* — PostgreSQL RLS policies as a second tenant barrier; non-owner runtime DB role. | ADR-0002. | Hardening; must precede any production tenant. |
 | 20 | **020 Rate limiting** *(platform)* — limits on `/api/v1` and `/mcp`. | MCP specification (servers must rate-limit tool calls). | Must precede production tenants. |
 | — | Later: OAuth-based MCP authorization together with human login, article groups/categories (and posting configuration per group), barcodes, partner contact data (e-mail, phone, contact persons), several addresses per partner (with 009/010 if they need delivery and invoice addresses), retention/erasure of personal data in partner records, perpetual inventory posting (stock -> G/L), price lists and discounts, bins/locations, lots/serials, multi-currency, returns, fixed reporting, optimistic concurrency (`ETag`/`If-Match`) on masters, country localisation packs (outside the core). | — | Each depends on the core above. |
+
+### MVP boundary (owner decision, 2026-10-09)
+
+**The MVP is specs 001–010**: tenants and API keys, units, articles, partners, warehouses, the MCP server,
+the stock ledger with receipts, issues, transfers, reversal, unit conversions and stock count, purchase orders
+with goods receipt, sales orders with delivery. Rows 11–20 and the "Later" row are post-MVP. No spec beyond
+010 is written unless the owner asks.
+
+What the MVP is: quantities and commitments, complete and consistent, for one tenant-scoped company, usable
+through HTTP and MCP. What it is not, because specs 009 and 010 point forward to post-MVP specs:
+
+| The MVP has | It lacks | Until |
+|---|---|---|
+| Unit prices and order amounts on purchase and sales orders | Any value of stock, cost of a receipt, cost of goods sold | 011 |
+| Posted receipts and deliveries linked to orders | Invoices, tax, "invoiced quantity" on order lines; an order is fulfilled but never billed | 014 |
+| `stock` articles on orders | `service` articles on orders | 014 |
+| One unnamed currency, amounts with 2 decimals | A currency setting; other precisions | Later (multi-currency) |
+| Fixed number patterns (`SR-`, `SI-`, `ST-`, `SC-`, `PO-`, `SO-`) | Configurable series | 013 |
+| Reversal of a whole receipt or delivery | Partial returns; changing a confirmed order (close + new order instead); over-receipt | Later |
+| `createdBy` / `postedBy` / `confirmedBy` and append-only ledgers | Audit log of master-data changes; permissions per key (every key may do everything in its tenant) | 016, 017 |
+
+None of these blocks using the MVP for what it does, and none is added to specs 009 or 010. Two limits are
+worth stating to anyone who is shown the MVP:
+- **It is not ready for production tenants.** Section 4 requires the audit log (016), permissions (017),
+  row-level security (019) and rate limiting (020) first; an external client also needs the OpenAPI document
+  (018).
+- **It has no money side.** Prices on orders are recorded and totalled, nothing more: no valuation, no
+  invoices, no ledger accounts, no payments (011, 012, 014, 015).
 
 Renumbering of 2026-10-09 (old -> new), for reading older reviews and question files: 003a -> 018; 005 audit
 log -> 016; 006 permissions -> 017; 007 number series -> 013; 008 stock ledger -> 005 and 006; 009 unit

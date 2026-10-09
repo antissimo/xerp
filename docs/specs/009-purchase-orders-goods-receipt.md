@@ -215,7 +215,7 @@ Lifecycle
   conversion (007/R17).
 - R12. **Confirm** (`draft -> confirmed`) is atomic. Order of checks: order exists -> is a draft
   (`INVALID_STATE`) -> supplier, warehouse and every article are active (`REFERENCE_INACTIVE`, keys
-  `supplierId`, `warehouseId`, `lines[i].articleId`) -> the supplier still has the role
+  `supplierId`, `warehouseId`, `lines[i].articleId`; header keys together first, then lines: 005/R13) -> the supplier still has the role
   (`PARTNER_ROLE_MISSING`) -> conversion with the current factors (`QUANTITY_NOT_CONVERTIBLE`). On success:
   `number` assigned, `confirmedAt` = now, `confirmedBy` = the acting key, and `factor` and `baseQuantity` of
   every line stored for good.
@@ -618,7 +618,8 @@ Builder
 - Posting a linked receipt is the posting of spec 005 with one more lock and one more check. Lock order, the
   same for every posting and reversal: document -> order -> (article, warehouse) pairs -> counter. Compare
   with the outstanding quantities under the lock on the order; without it AC-52 fails. Close and reopen take
-  the same lock.
+  the same lock. Under the per-tenant lock accepted for the MVP (ADR-0012, amendment of 2026-10-09) confirm,
+  close, reopen and every posting and reversal simply run inside it; no lock order is needed.
 - The received quantity may be a sum over posted lines or a maintained column on the order line; if a column,
   it is written in the posting and reversal transactions and AC-55 must hold. It is not an "edit" of the
   confirmed order in the sense of S3 — state in the model which columns are progress and which are frozen.

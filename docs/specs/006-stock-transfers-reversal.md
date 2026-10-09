@@ -108,7 +108,8 @@ Transfer — the document
 
 Transfer — posting
 - R5. Order of checks as 005/R13, with the destination warehouse among the masters that must be active
-  (`REFERENCE_INACTIVE`, key `toWarehouseId`).
+  (`REFERENCE_INACTIVE`, key `toWarehouseId`). Both warehouses are header masters: if both are inactive, one
+  error carries both keys `warehouseId` and `toWarehouseId` (`006-q.md`, T-Q3).
 - R6. Each line writes **two** ledger entries with the line's `lineNo`: `−quantity` in the source warehouse and
   `+quantity` in the destination warehouse. Both carry the document's date and the same `postedAt` /
   `postedBy`. In the ledger order (005 §4.3) the outgoing entry of a line precedes its incoming entry.
@@ -201,8 +202,9 @@ black-box (tester).
 Structure
 - AC-01 *(manual)* Build and tests exit 0; earlier tests pass unweakened. The only earlier tests changed are
   the literal tool list, tests pinning the table/column list, tests asserting the exact property set of a stock
-  document or ledger entry, and the spec 005 tests that expected `type` `"transfer"` to be invalid
-  (005/AC-26, AC-63). One migration added.
+  document or ledger entry, tests pinning the input schema of the stock document tools (the new property
+  `toWarehouseId`, the `type` and `status` enum values), and the spec 005 tests that expected `type`
+  `"transfer"` to be invalid (005/AC-26, AC-63). One migration added.
 - AC-02 *(builder)* Through the DbContext, a posted document accepts no modification other than
   `posted -> reversed` with `reversedBy`; a ledger entry accepts none (S2).
 - AC-03 *(builder, unit)* The sign rules — entries of a transfer line (R6) and of a reversal (R14) — are
@@ -210,7 +212,7 @@ Structure
 
 Inherited behaviour — smoke
 - AC-10 `POST /stock-documents/{uuid}/reverse` without a credential -> `401`; with the admin key -> `403`;
-  with `?x=1` -> `400` with key `x`; with body property `"lines"` -> `400`.
+  with `?x=1` -> `400` with key `x`; with body property `"lines"` -> `400` with key `lines` (001/E4).
 
 Transfer — draft
 - AC-20 `POST /stock-documents` `{ "type": "transfer", "documentDate": "2026-10-09", "warehouseId": W1,
@@ -354,6 +356,8 @@ Builder
 - Reversal is a posting too: same transaction shape — lock the original, lock pairs, lock the counter, write
   the reversing document and entries, flip the original's status. The number is taken only when everything
   else has passed (AC-60).
+- The per-tenant lock accepted for the MVP (ADR-0012, amendment of 2026-10-09) replaces the individual locks
+  of the two notes above, provided reversal runs under it too.
 - Derive the reversing entries from the original's ledger entries, not from its lines, so that R15 holds by
   construction.
 - Anything unclear or contradictory: `docs/questions/006-q.md`, then continue with the rest.

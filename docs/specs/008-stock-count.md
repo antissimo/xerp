@@ -316,7 +316,8 @@ Tester
 Builder
 - Posting a count is the posting of spec 005 with one more check: inside the transaction, after locking the
   pairs in the fixed order, compare each pair's stock with the line's `BookQuantity`, then write the
-  differences. The comparison without the locks fails AC-45.
+  differences. The comparison without the locks fails AC-45. (Or under the per-tenant lock: ADR-0012,
+  amendment of 2026-10-09.)
 - `BookQuantity` is written by create and replace only; reading a draft computes `differenceQuantity` from
   the stored book quantity and the current `baseQuantity`.
 - Reversal needs nothing new: it negates the original's ledger entries (006). Copy `BookQuantity` to the

@@ -425,7 +425,7 @@ Builder
 - A sales order is the second user of the order lifecycle, amount, progress and link code of spec 009
   (AC-03). If spec 009's code has to be reshaped to be shared, do that first, with spec 009's tests green.
 - Posting a linked issue: lock order document -> order -> pairs -> counter, as in spec 009; check the order's
-  quantities, then stock, both under the locks. AC-52 is the stock race of 005/AC-46 reached through two
+  quantities, then stock, both under the locks (or under the per-tenant lock, as spec 009 notes). AC-52 is the stock race of 005/AC-46 reached through two
   orders.
 - `reservedQuantity` joins stock on hand like `incomingQuantity`: one query, correct `total` and paging, pairs
   with only a reservation included.
