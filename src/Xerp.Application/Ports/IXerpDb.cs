@@ -18,6 +18,13 @@ public interface IXerpDb
     DbSet<Article> Articles { get; }
     DbSet<Partner> Partners { get; }
     DbSet<Warehouse> Warehouses { get; }
+    DbSet<StockDocument> StockDocuments { get; }
+    DbSet<StockDocumentLine> StockDocumentLines { get; }
+
+    /// <summary>Append-only: entries are added by posting and never changed or deleted (spec 005, S3).</summary>
+    DbSet<StockLedgerEntry> StockLedgerEntries { get; }
+
+    DbSet<DocumentCounter> DocumentCounters { get; }
 
     /// <exception cref="UniqueConstraintViolationException">A unique index rejected the change.</exception>
     /// <exception cref="ForeignKeyViolationException">A foreign key rejected the change.</exception>

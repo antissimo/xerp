@@ -193,7 +193,10 @@ Posting
   `postedBy` = the acting key, one ledger entry per line — or changes nothing at all.
 - R13. Order of checks on post: document exists (`404`) -> is a draft (`INVALID_STATE`) -> warehouse and every
   article are active (`REFERENCE_INACTIVE`, keys `warehouseId` / `lines[i].articleId`) -> stock is sufficient
-  (`INSUFFICIENT_STOCK`).
+  (`INSUFFICIENT_STOCK`). Header before lines, as in R8: inactive masters named in the header are reported
+  together and alone; only when the header is clean are inactive masters of lines reported, for all lines
+  that have one (`005-q.md`, B-Q5). Every later posting and confirmation that says "masters are active"
+  follows this.
 - R14. Ledger entries: for a `receipt` line, `+quantity`; for an `issue` line, `−quantity`; article, warehouse
   and `documentDate` from the document, `lineNo` from the line, `postedAt` / `postedBy` from the posting. All
   entries of one document have the same `postedAt`.
@@ -481,6 +484,9 @@ Builder
 - Posting must be one database transaction that (a) locks the document row, (b) locks what guards stock for
   the affected (article, warehouse) pairs in a fixed order, (c) locks the counter row, (d) writes. A
   check-then-write without locks will fail AC-46 and AC-52; a database sequence will fail AC-51.
+  **Accepted for the MVP (ADR-0012, amendment of 2026-10-09; `005-q.md`, B-Q2):** one lock per tenant held
+  by every such write replaces (a)–(c). The lock notes of specs 006, 008, 009 and 010 are satisfied by it
+  the same way.
 - The sufficiency rule and the numbering format are Domain/Application code (AC-04); the endpoint and the tool
   only call `Post`.
 - Stock on hand may be a `SUM` over the ledger or a maintained projection; if a projection, it is written in

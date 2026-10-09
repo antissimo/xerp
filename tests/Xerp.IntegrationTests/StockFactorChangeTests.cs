@@ -59,8 +59,13 @@ public class StockFactorChangeTests(XerpFixture app)
         Units.AssertLine(lines[1], "pcs", 5m, 1m, 5m);
         Units.AssertLine(lines[2], "box", 1m, 50m, 50m);
         Units.AssertLine((await Stock.GetAsync(s.Http, transfer.Id())).DocumentLines()[0], "box", 2m, 10m, 20m);
-        // The change of factor is not a change of the draft: no write happened to it.
-        Assert.Equal(receipt.Str("updatedAt"), (await Stock.GetAsync(s.Http, receipt.Id())).Str("updatedAt"));
+        // The change of factor is not a change of the draft: no write happened to it (R17).
+        foreach (var draft in new[] { receipt, transfer })
+        {
+            var now = await Stock.GetAsync(s.Http, draft.Id());
+            Assert.Equal(draft.Str("updatedAt"), now.Str("updatedAt"));
+            McpAssert.JsonEqual(draft.GetProperty("updatedBy"), now.GetProperty("updatedBy"), "A change of factor changed updatedBy of a draft");
+        }
     }
 
     [Fact]
@@ -228,8 +233,13 @@ public class StockFactorChangeTests(XerpFixture app)
 
         var problem = await Stock.ConflictAsync(refused, "QUANTITY_NOT_CONVERTIBLE");
         Assert.Equal(new[] { "lines[1].quantity" }, McpAssert.ErrorKeys(problem));
+        // Reading never fails on R15: the line shows the current factor and what R14 gives, here 0 (007-q T-Q7).
         var still = await Stock.AssertDraftAsync(s.Http, draft.Id());
         Assert.Equal(2, still.DocumentLines().Length);
+        Units.AssertLine(still.DocumentLines()[0], "pcs", 1m, 1m, 1m);
+        Units.AssertLine(still.DocumentLines()[1], "pack", 0.000002m, 0.2m, 0m);
+        Assert.Equal(draft.Str("updatedAt"), still.Str("updatedAt"));
+        Assert.Equal(draft.Id(), Assert.Single((await Stock.DocumentsAsync(s.Http)).Items()).Id());
         Assert.Equal(0, await LedgerCountAsync(s.Http));
         Assert.Equal(0, (await Stock.OnHandAsync(s.Http)).Total());
 
@@ -241,6 +251,76 @@ public class StockFactorChangeTests(XerpFixture app)
         Units.AssertLine(posted.DocumentLines()[1], "pack", 0.000002m, 0.5m, 0.000001m);
         Assert.Equal(0.000001m, await Stock.QuantityAsync(s.Http, s.A, s.W1));
         Assert.Equal(1m, await Stock.QuantityAsync(s.Http, s.B, s.W1));
+    }
+
+    [Fact]
+    public async Task AC63_R17_A_draft_line_above_the_maximum_is_readable_and_refused_on_saving_and_posting()
+    {
+        // The other direction of R15: 999999999 pack was 499999999.5 pcs at factor 0.5 and is 11999999988 at 12.
+        var s = await Units.SetupAsync(app);
+        await Units.SetAsync(s.Http, s.A, s.Pack, 0.5m);
+        var draft = await Units.CreateAsync(s.Http, "receipt", s.W1, (s.A, 999999999m, s.Pack), (s.B, 1, null));
+        Units.AssertLine(draft.DocumentLines()[0], "pack", 999999999m, 0.5m, 499999999.5m);
+
+        await Units.SetAsync(s.Http, s.A, s.Pack, 12);
+
+        // Reading shows the current factor and the base quantity R14 gives, although it is above the maximum.
+        var read = await Stock.AssertDraftAsync(s.Http, draft.Id());
+        Units.AssertLine(read.DocumentLines()[0], "pack", 999999999m, 12m, 11999999988m);
+        Units.AssertLine(read.DocumentLines()[1], "pcs", 1m, 1m, 1m);
+        Assert.Equal(draft.Str("updatedAt"), read.Str("updatedAt"));
+        Assert.Equal(draft.Id(), Assert.Single((await Stock.DocumentsAsync(s.Http)).Items()).Id());
+
+        // Saving and posting refuse it.
+        using var posting = await Stock.SendPostAsync(s.Http, draft.Id());
+        using var saving = await Stock.PutAsync(s.Http, draft.Id(), Units.Replacement(s.W1, (s.A, 999999999m, s.Pack), (s.B, 1, null)));
+        var notPosted = await Stock.ConflictAsync(posting, "QUANTITY_NOT_CONVERTIBLE");
+        var notSaved = await Stock.ConflictAsync(saving, "QUANTITY_NOT_CONVERTIBLE");
+        Assert.Equal(new[] { "lines[0].quantity" }, McpAssert.ErrorKeys(notPosted));
+        Assert.Equal(new[] { "lines[0].quantity" }, McpAssert.ErrorKeys(notSaved));
+        McpAssert.JsonEqual(read, await Stock.GetAsync(s.Http, draft.Id()), "A refused save or posting changed the draft");
+        Assert.Equal(0, await LedgerCountAsync(s.Http));
+
+        await Units.SetAsync(s.Http, s.A, s.Pack, 0.5m);
+        var posted = await Stock.PostDocumentAsync(s.Http, draft.Id());
+
+        Assert.Equal("SR-000001", posted.Number());
+        Units.AssertLine(posted.DocumentLines()[0], "pack", 999999999m, 0.5m, 499999999.5m);
+        Assert.Equal(499999999.5m, await Stock.QuantityAsync(s.Http, s.A, s.W1));
+    }
+
+    [Fact]
+    public async Task AC63_R18_An_inactive_warehouse_is_reported_alone_before_an_inactive_article_and_the_conversion()
+    {
+        // 005/R13 as amended, 006/R5, R18: header masters alone -> articles -> conversion -> stock.
+        var s = await Units.SetupAsync(app);
+        await Units.SetAsync(s.Http, s.A, s.Pack, 0.5m);
+        var transfer = await Stock.CreateAsync(s.Http, Units.Transfer(s.W1, s.W2, (s.A, 0.000002m, s.Pack), (s.B, 1, null)));
+        await Units.SetAsync(s.Http, s.A, s.Pack, 0.2m);
+        await Stock.SetWarehouseActiveAsync(s.Http, s.W2, false);
+        await Stock.SetArticleActiveAsync(s.Http, s.A, false);
+        await Stock.SetArticleActiveAsync(s.Http, s.B, false);
+
+        async Task RefusedAsync(string code, params string[] keys)
+        {
+            using var refused = await Stock.SendPostAsync(s.Http, transfer.Id());
+            var problem = await Stock.ConflictAsync(refused, code, keys);
+            Assert.Equal(keys.Order(StringComparer.Ordinal).ToArray(), McpAssert.ErrorKeys(problem));
+            await Stock.AssertDraftAsync(s.Http, transfer.Id());
+        }
+
+        await RefusedAsync("REFERENCE_INACTIVE", "toWarehouseId");
+
+        await Stock.SetWarehouseActiveAsync(s.Http, s.W2, true);
+        await RefusedAsync("REFERENCE_INACTIVE", "lines[0].articleId", "lines[1].articleId");
+
+        await Stock.SetArticleActiveAsync(s.Http, s.A, true);
+        await Stock.SetArticleActiveAsync(s.Http, s.B, true);
+        await RefusedAsync("QUANTITY_NOT_CONVERTIBLE", "lines[0].quantity");
+
+        await Units.SetAsync(s.Http, s.A, s.Pack, 0.5m);
+        await RefusedAsync("INSUFFICIENT_STOCK", "lines[0].quantity", "lines[1].quantity");
+        Assert.Equal(0, await LedgerCountAsync(s.Http));
     }
 
     [Fact]
