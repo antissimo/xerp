@@ -3,7 +3,7 @@
 Glavni pregled petlje arhitekt -> tester -> builder -> review -> merge. Redoslijed koraka dolazi iz
 `docs/roadmap.md` (piše ga arhitekt); ovaj dokument vodi orkestrator i ažurira ga nakon svakog koraka.
 
-Zadnje ažuriranje: 2026-10-09 09:40
+Zadnje ažuriranje: 2026-10-09 09:45
 
 ## Opseg MVP-a
 
@@ -35,7 +35,7 @@ Oznake: ✅ gotovo · 🔄 u tijeku · ⬜ nije započeto · — ne primjenjuje 
 | 007 | Preračun jedinica mjere po artiklu | ✅ | 🔄 | ⬜ | ⬜ | ⬜ |
 | 008 | Inventura / korekcija zaliha | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 009 | Narudžbe dobavljačima -> primka robe | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 010 | Prodajne narudžbe -> isporuka | 🔄 | ⬜ | ⬜ | ⬜ | ⬜ |
+| 010 | Prodajne narudžbe -> isporuka | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
 | | **— granica MVP-a — sve ispod je nakon MVP-a —** | | | | | |
 | 011 | Vrednovanje zaliha | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 012 | Kontni plan + temeljnice | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -52,7 +52,7 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 
 ## Što tko trenutno radi
 
-- **Arhitekt:** piše spec 010 (prodaja); zatim review speca 005.
+- **Arhitekt:** granica MVP-a u roadmapu, odgovori na pitanja za 005 i 006; zatim review speca 005.
 - **Builder:** zatvara 005 nad usklađenim testovima, zatim spec 006 (grana `feat/006-stock-transfers-reversal`).
 - **Tester:** usklađivanje grana s `main`om i odgovorima za 005, zatim testovi za 007 i 008.
 
@@ -71,6 +71,7 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 - 2026-10-09 — testovi za 006 napisani (`tests/006-stock-transfers-reversal`).
 - 2026-10-09 — vlasnik ograničio opseg na MVP; lokalni model qwen3:4b isproban i odbačen (preslab).
 - 2026-10-09 — kod za 005 gotov (skladišna knjiga); spec 009 (nabava) napisan.
+- 2026-10-09 — spec 010 (prodaja) napisan; svi specovi MVP-a (001–010) su napisani.
 
 ## Odluke vlasnika
 
@@ -86,5 +87,9 @@ Arhitektovi defaulti koji vrijede dok vlasnik ne kaže drugačije (detalji u ADR
 - Spec 006 (ADR-0013): prijenos je trenutan; storno je zaseban dokument iz iste serije, cijeli i konačan,
   odbijen ako bi zaliha otišla u minus; datum storna zadaje pozivatelj.
 - Spec 007 (ADR-0014): vidi ADR.
+- Spec 009/010 (ADR-0016, ADR-0017): potvrđena narudžba se ne mijenja (zatvori i napravi novu); nema
+  primke/isporuke preko naručenog; primka/isporuka samo u skladištu narudžbe; samo artikli tipa roba; cijene u
+  jednoj valuti, 2 decimale, bez poreza i popusta; rezervacija informira, ne blokira; nema ponude (draft
+  narudžba služi kao ponuda); narudžbe se ne zatvaraju automatski.
 - Spec 008 (ADR-0015): zastarjela inventura se odbija; inventura je djelomična; artikl jednom po inventuri;
   ništa se ne zamrzava dok je inventura otvorena; proknjižena inventura se može stornirati.
