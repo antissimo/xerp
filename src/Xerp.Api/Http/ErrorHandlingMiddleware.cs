@@ -17,10 +17,12 @@ public sealed class ErrorHandlingMiddleware(RequestDelegate next, ILogger<ErrorH
         }
         catch (BadHttpRequestException ex) when (!context.Response.HasStarted)
         {
-            // The server refused to read the request (for example, the body is too large).
+            // The request could not be read, or its body passed the limit while it was read (LimitedRequestBody).
             logger.LogInformation(ex, "Bad request on {Method} {Path}", context.Request.Method, context.Request.Path);
             context.Response.Clear();
-            await Problems.WriteAsync(context, AppError.Validation("body", "The request could not be read."));
+            await Problems.WriteAsync(context, ex.StatusCode == StatusCodes.Status413PayloadTooLarge
+                ? AppError.PayloadTooLarge(ApiV1Middleware.MaxRequestBodyBytes)
+                : AppError.Validation("body", "The request could not be read."));
         }
         catch (Exception ex)
         {

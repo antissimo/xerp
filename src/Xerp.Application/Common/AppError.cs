@@ -23,6 +23,7 @@ public static class ErrorCodes
     public const string OrderNotOpen = "ORDER_NOT_OPEN";
     public const string OrderMismatch = "ORDER_MISMATCH";
     public const string QuantityExceedsOrder = "QUANTITY_EXCEEDS_ORDER";
+    public const string PayloadTooLarge = "PAYLOAD_TOO_LARGE";
     public const string InternalError = "INTERNAL_ERROR";
 }
 
@@ -37,6 +38,10 @@ public sealed record AppError(string Code, string Detail, IReadOnlyDictionary<st
 
     public static AppError Forbidden(string detail = "This credential is not allowed to perform the operation.") =>
         new(ErrorCodes.Forbidden, detail);
+
+    /// <summary>The request was refused unread because its body is larger than the transport accepts.</summary>
+    public static AppError PayloadTooLarge(long maxBytes) =>
+        new(ErrorCodes.PayloadTooLarge, $"The request body is larger than the limit of {maxBytes} bytes.");
 
     public static AppError Internal() => new(ErrorCodes.InternalError, "An unexpected error occurred.");
 

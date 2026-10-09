@@ -8,13 +8,17 @@ namespace Xerp.Api.Http;
 /// the path, not on endpoint metadata, so a route added later cannot be left unauthenticated by omission:
 /// no valid credential -> 401; admin key outside <c>/api/v1/admin</c> or tenant key inside it -> 403.
 /// Both transports therefore establish tenant and actor in exactly the same way, once per HTTP request.
-/// It also turns "no such route" under <c>/api/v1</c> into a NOT_FOUND problem.
+/// It also turns "no such route" under <c>/api/v1</c> into a NOT_FOUND problem, and limits the size of a
+/// request body on both (review 001/7).
 /// </summary>
 public sealed class ApiV1Middleware(RequestDelegate next)
 {
     private const string BearerPrefix = "Bearer ";
 
     public const string McpPath = "/mcp";
+
+    /// <summary>The largest legitimate body (a document of 200 lines) is a few tens of kB.</summary>
+    public const long MaxRequestBodyBytes = 1024 * 1024;
 
     public async Task InvokeAsync(HttpContext context, CredentialResolver credentials, RequestActor actor, IConfiguration configuration)
     {
@@ -48,6 +52,15 @@ public sealed class ApiV1Middleware(RequestDelegate next)
         }
         if (credential is TenantCredential tenant)
             actor.Set(tenant.Key.TenantId, tenant.Key.ApiKeyId);
+
+        // A declared length above the limit is refused unread; a body without one is counted while it is read.
+        if (context.Request.ContentLength > MaxRequestBodyBytes)
+        {
+            await Problems.WriteAsync(context, AppError.PayloadTooLarge(MaxRequestBodyBytes));
+            return;
+        }
+        if (context.Request.ContentLength is null)
+            context.Request.Body = new LimitedRequestBody(context.Request.Body, MaxRequestBodyBytes);
 
         await next(context);
 

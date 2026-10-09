@@ -8,8 +8,8 @@ namespace Xerp.IntegrationTests;
 /// <summary>
 /// Review 001, item 7 (docs/reviews/open-items.md, "before MVP"): a request body under <c>/api/v1</c> and
 /// <c>/mcp</c> is at most 1 MB; a larger one is refused with <c>413</c> in the error model, whether its
-/// length is declared (<c>Content-Length</c>) or not (chunked). The chunked cases run against a host on a real
-/// Kestrel listener, because the in-process test server enforces no limit of its own.
+/// length is declared (<c>Content-Length</c>) or not (chunked). Most cases run against a host on a real
+/// Kestrel listener: what is at stake is that a client still sending its body gets the answer.
 /// </summary>
 [Collection(XerpCollection.Name)]
 public class RequestBodyLimitTests(XerpFixture app)
