@@ -72,6 +72,8 @@ New error code (registry: architecture §6):
 
 - `stock_document_create`, `stock_document_list`: `type` allows `"count"`. `stock_document_post` can return
   `COUNT_OUTDATED`. No new tool; `tools/list` still returns exactly the 37 tools of spec 007.
+- The description of the `quantity` property of a `lines` item no longer says only "greater than 0": it says
+  that on a count `0` is allowed. The schema itself is unchanged (a JSON number).
 - The description of `stock_document_create` explains a count: `quantity` is what was counted, in the line's
   unit; `0` means none found; each article once; articles not listed are not changed; use it for opening
   balances; for a known difference use a receipt or an issue.
@@ -127,7 +129,9 @@ Posting
 Reversal
 - R17. A posted count is reversed by the rules of spec 006. The reversing document is a `count` whose lines
   are copies of the original's posted lines, including `bookQuantity` and `differenceQuantity`; its entries
-  are the original's with the opposite sign (006/R14); its number is the next `SC-` number.
+  are the original's with the opposite sign (006/R14); its number is the next `SC-` number. A posted count
+  that wrote no entries (R14) is reversed like any other: `201`, a reversing document with a number and no
+  entries. A reversal is never judged "outdated": R10 applies to posting only (`008-q.md`, T-Q5).
 - R18. Reversing a count is refused with `409 INSUFFICIENT_STOCK` if it would take a pair below zero
   (006/R16): a line that added stock needs that quantity still on hand. Keys `lines[i].quantity`.
 - R19. A reversal undoes the count's entries; it does not restore the counted or the book quantity. After it,
@@ -179,7 +183,7 @@ Structure
 - AC-01 *(manual)* Build and tests exit 0; earlier tests pass unweakened. The only earlier tests changed are:
   tests asserting the exact property set of a stock document **line** (lines gain `bookQuantity`,
   `differenceQuantity`); tests pinning the exact enum values of `type` in a tool schema or expecting `type`
-  `"count"` to be invalid; tests pinning the table/column list. The literal tool list is **not** changed.
+  `"count"` to be invalid. (No table is added, so the table test does not change.) The literal tool list is **not** changed.
   One migration added.
 - AC-02 *(builder, unit)* The difference rule and the "current" rule (R7, R10, R11) are unit-tested without
   HTTP.
@@ -316,7 +320,10 @@ Tester
 Builder
 - Posting a count is the posting of spec 005 with one more check: inside the transaction, after locking the
   pairs in the fixed order, compare each pair's stock with the line's `BookQuantity`, then write the
-  differences. The comparison without the locks fails AC-45.
+  differences. The comparison without the locks fails AC-45. (Or under the per-tenant lock: ADR-0012,
+  amendment of 2026-10-09.)
+- As built (spec 006), `StockDocument.Reverse` refuses an empty set of ledger entries. A count without
+  differences has none and must still be reversible (R17): relax that guard for counts.
 - `BookQuantity` is written by create and replace only; reading a draft computes `differenceQuantity` from
   the stored book quantity and the current `baseQuantity`.
 - Reversal needs nothing new: it negates the original's ledger entries (006). Copy `BookQuantity` to the

@@ -163,7 +163,12 @@ Lines
   UUID string (`400`, key `lines[i].unitId`), must exist in the tenant (`REFERENCE_NOT_FOUND`), must not be an
   inactive unit newly assigned (`REFERENCE_INACTIVE`; "newly" as 005/R5: the stored draft has no line with that
   unit), and must be the base unit or an alternative unit of the line's article (`UNIT_NOT_ON_ARTICLE`) — all
-  with key `lines[i].unitId`.
+  with key `lines[i].unitId`. **The article's base unit is never checked for being active on a line**,
+  whether it is given or omitted: it is the article's own unit (002/R9 lets an article keep a base unit
+  deactivated since), and specs 005 and 006 as built do not check it. `REFERENCE_INACTIVE` on a line's unit
+  therefore concerns every unit other than the article's base unit — whether or not it is an alternative
+  unit of the article: a newly assigned inactive unit that is not a unit of the article at all is
+  `REFERENCE_INACTIVE`, not `UNIT_NOT_ON_ARTICLE` (R16 orders the kinds; `007-q.md`, T-Q6).
 - R13. `quantity` is in the line's unit and obeys 005/R6 unchanged.
 - R14. **Conversion.** `baseQuantity` = `quantity` × `factor`, rounded to 6 decimal places, half away from
   zero. For the base unit, `factor` is 1 and `baseQuantity` equals `quantity`.
@@ -176,7 +181,10 @@ Lines
 - R17. **A draft follows the article's current factor; a posted line keeps its own.** `factor` and
   `baseQuantity` of a draft line are computed with the conversion as it is when the document is read. Posting
   computes them once more, with the factor at that moment, and stores them on the line; from then on they
-  never change, whatever happens to the conversion.
+  never change, whatever happens to the conversion. A change of factor writes nothing to a draft: its
+  `updatedAt` / `updatedBy` do not change. Reading never fails on R15: a draft line that no longer converts
+  shows the current `factor` and the `baseQuantity` R14 gives (`0`, or a value above the maximum); only
+  saving and posting refuse it (`007-q.md`, T-Q7).
 - R18. Posting (extends 005/R13 and 006/R5): … masters active -> conversion (`QUANTITY_NOT_CONVERTIBLE`, R15,
   with the current factors) -> stock. Units are not re-checked for being active.
 - R19. **The ledger is in base units.** Every ledger entry a posted line produces has `quantity` equal to
@@ -197,7 +205,8 @@ Lines
   conversion exists afterwards, with one of the two factors; never `500`.
 - E4. A line with `unitId` of a unit that is an alternative unit of another article only ->
   `UNIT_NOT_ON_ARTICLE`.
-- E5. A line with the base unit's id given explicitly behaves exactly as a line without `unitId`.
+- E5. A line with the base unit's id given explicitly behaves exactly as a line without `unitId`, also when
+  the base unit has been deactivated (R12).
 - E6. The same article on two lines in different units (2 box, 6 pcs) is allowed; each line converts on its own.
 - E7. A draft line in boxes; the factor changes from 12 to 10: the draft now shows `factor` 10 and the new
   `baseQuantity`, and posts that.
@@ -231,7 +240,8 @@ no conversions. Unmarked criteria are black-box (tester).
 
 Structure
 - AC-01 *(manual)* Build and tests exit 0; earlier tests pass unweakened. The only earlier tests changed are:
-  the literal tool list; tests pinning the table/column list; tests asserting the exact property set of a
+  the literal tool list; the table test's list of named tables (it gains `ArticleUnits`; the test itself asserts
+  the tenant invariant on every table, architecture §9); tests asserting the exact property set of a
   stock document **line** (specs 005, 006: lines gain `factor`, `baseUnit`, `baseQuantity`); tests that used
   `unitId` as the example of an unknown line property (005/E2 — another name is used instead); tests pinning
   the exact input-schema properties of `article_list` or of a `lines` item. One migration added.
@@ -273,8 +283,8 @@ Effects on masters
 - AC-31 An article with a conversion and no stock documents: `PUT /articles/{id}` changing `baseUnitId` ->
   `409` `IN_USE` with key `baseUnitId`, article unchanged; changing only `type` or `name` -> `200`. After its
   conversions are deleted, changing `baseUnitId` -> `200`.
-- AC-32 An article with conversions and no stock documents: `DELETE /articles/{id}` -> `204`; afterwards the
-  units of its conversions can be deleted (`204`).
+- AC-32 An article with conversions and no stock documents: `DELETE /articles/{id}` -> `204`; afterwards a
+  unit that only its conversions used (not a base unit, on no other conversion or line) can be deleted (`204`).
 - AC-33 A draft with a line in boxes: `DELETE /articles/{A}/units/{box}` -> `409` `IN_USE`. After the draft is
   replaced with the line in the base unit (or deleted) -> `204`.
 - AC-34 A posted document with a line in boxes: `DELETE /articles/{A}/units/{box}` -> `204`;
@@ -287,9 +297,11 @@ Lines — drafts
 - AC-41 A line without `unitId`, with `"unitId": null`, and with `"unitId"` = the id of `pcs` -> each `201`
   with `unit.code == "pcs"`, `factor == 1`, `baseUnit.code == "pcs"`, `baseQuantity == quantity`.
 - AC-42 Line unit errors, nothing created: `"unitId": "abc"` -> `400` with key `lines[0].unitId`; a random
-  UUID -> `409` `REFERENCE_NOT_FOUND` with key `lines[0].unitId`; an inactive unit that is a unit of A ->
-  `409` `REFERENCE_INACTIVE` with key `lines[0].unitId`; B with `box` (a unit of A only) -> `409`
+  UUID -> `409` `REFERENCE_NOT_FOUND` with key `lines[0].unitId`; an inactive **alternative** unit of A (`box`,
+  deactivated after its conversion was set) -> `409` `REFERENCE_INACTIVE` with key `lines[0].unitId`; B with `box` (a unit of A only) -> `409`
   `UNIT_NOT_ON_ARTICLE` with key `lines[0].unitId`; A with `pack` when A has no conversion for it -> the same.
+  After `pcs` (A's base unit) is deactivated, a line of A without `unitId` and one with `"unitId"` = `pcs` ->
+  each `201` (R12).
 - AC-43 Order of kinds: lines [(B, 1, box), (random article UUID, 1)] -> `REFERENCE_NOT_FOUND` with key
   `lines[1].articleId` and without `lines[0].unitId`.
 - AC-44 `PUT` on a draft changing a line from boxes to the base unit and back -> `200` each time with the
@@ -374,4 +386,9 @@ Builder
 - "Used by a draft line" (R8) must hold under a race between saving a draft and deleting the conversion:
   either the draft is saved and the delete gets `IN_USE`, or the delete succeeds and the save gets
   `UNIT_NOT_ON_ARTICLE`; never a draft line whose unit is not a unit of its article.
+- As built (spec 005), every stock document write and `PUT /articles/{id}` run under one lock per tenant
+  (ADR-0012, amendment of 2026-10-09). Set and Delete of a conversion must run under the same lock
+  (condition 1 of the amendment); the race above and E3 are then settled by construction.
+- As built, the tool-side address check (`RecordAddress.Id`) reports a missing id under the fixed name `id`.
+  The four new tools need it under `articleId` / `unitId` (section 5): give the helper the argument's name.
 - Anything unclear or contradictory: `docs/questions/007-q.md`, then continue with the rest.
