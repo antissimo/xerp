@@ -3,7 +3,7 @@
 Glavni pregled petlje arhitekt -> tester -> builder -> review -> merge. Redoslijed koraka dolazi iz
 `docs/roadmap.md` (piše ga arhitekt); ovaj dokument vodi orkestrator i ažurira ga nakon svakog koraka.
 
-Zadnje ažuriranje: 2026-10-09 10:10
+Zadnje ažuriranje: 2026-10-09 10:20
 
 ## Opseg MVP-a
 
@@ -31,8 +31,8 @@ Oznake: ✅ gotovo · 🔄 u tijeku · ⬜ nije započeto · — ne primjenjuje 
 | 003 | MCP server + upravljanje API ključevima | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 004 | Partneri i skladišta | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 005 | Skladišna knjiga, primke i izdatnice | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 006 | Međuskladišnice i storno | ✅ | ✅ | 🔄 | ⬜ | ⬜ |
-| 007 | Preračun jedinica mjere po artiklu | ✅ | ✅ | ⬜ | ⬜ | ⬜ |
+| 006 | Međuskladišnice i storno | ✅ | ✅ | ✅ | 🔄 | ⬜ |
+| 007 | Preračun jedinica mjere po artiklu | ✅ | ✅ | 🔄 | ⬜ | ⬜ |
 | 008 | Inventura / korekcija zaliha | ✅ | ✅ | ⬜ | ⬜ | ⬜ |
 | 009 | Narudžbe dobavljačima -> primka robe | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 010 | Prodajne narudžbe -> isporuka | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -52,8 +52,8 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 
 ## Što tko trenutno radi
 
-- **Arhitekt:** čeka review 006 (namjerno bez zadatka zbog limita plana; čekaju ga pitanja testera za 007 i 008).
-- **Builder:** implementacija speca 006 (grana `feat/006-stock-transfers-reversal`).
+- **Arhitekt:** review speca 006, zatim odgovori na pitanja testera za 007 i 008.
+- **Builder:** implementacija speca 007 (grana `feat/007-item-unit-conversions`).
 - **Tester:** čeka (limit plana na 95 %); sljedeće: testovi za 009 i 010.
 
 ## Dnevnik
@@ -75,6 +75,7 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 - 2026-10-09 — 005 prošao review (OK; arhitekt pokrenuo 296 unit + 795 integracijskih testova), spojen u `main` i pushan.
 - 2026-10-09 — specovi 007–010 usklađeni s izgrađenim kodom; napisan `docs/getting-started.md`.
 - 2026-10-09 — testovi za 007 i 008 napisani. Limit plana na 95 % (reset 13:50); prednost ima builder na 006.
+- 2026-10-09 — kod za 006 gotov (međuskladišnice i storno); na reviewu.
 
 ## Odluke vlasnika
 
