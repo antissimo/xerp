@@ -84,7 +84,15 @@ public class PurchaseOrderImmutabilityTests(XerpFixture app)
             order.Close(Now, s.Tenant.ApiKeyId);
             db.Entry(order).Property(x => x.Reference).CurrentValue = "slipped in";
         });
-        await AssertRefusedAsync(s, id, (db, order) => db.PurchaseOrders.Remove(order));
+
+        // A delete; the lines are not loaded, so that it is this guard and not the model that refuses.
+        await using (var db = NewDbContext(s.Tenant))
+        {
+            db.PurchaseOrders.Remove(await db.PurchaseOrders.SingleAsync(x => x.Id == id));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => db.SaveChangesAsync());
+            Assert.Throws<InvalidOperationException>(() => db.SaveChanges());
+        }
+        await o.AssertUnchangedAsync(s.Http, confirmed);
     }
 
     [Fact]
