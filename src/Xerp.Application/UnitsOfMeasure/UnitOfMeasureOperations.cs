@@ -124,6 +124,12 @@ public sealed class UnitOfMeasureOperations(IXerpDb db, ITenantContext context, 
         var articles = await db.Articles.CountAsync(a => a.BaseUnitId == id, cancellationToken);
         if (articles > 0)
             return InUse($"The unit of measure is the base unit of {articles} article(s).");
+        // Spec 007, R10: also while a conversion or a stock document line, draft or posted, names it.
+        var conversions = await db.ArticleUnits.CountAsync(c => c.UnitId == id, cancellationToken);
+        if (conversions > 0)
+            return InUse($"The unit of measure is an alternative unit of {conversions} article(s): they have a conversion for it.");
+        if (await db.StockDocumentLines.AnyAsync(l => l.UnitId == id, cancellationToken))
+            return InUse("Lines of stock documents are entered in this unit of measure.");
 
         db.UnitsOfMeasure.Remove(unit);
         try

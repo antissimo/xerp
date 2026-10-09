@@ -6,8 +6,8 @@ using Xerp.Domain.Inventory;
 namespace Xerp.Application.Stock;
 
 /// <summary>
-/// The stock document operations of spec 005, section 4.1, and spec 006 (transfers, reversal). One method =
-/// one HTTP endpoint = one MCP tool.
+/// The stock document operations of spec 005, section 4.1, spec 006 (transfers, reversal) and spec 007 (lines
+/// in a unit of the article). One method = one HTTP endpoint = one MCP tool.
 /// <see cref="IXerpDb"/> is already filtered to the current tenant.
 /// <para>
 /// Every write of a stock document runs inside <see cref="IXerpDb.SerializedPerTenantAsync{T}"/>: one
@@ -100,12 +100,13 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
         {
             return await db.SerializedPerTenantAsync<Result<StockDocumentDto>>(async ct =>
             {
-                if (await CheckReferencesAsync(values, stored: null, ct) is { } referenceError)
-                    return referenceError;
+                var lines = await CheckReferencesAsync(values, stored: null, ct);
+                if (!lines.IsSuccess)
+                    return lines.Error;
 
                 // R9: a draft. It has no number and no effect on stock, and it reserves nothing.
                 var document = StockDocument.Create(
-                    type, values.DocumentDate, values.WarehouseId, values.ToWarehouseId, values.Reference, values.Note, values.Lines,
+                    type, values.DocumentDate, values.WarehouseId, values.ToWarehouseId, values.Reference, values.Note, lines.Value,
                     clock.UtcNow, ActorKeyId());
                 db.StockDocuments.Add(document);
                 await db.SaveChangesAsync(ct);
@@ -115,7 +116,7 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
         catch (ForeignKeyViolationException ex) when (!ex.BlockedDelete)
         {
             // A master was deleted between the check and the write: the foreign key is the authority.
-            return await CheckReferencesAsync(values, stored: null, cancellationToken) ?? throw new InvalidOperationException("A reference was rejected by the database but is present.", ex);
+            return (await CheckReferencesAsync(values, stored: null, cancellationToken)).Error ?? throw new InvalidOperationException("A reference was rejected by the database but is present.", ex);
         }
     }
 
@@ -139,11 +140,12 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
                     return destinationError;
                 if (!document.IsDraft)
                     return NotADraft(document, "replaced");
-                if (await CheckReferencesAsync(values, document, ct) is { } referenceError)
-                    return referenceError;
+                var lines = await CheckReferencesAsync(values, document, ct);
+                if (!lines.IsSuccess)
+                    return lines.Error;
 
                 var removed = document.Replace(
-                    values.DocumentDate, values.WarehouseId, values.ToWarehouseId, values.Reference, values.Note, values.Lines,
+                    values.DocumentDate, values.WarehouseId, values.ToWarehouseId, values.Reference, values.Note, lines.Value,
                     clock.UtcNow, ActorKeyId());
                 db.StockDocumentLines.RemoveRange(removed);
                 await db.SaveChangesAsync(ct);
@@ -152,7 +154,7 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
         }
         catch (ForeignKeyViolationException ex) when (!ex.BlockedDelete)
         {
-            return await CheckReferencesAsync(values, stored: null, cancellationToken) ?? throw new InvalidOperationException("A reference was rejected by the database but is present.", ex);
+            return (await CheckReferencesAsync(values, stored: null, cancellationToken)).Error ?? throw new InvalidOperationException("A reference was rejected by the database but is present.", ex);
         }
     }
 
@@ -173,11 +175,13 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
         }, cancellationToken);
 
     /// <summary>
-    /// Posts a draft (R12-R18; spec 006, R5-R9): number, posting attribution and the ledger entries, in one
-    /// transaction - or nothing at all. Order of checks (R13): exists -> is a draft -> warehouse(s) and
-    /// articles active -> stock sufficient. Only then is the counter advanced, so a refused posting consumes
-    /// no number (R17). A transfer writes both entries of every line in the same save: stock cannot leave the
-    /// source without arriving at the destination (spec 006, R8).
+    /// Posts a draft (R12-R18; spec 006, R5-R9; spec 007, R17-R19): number, posting attribution, the factor
+    /// and base quantity of every line and the ledger entries, in one transaction - or nothing at all. Order
+    /// of checks (R13; spec 007, R18): exists -> is a draft -> warehouse(s) and articles active -> every line
+    /// converts with the factors as they are now -> stock sufficient, counted in base quantities. Only then
+    /// is the counter advanced, so a refused posting consumes no number (R17). A transfer writes both entries
+    /// of every line in the same save: stock cannot leave the source without arriving at the destination
+    /// (spec 006, R8).
     /// </summary>
     public Task<Result<StockDocumentDto>> PostAsync(Guid id, CancellationToken cancellationToken = default) =>
         db.SerializedPerTenantAsync<Result<StockDocumentDto>>(async ct =>
@@ -188,22 +192,32 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
             if (!document.IsDraft)
                 return NotADraft(document, "posted again");
 
-            var lines = document.Lines.Select(l => l.Values).ToList();
-            if (StockLineChecks.ActiveForPosting(await InactiveWarehousesAsync(document, ct), lines, await ArticleFactsAsync(lines, ct)) is { } inactive)
+            var lines = document.Lines.Select(l => l.Entry).ToList();
+            // The factors are read here, inside the posting transaction and under the tenant's lock: a
+            // conversion cannot be set or deleted between this read and the save (spec 007, section 11).
+            var facts = await LineFactsAsync(lines.Select(l => l.ArticleId), [], ct);
+            if (StockLineChecks.ActiveForPosting(await InactiveWarehousesAsync(document, ct), lines, facts.Articles) is { } inactive)
                 return inactive;
 
-            // R15, R18; spec 006, R7: only what leaves the (source) warehouse is checked; stock in the
-            // destination and the document date play no part.
+            // Spec 007, R17, R18: a draft follows the current factor, so a line that converted when it was
+            // saved may not convert any more.
+            var converted = StockLineChecks.Convert(lines, facts);
+            if (!converted.IsSuccess)
+                return converted.Error;
+
+            // R15, R18; spec 006, R7; spec 007, R19: only what leaves the (source) warehouse is checked, in
+            // base quantities; stock in the destination and the document date play no part.
             if (document.Type is StockDocumentType.Issue or StockDocumentType.Transfer)
             {
                 var onHand = await OnHandAsync(lines.Select(l => l.ArticleId), [document.WarehouseId], ct);
                 var inSource = onHand.ToDictionary(p => p.Key.ArticleId, p => p.Value);
-                if (StockLineChecks.Sufficiency(lines, inSource) is { } insufficient)
+                if (StockLineChecks.Sufficiency(converted.Value.Select(c => c.BaseValues).ToList(), inSource) is { } insufficient)
                     return insufficient;
             }
 
             var number = await NextNumberAsync(document.Type, ct);
-            db.StockLedgerEntries.AddRange(document.Post(number, clock.UtcNow, ActorKeyId()));
+            db.StockLedgerEntries.AddRange(
+                document.Post(number, converted.Value.Select(c => c.Factor).ToList(), clock.UtcNow, ActorKeyId()));
             await db.SaveChangesAsync(ct);
             return await ToDtoAsync(document, ct);
         }, cancellationToken);
@@ -239,7 +253,7 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
                 .ToList();
             // R16: no pair may go below zero, whatever stock other warehouses hold.
             var onHand = await OnHandAsync(movements.Select(m => m.ArticleId), movements.Select(m => m.WarehouseId), ct);
-            var lines = original.Lines.Select(l => l.Values).ToList();
+            var lines = original.Lines.Select(l => l.BaseValues).ToList();
             if (StockLineChecks.ReversalSufficiency(lines, movements, onHand) is { } insufficient)
                 return insufficient;
 
@@ -295,20 +309,39 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
         return sums.ToDictionary(x => (x.ArticleId, x.WarehouseId), x => x.Quantity);
     }
 
-    private async Task<Dictionary<Guid, ArticleFacts>> ArticleFactsAsync(IReadOnlyList<StockLineValues> lines, CancellationToken cancellationToken)
+    /// <summary>
+    /// The masters the lines name, as they are now: the articles, the given units and the conversions of
+    /// those articles. Inside a write this runs under the tenant's lock, so the conversions it returns are
+    /// the ones the write is saved against.
+    /// </summary>
+    private async Task<StockLineFacts> LineFactsAsync(IEnumerable<Guid> articles, IEnumerable<Guid> units, CancellationToken cancellationToken)
     {
-        var articleIds = lines.Select(l => l.ArticleId).Distinct().ToList();
-        return await db.Articles.AsNoTracking()
+        var articleIds = articles.Distinct().ToList();
+        var unitIds = units.Distinct().ToList();
+        var articleFacts = await db.Articles.AsNoTracking()
             .Where(a => articleIds.Contains(a.Id))
-            .Select(a => new { a.Id, a.IsActive, a.Type })
-            .ToDictionaryAsync(a => a.Id, a => new ArticleFacts(a.IsActive, a.Type), cancellationToken);
+            .Select(a => new { a.Id, a.IsActive, a.Type, a.BaseUnitId })
+            .ToDictionaryAsync(a => a.Id, a => new ArticleFacts(a.IsActive, a.Type, a.BaseUnitId), cancellationToken);
+        var unitFacts = unitIds.Count == 0
+            ? []
+            : await db.UnitsOfMeasure.AsNoTracking()
+                .Where(u => unitIds.Contains(u.Id))
+                .Select(u => new { u.Id, u.IsActive })
+                .ToDictionaryAsync(u => u.Id, u => u.IsActive, cancellationToken);
+        var factors = await db.ArticleUnits.AsNoTracking()
+            .Where(c => articleIds.Contains(c.ArticleId))
+            .Select(c => new { c.ArticleId, c.UnitId, c.Factor })
+            .ToDictionaryAsync(c => (c.ArticleId, c.UnitId), c => c.Factor, cancellationToken);
+        return new StockLineFacts(articleFacts, unitFacts, factors);
     }
 
     /// <summary>
-    /// R8; spec 006, R4: the warehouse first, then the destination of a transfer, then the lines. A reference
-    /// the stored draft already has in that place may stay although inactive.
+    /// R8; spec 006, R4; spec 007, R16: the warehouse first, then the destination of a transfer, then the
+    /// lines. A reference the stored draft already has in that place may stay although inactive. On success
+    /// the lines to store, each with its unit.
     /// </summary>
-    private async Task<AppError?> CheckReferencesAsync(StockDocumentValues values, StockDocument? stored, CancellationToken cancellationToken)
+    private async Task<Result<IReadOnlyList<StockLineEntry>>> CheckReferencesAsync(
+        StockDocumentValues values, StockDocument? stored, CancellationToken cancellationToken)
     {
         var warehouseError = await ReferenceCheck.ValidateAsync(
             db.Warehouses.Where(w => w.Id == values.WarehouseId).Select(w => w.IsActive),
@@ -325,8 +358,11 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
                 return destinationError;
         }
 
-        var alreadyOnDocument = stored?.Lines.Select(l => l.ArticleId).ToHashSet() ?? [];
-        return StockLineChecks.References(values.Lines, await ArticleFactsAsync(values.Lines, cancellationToken), alreadyOnDocument);
+        var articlesOnDocument = stored?.Lines.Select(l => l.ArticleId).ToHashSet() ?? [];
+        var unitsOnDocument = stored?.Lines.Select(l => l.UnitId).ToHashSet() ?? [];
+        var facts = await LineFactsAsync(
+            values.Lines.Select(l => l.ArticleId), values.Lines.Where(l => l.UnitId is not null).Select(l => l.UnitId!.Value), cancellationToken);
+        return StockLineChecks.References(values.Lines, facts, articlesOnDocument, unitsOnDocument);
     }
 
     /// <summary>What documents show of other records: the current code and name of their warehouses, the number of the documents they link to.</summary>
@@ -364,23 +400,47 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
         return new Related(warehouses, linked);
     }
 
-    /// <summary>The representation with the masters' current codes and names (R23).</summary>
+    /// <summary>
+    /// The representation with the masters' current codes and names (R23). A posted line shows the factor and
+    /// base quantity it was posted with; a draft line is converted here, with the article's factor as it is
+    /// now, and nothing is written (spec 007, R17).
+    /// </summary>
     private async Task<StockDocumentDto> ToDtoAsync(StockDocument document, CancellationToken cancellationToken)
     {
         var related = await RelatedAsync([document], cancellationToken);
         var articleIds = document.Lines.Select(l => l.ArticleId).Distinct().ToList();
         var articles = await db.Articles.AsNoTracking()
             .Where(a => articleIds.Contains(a.Id))
-            .Join(db.UnitsOfMeasure.AsNoTracking(), a => a.BaseUnitId, u => u.Id,
-                (a, u) => new { a.Id, a.Code, a.Name, UnitId = u.Id, UnitCode = u.Code, UnitName = u.Name })
+            .Select(a => new { a.Id, a.Code, a.Name, a.BaseUnitId })
             .ToDictionaryAsync(a => a.Id, cancellationToken);
+        var unitIds = document.Lines.Select(l => l.UnitId).Concat(articles.Values.Select(a => a.BaseUnitId)).Distinct().ToList();
+        var units = await db.UnitsOfMeasure.AsNoTracking()
+            .Where(u => unitIds.Contains(u.Id))
+            .Select(u => new ReferenceSummary(u.Id, u.Code, u.Name))
+            .ToDictionaryAsync(u => u.Id, cancellationToken);
+        var currentFactors = document.IsDraft
+            ? await db.ArticleUnits.AsNoTracking()
+                .Where(c => articleIds.Contains(c.ArticleId))
+                .Select(c => new { c.ArticleId, c.UnitId, c.Factor })
+                .ToDictionaryAsync(c => (c.ArticleId, c.UnitId), c => c.Factor, cancellationToken)
+            : [];
 
         var lines = document.Lines.Select(l =>
         {
             var a = articles[l.ArticleId];
+            decimal factor, baseQuantity;
+            if (l.Factor is { } postedFactor && l.BaseQuantity is { } postedBaseQuantity)
+                (factor, baseQuantity) = (postedFactor, postedBaseQuantity);
+            else
+            {
+                // A draft line is always in a unit of its article: a conversion a draft uses cannot be deleted (R8).
+                factor = l.UnitId == a.BaseUnitId ? UnitConversion.BaseUnitFactor : currentFactors[(l.ArticleId, l.UnitId)];
+                // Shown as it converts now, also when that is no longer acceptable for posting (R15, E8).
+                baseQuantity = UnitConversion.ToBase(l.Quantity, factor);
+            }
             return new StockDocumentLineDto(
-                l.LineNo, new ReferenceSummary(a.Id, a.Code, a.Name), new ReferenceSummary(a.UnitId, a.UnitCode, a.UnitName),
-                QuantityRules.Normalize(l.Quantity));
+                l.LineNo, new ReferenceSummary(a.Id, a.Code, a.Name), units[l.UnitId], QuantityRules.Normalize(l.Quantity),
+                QuantityRules.Normalize(factor), units[a.BaseUnitId], QuantityRules.Normalize(baseQuantity));
         }).ToList();
         return new StockDocumentDto(
             document.Id, document.Type.ToName(), document.Status.ToName(), document.Number, document.DocumentDate,

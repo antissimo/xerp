@@ -21,6 +21,7 @@ public static class StockDocumentValidation
         $"status must be \"{StockDocumentStatusNames.Draft}\", \"{StockDocumentStatusNames.Posted}\" or \"{StockDocumentStatusNames.Reversed}\".";
 
     public const string ToWarehouseField = "toWarehouseId";
+    public const string UnitField = "unitId";
 
     public static string LineKey(int index, string field) => $"lines[{index}].{field}";
 
@@ -128,7 +129,7 @@ public static class StockDocumentValidation
             errors.Add("reference", $"reference must be at most {StockDocument.ReferenceMaxLength} characters on a single line, without control characters.");
         var normalizedNote = Note(errors, note);
 
-        var lineValues = new List<StockLineValues>();
+        var lineValues = new List<StockLineRequest>();
         if (lines is null || lines.Count == 0)
             errors.Add("lines", $"lines is required: an array of 1 to {StockDocument.MaxLines} lines.");
         else if (lines.Count > StockDocument.MaxLines)
@@ -143,13 +144,21 @@ public static class StockDocumentValidation
                     continue;
                 }
                 var article = RequiredId(errors, line.ArticleId, LineKey(i, "articleId"), "an article", "articleId");
+                // Spec 007, R12: optional; omitted or null is the article's base unit.
+                Guid? unit = null;
+                if (line.UnitId is not null)
+                {
+                    if (Guid.TryParse(line.UnitId, out var parsed)) unit = parsed;
+                    else errors.Add(LineKey(i, UnitField),
+                        "unitId must be the id (UUID) of a unit of measure, not its code; leave it out or pass null for the article's base unit.");
+                }
                 if (line.Quantity is not { } quantity)
                     errors.Add(LineKey(i, "quantity"), "quantity is required.");
                 else if (!QuantityRules.IsValid(quantity))
                     errors.Add(LineKey(i, "quantity"),
                         $"quantity must be greater than 0, at most {QuantityRules.Max.ToString(CultureInfo.InvariantCulture)}, with at most {QuantityRules.DecimalPlaces} decimal places.");
                 else
-                    lineValues.Add(new StockLineValues(article, quantity));
+                    lineValues.Add(new StockLineRequest(article, quantity, unit));
             }
         }
         return new StockDocumentValues(date, warehouse, toWarehouse, normalizedReference, normalizedNote, lineValues);

@@ -3,8 +3,14 @@ using Xerp.Domain.Inventory;
 
 namespace Xerp.Application.Stock;
 
-/// <summary>A line with the current code and name of its article and of the article's base unit (R23).</summary>
-public sealed record StockDocumentLineDto(int LineNo, ReferenceSummary Article, ReferenceSummary Unit, decimal Quantity);
+/// <summary>
+/// A line with the current code and name of its article and units (R23; spec 007, 4.3). <c>Unit</c> and
+/// <c>Quantity</c> are what was entered; <c>Factor</c>, <c>BaseUnit</c> and <c>BaseQuantity</c> say what that is in
+/// the article's base unit - with the article's current factor on a draft, as posted on a posted document.
+/// </summary>
+public sealed record StockDocumentLineDto(
+    int LineNo, ReferenceSummary Article, ReferenceSummary Unit, decimal Quantity,
+    decimal Factor, ReferenceSummary BaseUnit, decimal BaseQuantity);
 
 /// <summary>Another stock document, as a document links to it: the reversed original or the reversing document.</summary>
 public sealed record StockDocumentLinkDto(Guid Id, string Number);
@@ -72,8 +78,14 @@ public sealed record StockLedgerEntryDto(
     LedgerDocumentDto Document,
     int LineNo);
 
-/// <summary>A line of a request: the id is the raw string, so a malformed one is reported with the other invalid fields.</summary>
-public sealed record StockLineInput(string? ArticleId = null, decimal? Quantity = null);
+/// <summary>
+/// A line of a request: the ids are the raw strings, so a malformed one is reported with the other invalid
+/// fields. <c>UnitId</c> omitted or null means the article's base unit (spec 007, R12).
+/// </summary>
+public sealed record StockLineInput(string? ArticleId = null, decimal? Quantity = null, string? UnitId = null);
+
+/// <summary>A validated line of a request: well-formed, not yet known to exist. <c>UnitId</c> null is the article's base unit.</summary>
+public readonly record struct StockLineRequest(Guid ArticleId, decimal Quantity, Guid? UnitId = null);
 
 public sealed record CreateStockDocumentInput(
     string? Type = null, string? DocumentDate = null, string? WarehouseId = null,
@@ -117,7 +129,7 @@ public sealed record ListStockLedgerEntriesInput(
 
 /// <summary>Validated header and lines of a document. The references are well-formed, not yet known to exist.</summary>
 public sealed record StockDocumentValues(
-    DateOnly DocumentDate, Guid WarehouseId, Guid? ToWarehouseId, string? Reference, string? Note, IReadOnlyList<StockLineValues> Lines);
+    DateOnly DocumentDate, Guid WarehouseId, Guid? ToWarehouseId, string? Reference, string? Note, IReadOnlyList<StockLineRequest> Lines);
 
 /// <summary>Validated input of a create: the type and the values.</summary>
 public sealed record NewStockDocumentValues(StockDocumentType Type, StockDocumentValues Values);

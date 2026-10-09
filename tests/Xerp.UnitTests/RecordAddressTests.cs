@@ -1,5 +1,6 @@
 using Xerp.Application.ApiKeys;
 using Xerp.Application.Articles;
+using Xerp.Application.ArticleUnits;
 using Xerp.Application.Common;
 using Xerp.Application.Ports;
 using Xerp.Application.UnitsOfMeasure;
@@ -18,6 +19,7 @@ public class RecordAddressTests
     private static readonly UnitOfMeasureOperations Units = new(null!, Me, null!);
     private static readonly ArticleOperations Articles = new(null!, Me, null!);
     private static readonly ApiKeyOperations Keys = new(null!, Me, null!, null!, null!);
+    private static readonly ArticleUnitOperations ArticleUnits = new(null!, Me, null!);
 
     private static void AssertError<T>(Result<T> result, string code, params string[] expectedKeys) where T : notnull
     {
@@ -70,6 +72,52 @@ public class RecordAddressTests
         AssertError(await Articles.DeleteAsync(id), ErrorCodes.ValidationFailed, "id");
         AssertError(await Keys.GetAsync(id), ErrorCodes.ValidationFailed, "id");
         AssertError(await Keys.RevokeAsync(id), ErrorCodes.ValidationFailed, "id");
+    }
+
+    // ---- spec 007, section 5: a conversion is addressed by two ids, each under its own name
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public async Task S007_Missing_articleId_or_unitId_is_a_validation_error_under_its_own_name(string? missing)
+    {
+        var id = Guid.CreateVersion7().ToString();
+
+        AssertError(await ArticleUnits.ListAsync(new ListArticleUnitsArguments(missing)), ErrorCodes.ValidationFailed, "articleId");
+        AssertError(await ArticleUnits.GetAsync(new ArticleUnitAddressInput(missing, id)), ErrorCodes.ValidationFailed, "articleId");
+        AssertError(await ArticleUnits.GetAsync(new ArticleUnitAddressInput(id, missing)), ErrorCodes.ValidationFailed, "unitId");
+        AssertError(await ArticleUnits.GetAsync(new ArticleUnitAddressInput(missing, missing)), ErrorCodes.ValidationFailed, "articleId", "unitId");
+        AssertError(await ArticleUnits.SetAsync(new SetArticleUnitArguments(missing, id, 12m)), ErrorCodes.ValidationFailed, "articleId");
+        AssertError(await ArticleUnits.SetAsync(new SetArticleUnitArguments(id, missing, 12m)), ErrorCodes.ValidationFailed, "unitId");
+        AssertError(await ArticleUnits.DeleteAsync(new ArticleUnitAddressInput(missing, id)), ErrorCodes.ValidationFailed, "articleId");
+        AssertError(await ArticleUnits.DeleteAsync(new ArticleUnitAddressInput(id, missing)), ErrorCodes.ValidationFailed, "unitId");
+        // A missing id is reported before one that is not a UUID.
+        AssertError(await ArticleUnits.GetAsync(new ArticleUnitAddressInput("not-a-uuid", missing)), ErrorCodes.ValidationFailed, "unitId");
+    }
+
+    [Fact]
+    public async Task S007_ArticleId_or_unitId_that_is_not_a_uuid_addresses_no_record()
+    {
+        var id = Guid.CreateVersion7().ToString();
+
+        AssertError(await ArticleUnits.ListAsync(new ListArticleUnitsArguments("not-a-uuid")), ErrorCodes.NotFound);
+        AssertError(await ArticleUnits.GetAsync(new ArticleUnitAddressInput("not-a-uuid", id)), ErrorCodes.NotFound);
+        AssertError(await ArticleUnits.GetAsync(new ArticleUnitAddressInput(id, "not-a-uuid")), ErrorCodes.NotFound);
+        // As PUT /articles/{id}/units/abc over HTTP: no such record, whatever the body is.
+        AssertError(await ArticleUnits.SetAsync(new SetArticleUnitArguments(id, "not-a-uuid", 12m)), ErrorCodes.NotFound);
+        AssertError(await ArticleUnits.SetAsync(new SetArticleUnitArguments("not-a-uuid", id, 0m)), ErrorCodes.NotFound);
+        AssertError(await ArticleUnits.DeleteAsync(new ArticleUnitAddressInput(id, "not-a-uuid")), ErrorCodes.NotFound);
+    }
+
+    [Fact]
+    public void R15_The_address_check_reports_a_missing_id_under_the_name_it_is_given()
+    {
+        Assert.Equal(["id"], RecordAddress.Id(null, "Not found.", out _)!.Errors!.Keys);
+        Assert.Equal(["articleId"], RecordAddress.Id("", "Not found.", out _, "articleId")!.Errors!.Keys);
+        Assert.Equal(ErrorCodes.NotFound, RecordAddress.Id("abc", "Not found.", out _, "articleId")!.Code);
+        var id = Guid.CreateVersion7();
+        Assert.Null(RecordAddress.Id(id.ToString(), "Not found.", out var parsed, "articleId"));
+        Assert.Equal(id, parsed);
     }
 
     [Fact]

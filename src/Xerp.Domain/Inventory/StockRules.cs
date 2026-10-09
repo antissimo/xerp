@@ -1,6 +1,15 @@
 namespace Xerp.Domain.Inventory;
 
-/// <summary>A line as a caller gives it: an article and a quantity in the article's base unit.</summary>
+/// <summary>
+/// A line as it was entered (spec 007, R12, R13): an article, a unit of that article - its base unit or one of
+/// its alternative units - and a quantity in that unit.
+/// </summary>
+public readonly record struct StockLineEntry(Guid ArticleId, Guid UnitId, decimal Quantity);
+
+/// <summary>
+/// What a line means for stock: an article and a quantity in the article's base unit (spec 007, R19). The
+/// ledger, the stock check and every movement are computed from these, never from an entered quantity.
+/// </summary>
 public readonly record struct StockLineValues(Guid ArticleId, decimal Quantity);
 
 /// <summary>

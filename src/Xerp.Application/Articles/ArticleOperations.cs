@@ -38,6 +38,9 @@ public sealed class ArticleOperations(IXerpDb db, ITenantContext context, IClock
             articles = articles.Where(a => a.Type == type);
         if (query.BaseUnitId is { } baseUnitId)
             articles = articles.Where(a => a.BaseUnitId == baseUnitId);
+        if (query.AlternativeUnitId is { } alternativeUnitId)
+            // Spec 007, 4.2: articles that have a conversion for the unit; an article's base unit is not one.
+            articles = articles.Where(a => db.ArticleUnits.Any(c => c.ArticleId == a.Id && c.UnitId == alternativeUnitId));
         if (query.Search is { } search)
         {
             var pattern = LikePattern.Contains(search);
@@ -101,8 +104,9 @@ public sealed class ArticleOperations(IXerpDb db, ITenantContext context, IClock
             return validated.Error;
         var values = validated.Value;
 
-        // Serialised with the writes of stock documents: whether the article is used cannot change between
-        // the check below and the save, so a used article never changes its type or base unit (spec 005, R26).
+        // Serialised with the writes of stock documents and of conversions: whether the article is used or has
+        // conversions cannot change between the check below and the save, so a used article never changes its
+        // type or base unit (spec 005, R26) and an article with conversions never its base unit (spec 007, R9).
         return await db.SerializedPerTenantAsync<Result<ArticleDto>>(async ct =>
         {
             var article = await db.Articles.SingleOrDefaultAsync(a => a.Id == id, ct);
@@ -125,49 +129,76 @@ public sealed class ArticleOperations(IXerpDb db, ITenantContext context, IClock
     }
 
     /// <summary>
-    /// Spec 005, R24-R26: while a stock document line names the article - on a draft or a posted document -
-    /// its type and base unit are frozen, because the quantities on those lines are in that unit.
+    /// What is frozen, compared with the stored values before any reference is looked up:
+    /// <list type="bullet">
+    /// <item>Spec 005, R24-R26: while a stock document line names the article - on a draft or a posted
+    /// document - its type and base unit, because the quantities on those lines are in that unit.</item>
+    /// <item>Spec 007, R9: while the article has at least one conversion, its base unit - the factors mean
+    /// nothing against another base unit. Its type is not frozen by conversions.</item>
+    /// </list>
     /// </summary>
     private async Task<AppError?> CheckFrozenFieldsAsync(Article article, ArticleValues values, CancellationToken cancellationToken)
     {
+        var typeChanges = article.Type != values.Type;
+        var baseUnitChanges = article.BaseUnitId != values.BaseUnitId;
+        if (!typeChanges && !baseUnitChanges)
+            return null;
+
+        var used = await IsUsedAsync(article.Id, cancellationToken);
+        var hasConversions = baseUnitChanges && await db.ArticleUnits.AnyAsync(c => c.ArticleId == article.Id, cancellationToken);
         var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
-        if (article.Type != values.Type)
+        if (typeChanges && used)
             errors["type"] = ["The type cannot change while stock documents use the article."];
-        if (article.BaseUnitId != values.BaseUnitId)
+        if (baseUnitChanges && used)
             errors[BaseUnitField] = ["The base unit cannot change while stock documents use the article: their quantities are in it."];
-        if (errors.Count == 0 || !await IsUsedAsync(article.Id, cancellationToken))
+        else if (hasConversions)
+            errors[BaseUnitField] = ["The base unit cannot change while the article has unit conversions: their factors are to this base unit."];
+        if (errors.Count == 0)
             return null;
         return AppError.InUse(
-            "The article is used by stock documents, so its type and base unit are fixed. Keep both values; "
-            + "name, code, description and isActive can still change.", errors);
+            used
+                ? "The article is used by stock documents, so its type and base unit are fixed. Keep both values; "
+                  + "name, code, description and isActive can still change."
+                : "The article has unit conversions, so its base unit is fixed. Keep the base unit, or delete the article's "
+                  + "conversions first, change the base unit and set the conversions again with factors to the new base unit.",
+            errors);
     }
 
     private Task<bool> IsUsedAsync(Guid articleId, CancellationToken cancellationToken) =>
         db.StockDocumentLines.AnyAsync(l => l.ArticleId == articleId, cancellationToken);
 
+    /// <summary>
+    /// Deletes an article no stock document uses, together with its conversions (spec 007, R11): they are the
+    /// article's own and are deleted here, not by a cascade. Serialised with the writes of conversions, so a
+    /// conversion set at the same moment is either deleted with the article or finds no article.
+    /// </summary>
     public async Task<Result<ArticleDeleted>> DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
-        var article = await db.Articles.SingleOrDefaultAsync(a => a.Id == id, cancellationToken);
-        if (article is null)
-            return NotFound();
-        // A draft counts like a posted document (spec 005, R24, R25).
-        if (await IsUsedAsync(id, cancellationToken))
-            return InUse();
-        db.Articles.Remove(article);
         try
         {
-            await db.SaveChangesAsync(cancellationToken);
+            return await db.SerializedPerTenantAsync<Result<ArticleDeleted>>(async ct =>
+            {
+                var article = await db.Articles.SingleOrDefaultAsync(a => a.Id == id, ct);
+                if (article is null)
+                    return NotFound();
+                // A draft counts like a posted document (spec 005, R24, R25).
+                if (await IsUsedAsync(id, ct))
+                    return InUse();
+                db.ArticleUnits.RemoveRange(await db.ArticleUnits.Where(c => c.ArticleId == id).ToListAsync(ct));
+                db.Articles.Remove(article);
+                await db.SaveChangesAsync(ct);
+                return new ArticleDeleted();
+            }, cancellationToken);
         }
         catch (ForeignKeyViolationException ex) when (ex.BlockedDelete)
         {
-            // A document started to use the article after the check above: the foreign key is the authority.
+            // Something started to use the article after the check above: the foreign key is the authority.
             return InUse();
         }
         catch (DbUpdateConcurrencyException)
         {
             return NotFound();
         }
-        return new ArticleDeleted();
     }
 
     private static AppError InUse() =>

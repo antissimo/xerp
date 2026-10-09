@@ -19,8 +19,11 @@ public class StockTransferReversalRulesTests
     private static readonly Guid A = Guid.CreateVersion7();
     private static readonly Guid B = Guid.CreateVersion7();
 
-    private static List<StockLineValues> Lines(params (Guid, decimal)[] lines) =>
-        lines.Select(l => new StockLineValues(l.Item1, l.Item2)).ToList();
+    // Spec 007: every line here is in the base unit of its article, as every line was before that spec.
+    private static readonly Guid Pcs = Guid.CreateVersion7();
+
+    private static List<StockLineEntry> Lines(params (Guid, decimal)[] lines) =>
+        lines.Select(l => new StockLineEntry(l.Item1, Pcs, l.Item2)).ToList();
 
     private static StockDocument Draft(StockDocumentType type, params (Guid, decimal)[] lines) =>
         StockDocument.Create(type, Day, W1, type == StockDocumentType.Transfer ? W2 : null, "DN-7", "first note", Lines(lines), T0, Poster);
@@ -29,7 +32,7 @@ public class StockTransferReversalRulesTests
     {
         var document = Draft(type, lines);
         var number = DocumentNumber.Format(type, 1);
-        return (document, document.Post(number, T0, Poster));
+        return (document, document.PostInBaseUnits(number, T0, Poster));
     }
 
     private static Dictionary<(Guid, Guid), decimal> Sums(IEnumerable<StockLedgerEntry> entries) =>
@@ -240,7 +243,7 @@ public class StockTransferReversalRulesTests
         {
             Assert.False(document.IsDraft);
             Assert.Throws<InvalidOperationException>(() => document.Replace(Day, W1, W2, null, null, Lines((A, 2)), T1, Reverser));
-            Assert.Throws<InvalidOperationException>(() => document.Post("ST-000003", T1, Reverser));
+            Assert.Throws<InvalidOperationException>(() => document.PostInBaseUnits("ST-000003", T1, Reverser));
         }
         Assert.Equal("reversed", original.Status.ToName());
         Assert.Equal("posted", reversal.Status.ToName());
