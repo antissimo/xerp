@@ -125,13 +125,18 @@ public static class Orders
 
 /// <summary>
 /// One kind of order (ADR-0016): its routes, tool names and the names that differ between a purchase order
-/// (spec 009) and its mirror. A test written against this class states a rule of the order mechanics once.
+/// (spec 009) and its mirror, the sales order (spec 010, substitution table). A test written against this
+/// class states a rule of the order mechanics once.
 /// </summary>
 public sealed class OrderApi
 {
     /// <summary>Spec 009: purchase order, received by a <c>receipt</c> with <c>purchaseOrderId</c>.</summary>
     public static readonly OrderApi Purchase = new("purchase-orders", "purchase_order", "supplier", "expectedDate",
         "purchaseOrder", "receipt", "PO-", "SR-", "received", "receipt", "incomingQuantity", consumesStock: false);
+
+    /// <summary>Spec 010: sales order, delivered by an <c>issue</c> with <c>salesOrderId</c>.</summary>
+    public static readonly OrderApi Sales = new("sales-orders", "sales_order", "customer", "requestedDate",
+        "salesOrder", "issue", "SO-", "SI-", "delivered", "delivery", "reservedQuantity", consumesStock: true);
 
     private OrderApi(string resource, string toolPrefix, string partner, string dueDate, string link, string documentType,
         string prefix, string documentPrefix, string done, string progress, string onHand, bool consumesStock)
