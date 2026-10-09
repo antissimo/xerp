@@ -13,6 +13,8 @@ public static class ErrorCodes
     public const string ReferenceInactive = "REFERENCE_INACTIVE";
     public const string CannotRevokeSelf = "CANNOT_REVOKE_SELF";
     public const string InvalidState = "INVALID_STATE";
+    public const string InsufficientStock = "INSUFFICIENT_STOCK";
+    public const string ArticleNotStocked = "ARTICLE_NOT_STOCKED";
     public const string InternalError = "INTERNAL_ERROR";
 }
 
@@ -35,6 +37,12 @@ public sealed record AppError(string Code, string Detail, IReadOnlyDictionary<st
     public static AppError CodeTaken(string detail) => new(ErrorCodes.CodeTaken, detail);
 
     public static AppError InUse(string detail) => new(ErrorCodes.InUse, detail);
+
+    /// <summary>The record is used, so the named fields cannot change (ADR-0012: <c>IN_USE</c> for frozen fields).</summary>
+    public static AppError InUse(string detail, IReadOnlyDictionary<string, string[]> errors) => new(ErrorCodes.InUse, detail, errors);
+
+    /// <summary>The operation is not allowed in the document's current status (ADR-0007).</summary>
+    public static AppError InvalidState(string detail) => new(ErrorCodes.InvalidState, detail);
 
     /// <summary>ADR-0008: a well-formed id in request field <paramref name="field"/> names no record of this tenant.</summary>
     public static AppError ReferenceNotFound(string field, Guid id) =>

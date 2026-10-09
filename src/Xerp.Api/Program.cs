@@ -7,6 +7,7 @@ using Xerp.Application.Articles;
 using Xerp.Application.Identity;
 using Xerp.Application.Partners;
 using Xerp.Application.Ports;
+using Xerp.Application.Stock;
 using Xerp.Application.Tenants;
 using Xerp.Application.UnitsOfMeasure;
 using Xerp.Application.Warehouses;
@@ -30,6 +31,8 @@ builder.Services.AddScoped<UnitOfMeasureOperations>();
 builder.Services.AddScoped<ArticleOperations>();
 builder.Services.AddScoped<PartnerOperations>();
 builder.Services.AddScoped<WarehouseOperations>();
+builder.Services.AddScoped<StockDocumentOperations>();
+builder.Services.AddScoped<StockQueries>();
 builder.Services.AddScoped<ApiKeyOperations>();
 builder.Services.AddXerpMcpServer();
 
@@ -57,6 +60,7 @@ v1.MapUnitOfMeasureEndpoints();
 v1.MapArticleEndpoints();
 v1.MapPartnerEndpoints();
 v1.MapWarehouseEndpoints();
+v1.MapStockEndpoints();
 v1.MapApiKeyEndpoints();
 
 // One operation = one HTTP endpoint + one MCP tool; both call the same Application operations.

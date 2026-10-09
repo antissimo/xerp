@@ -95,10 +95,18 @@ public sealed class WarehouseOperations(IXerpDb db, ITenantContext context, IClo
         var warehouse = await db.Warehouses.SingleOrDefaultAsync(w => w.Id == id, cancellationToken);
         if (warehouse is null)
             return NotFound();
+        // A draft counts like a posted document (spec 005, R24, R25).
+        if (await db.StockDocuments.AnyAsync(d => d.WarehouseId == id, cancellationToken))
+            return InUse();
         db.Warehouses.Remove(warehouse);
         try
         {
             await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (ForeignKeyViolationException ex) when (ex.BlockedDelete)
+        {
+            // A document started to use the warehouse after the check above: the foreign key is the authority.
+            return InUse();
         }
         catch (DbUpdateConcurrencyException)
         {
@@ -154,6 +162,9 @@ public sealed class WarehouseOperations(IXerpDb db, ITenantContext context, IClo
         RecordAddress.Id(id, NotFoundDetail, out var parsed) is { } error
             ? Task.FromResult<Result<WarehouseDeleted>>(error)
             : DeleteAsync(parsed, cancellationToken);
+
+    private static AppError InUse() =>
+        AppError.InUse("The warehouse is used by stock documents and cannot be deleted. Deactivate it instead (isActive = false).");
 
     private const string NotFoundDetail = "Warehouse not found.";
 

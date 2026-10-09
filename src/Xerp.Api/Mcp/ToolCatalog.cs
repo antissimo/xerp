@@ -3,6 +3,7 @@ using Xerp.Application.Articles;
 using Xerp.Application.Common;
 using Xerp.Application.Identity;
 using Xerp.Application.Partners;
+using Xerp.Application.Stock;
 using Xerp.Application.UnitsOfMeasure;
 using Xerp.Application.Warehouses;
 using static Xerp.Api.Mcp.ToolSchemas;
@@ -13,7 +14,7 @@ namespace Xerp.Api.Mcp;
 public sealed record NoArguments;
 
 /// <summary>
-/// The complete list of MCP tools (spec 003, 5.3; spec 004, 5.1). Adding an operation means adding its tool here; the
+/// The complete list of MCP tools (spec 003, 5.3; spec 004, 5.1; spec 005, 5). Adding an operation means adding its tool here; the
 /// tool-list test holds the expected names literally.
 /// </summary>
 public static class ToolCatalog
@@ -99,6 +100,29 @@ public static class ToolCatalog
             : "Whether the warehouse can be newly used on documents; default true.")),
     ];
 
+    private const string StockReferences =
+        "`REFERENCE_NOT_FOUND`: `warehouseId` or a line's `articleId` names no record of this tenant (`errors` says which; find ids with `warehouse_list`, `article_list`). "
+        + "`REFERENCE_INACTIVE`: that warehouse or article is inactive and would be newly used. "
+        + "`ARTICLE_NOT_STOCKED`: a line names a service article; only articles of type `stock` have stock. "
+        + "Errors about a line are keyed by position, for example `lines[0].articleId`.";
+
+    private const string DocumentPosted = "`INVALID_STATE`: the document is already posted; a posted document is permanent and cannot be changed, deleted or posted again.";
+
+    private static (string, System.Text.Json.Nodes.JsonObject)[] StockDocumentFields(bool update) =>
+    [
+        ("documentDate", Text("The business date of the document as YYYY-MM-DD, for example 2026-10-09. Any date, past or future; it does not affect the stock check.")),
+        ("warehouseId", Uuid("The `id` of the warehouse the goods come into (receipt) or leave (issue); see `warehouse_list`. Not the code.")),
+        ("reference", NullableText("Your own reference, for example a delivery-note number; one line, at most 100 characters."
+            + (update ? " Required: pass null for no value." : " Optional."))),
+        ("note", NullableText("Free text, may have several lines, at most 2000 characters." + (update ? " Required: pass null for no value." : " Optional."))),
+        ("lines", ArrayOf(
+            "The lines, 1 to 200; they are numbered 1…n in the order given" + (update ? " and replace all stored lines." : ".")
+            + " The same article may appear on several lines.",
+            1, 200,
+            ("articleId", Uuid("The `id` of a stock article (see `article_list`). Not the code.")),
+            ("quantity", Number("Quantity in the article's base unit, as a JSON number (not a string): greater than 0, at most 999999999.999999, at most 6 decimal places.")))),
+    ];
+
     private static readonly string[] AddressNames = ["addressLine1", "addressLine2", "postalCode", "city", "region", "countryCode"];
 
     private static readonly (string, System.Text.Json.Nodes.JsonObject)[] IdOrCode =
@@ -174,13 +198,15 @@ public static class ToolCatalog
         XerpTool.WithId<ReplaceArticleInput, ArticleDto>("article_update", ToolKind.Update,
             "Replaces all fields of an article; every argument is required (`description` may be null). " + Validation + " "
             + "`NOT_FOUND`: no such article in this tenant. `REFERENCE_NOT_FOUND`: `baseUnitId` names no unit of this tenant. "
-            + "`REFERENCE_INACTIVE`: the unit is inactive and the article did not already use it. " + CodeTaken,
+            + "`REFERENCE_INACTIVE`: the unit is inactive and the article did not already use it. "
+            + "`IN_USE`: stock documents use the article, so `type` and `baseUnitId` cannot change (`errors` names which); keep both values. " + CodeTaken,
             Input(["id", "code", "name", "description", "type", "baseUnitId", "isActive"],
                 [IdOf("article to replace"), .. ArticleFields(update: true)]),
             (services, id, input, ct) => services.GetRequiredService<ArticleOperations>().ReplaceAsync(id, input, ct)),
 
         XerpTool.For<RecordIdInput, ArticleDeleted>("article_delete", ToolKind.Delete,
-            "Deletes an article; returns `{ \"deleted\": true }`. `NOT_FOUND`: no such article in this tenant.",
+            "Deletes an article that no stock document uses; returns `{ \"deleted\": true }`. `NOT_FOUND`: no such article in this tenant. "
+            + "`IN_USE`: a stock document (draft or posted) has a line with this article; deactivate it with `article_update` instead.",
             Input(["id"], IdOf("article to delete")),
             (services, input, ct) => services.GetRequiredService<ArticleOperations>().DeleteAsync(input.Id, ct)),
 
@@ -249,9 +275,91 @@ public static class ToolCatalog
             (services, id, input, ct) => services.GetRequiredService<WarehouseOperations>().ReplaceAsync(id, input, ct)),
 
         XerpTool.For<RecordIdInput, WarehouseDeleted>("warehouse_delete", ToolKind.Delete,
-            "Deletes a warehouse; returns `{ \"deleted\": true }`. `NOT_FOUND`: no such warehouse in this tenant.",
+            "Deletes a warehouse that no stock document uses; returns `{ \"deleted\": true }`. `NOT_FOUND`: no such warehouse in this tenant. "
+            + "`IN_USE`: a stock document (draft or posted) names this warehouse; deactivate it with `warehouse_update` instead.",
             Input(["id"], IdOf("warehouse to delete")),
             (services, input, ct) => services.GetRequiredService<WarehouseOperations>().DeleteAsync(input.Id, ct)),
+
+        // ---- stock documents, stock on hand, stock ledger
+        XerpTool.For<ListStockDocumentsInput, PagedResult<StockDocumentSummaryDto>>("stock_document_list", ToolKind.Read,
+            "Lists the tenant's stock documents (receipts and issues), newest first, with paging; each item has `lineCount` instead of the lines. "
+            + "Filters combine with AND. " + Validation,
+            Input([],
+            [
+                ("type", Text("Return only documents of this type.", "receipt", "issue")),
+                ("status", Text("Return only drafts or only posted documents.", "draft", "posted")),
+                ("warehouseId", Uuid("Return only documents of the warehouse with this `id`.")),
+                Search("the document number or the reference"),
+                .. Paging,
+            ]),
+            (services, input, ct) => services.GetRequiredService<StockDocumentOperations>().ListAsync(input, ct)),
+
+        XerpTool.For<StockDocumentAddressInput, StockDocumentDto>("stock_document_get", ToolKind.Read,
+            "Returns one stock document with its lines, addressed by `id` or by `number` (exactly one of the two). "
+            + "`VALIDATION_FAILED`: both or neither were given. `NOT_FOUND`: no such document in this tenant; a draft has no number yet.",
+            Input([],
+            [
+                ("id", Uuid("The document's `id`. Give either `id` or `number`, not both.")),
+                ("number", Text("The number of a posted document, for example `SR-000001`, in any letter case. Give either `id` or `number`, not both.")),
+            ]),
+            (services, input, ct) => services.GetRequiredService<StockDocumentOperations>().FindAsync(input, ct)),
+
+        XerpTool.For<CreateStockDocumentInput, StockDocumentDto>("stock_document_create", ToolKind.Create,
+            "Creates a stock document as a draft and returns it with its `id`. A `receipt` brings goods into the warehouse, an `issue` takes them out. "
+            + "A draft changes no stock and reserves nothing; it takes effect only when posted with `stock_document_post`. "
+            + Validation + " " + StockReferences,
+            Input(["type", "documentDate", "warehouseId", "lines"],
+            [
+                ("type", Text("`receipt`: goods come into the warehouse. `issue`: goods leave it. Cannot be changed later.", "receipt", "issue")),
+                .. StockDocumentFields(update: false),
+            ]),
+            (services, input, ct) => services.GetRequiredService<StockDocumentOperations>().CreateAsync(input, ct)),
+
+        XerpTool.WithId<ReplaceStockDocumentInput, StockDocumentDto>("stock_document_update", ToolKind.Update,
+            "Replaces the date, warehouse, reference, note and all lines of a draft; every argument is required (`reference` and `note` may be null). "
+            + "The type cannot change. " + Validation + " `NOT_FOUND`: no such document in this tenant. " + DocumentPosted + " " + StockReferences,
+            Input(["id", "documentDate", "warehouseId", "reference", "note", "lines"],
+                [IdOf("draft stock document to replace"), .. StockDocumentFields(update: true)]),
+            (services, id, input, ct) => services.GetRequiredService<StockDocumentOperations>().ReplaceAsync(id, input, ct)),
+
+        XerpTool.For<RecordIdInput, StockDocumentDeleted>("stock_document_delete", ToolKind.Delete,
+            "Deletes a draft stock document with its lines; returns `{ \"deleted\": true }`. `NOT_FOUND`: no such document in this tenant. " + DocumentPosted,
+            Input(["id"], IdOf("draft stock document to delete")),
+            (services, input, ct) => services.GetRequiredService<StockDocumentOperations>().DeleteAsync(input.Id, ct)),
+
+        XerpTool.For<RecordIdInput, StockDocumentDto>("stock_document_post", ToolKind.Post,
+            "Posts a draft stock document. Posting is permanent: the document gets its number (`SR-…` receipt, `SI-…` issue), can no longer be changed or deleted, "
+            + "and stock on hand changes by one ledger entry per line - a receipt adds its quantities to the warehouse, an issue subtracts them. "
+            + "It either does all of this or nothing. `NOT_FOUND`: no such document in this tenant. " + DocumentPosted + " "
+            + "`REFERENCE_INACTIVE`: the warehouse or an article of the document is inactive (`errors` says which); reactivate it or change the draft. "
+            + "`INSUFFICIENT_STOCK`: an issue would take more than is on hand in its warehouse; `errors` names the short lines (`lines[0].quantity`). "
+            + "Nothing was posted and the draft is unchanged: check `stock_on_hand_list`, then correct the draft with `stock_document_update` "
+            + "or receive stock first, and post again.",
+            Input(["id"], IdOf("draft stock document to post")),
+            (services, input, ct) => services.GetRequiredService<StockDocumentOperations>().PostAsync(input.Id, ct)),
+
+        XerpTool.For<ListStockOnHandInput, PagedResult<StockOnHandDto>>("stock_on_hand_list", ToolKind.Read,
+            "Lists stock on hand: one item per article and warehouse with a quantity other than zero, in the article's base unit, "
+            + "ordered by article code then warehouse code. A pair that is not listed has zero stock. Drafts do not count. " + Validation,
+            Input([],
+            [
+                ("articleId", Uuid("Return only the stock of the article with this `id`.")),
+                ("warehouseId", Uuid("Return only the stock in the warehouse with this `id`.")),
+                .. Paging,
+            ]),
+            (services, input, ct) => services.GetRequiredService<StockQueries>().OnHandAsync(input, ct)),
+
+        XerpTool.For<ListStockLedgerEntriesInput, PagedResult<StockLedgerEntryDto>>("stock_ledger_entry_list", ToolKind.Read,
+            "Lists stock ledger entries, oldest first: the permanent history of every posted movement (positive quantity in, negative out). "
+            + "Stock on hand is the sum of these entries; entries are never changed or deleted. Filters combine with AND. " + Validation,
+            Input([],
+            [
+                ("articleId", Uuid("Return only entries of the article with this `id`.")),
+                ("warehouseId", Uuid("Return only entries of the warehouse with this `id`.")),
+                ("documentId", Uuid("Return only the entries the stock document with this `id` produced.")),
+                .. Paging,
+            ]),
+            (services, input, ct) => services.GetRequiredService<StockQueries>().LedgerAsync(input, ct)),
 
         // ---- API keys (creating a key is HTTP only: a secret never travels through a tool result, ADR-0010)
         XerpTool.For<ListApiKeysInput, PagedResult<ApiKeyDto>>("api_key_list", ToolKind.Read,
