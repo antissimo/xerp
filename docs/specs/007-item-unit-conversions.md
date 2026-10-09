@@ -115,7 +115,9 @@ Stock on hand and ledger entries are unchanged: `unit` there is the base unit, `
 | `article_unit_delete` | `{ articleId, unitId }` | `{ "deleted": true }` | Delete | `NOT_FOUND`, `IN_USE` |
 
 - `articleId` and `unitId` of these four tools are addressing arguments: 003/R15 applies to each under its own
-  name (`errors.articleId`, `errors.unitId`).
+  name (`errors.articleId`, `errors.unitId`): missing, `null`, empty or not a JSON string ->
+  `VALIDATION_FAILED` with that key; a string that is not a UUID -> `NOT_FOUND`, as the malformed path segment
+  over HTTP (AC-24). Neither is a reference argument, also not `unitId` of `article_unit_set` (`007-q.md`, B-D1).
 - Annotations: `_list`, `_get` read-only; `article_unit_set` as `*_update` (`destructiveHint: true`,
   `idempotentHint: true`); `article_unit_delete` as `*_delete` (003 §5.3).
 - The description of `article_unit_set` states the direction of the factor with an example (*1 box = 12 pcs ->
@@ -352,7 +354,7 @@ MCP
 - AC-82 Tool errors with the same `code` and `errors` keys as HTTP: `article_unit_set` with factor `0` ->
   `VALIDATION_FAILED` (`factor`); with the base unit -> `UNIT_IS_BASE_UNIT` (`unitId`); with a random unit ->
   `REFERENCE_NOT_FOUND` (`unitId`); with a random article -> `NOT_FOUND`; without `unitId` ->
-  `VALIDATION_FAILED` (`unitId`); `article_unit_delete` of a conversion used by a draft -> `IN_USE`;
+  `VALIDATION_FAILED` (`unitId`); with `unitId` = `"abc"` -> `NOT_FOUND`; `article_unit_delete` of a conversion used by a draft -> `IN_USE`;
   `stock_document_create` with a unit not on the article -> `UNIT_NOT_ON_ARTICLE` (`lines[0].unitId`);
   `uom_delete` of a unit with a conversion -> `IN_USE`.
 

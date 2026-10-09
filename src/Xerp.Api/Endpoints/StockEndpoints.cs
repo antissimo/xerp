@@ -4,7 +4,7 @@ using Xerp.Application.Stock;
 
 namespace Xerp.Api.Endpoints;
 
-/// <summary>Stock documents, stock on hand and the stock ledger (spec 005, section 4). Thin: bind, call, map.</summary>
+/// <summary>Stock documents, stock on hand and the stock ledger (spec 005, section 4; spec 006). Thin: bind, call, map.</summary>
 public static class StockEndpoints
 {
     public const string DocumentsRoute = "/stock-documents";
@@ -71,6 +71,18 @@ public static class StockEndpoints
         {
             var result = await operations.PostAsync(id, ct);
             return result.IsSuccess ? Results.Ok(result.Value) : Problems.From(result.Error);
+        });
+
+        // Spec 006, 4.2: answers with the reversing document, a new record.
+        documents.MapPost("/{id:guid}/reverse", async (Guid id, HttpRequest request, StockDocumentOperations operations, CancellationToken ct) =>
+        {
+            var body = await JsonBody.ReadOrEmptyAsync<ReverseStockDocumentInput>(request, ct);
+            if (!body.IsSuccess)
+                return Problems.From(body.Error);
+            var result = await operations.ReverseAsync(id, body.Value, ct);
+            return result.IsSuccess
+                ? Results.Created($"/api/v1{DocumentsRoute}/{result.Value.Id}", result.Value)
+                : Problems.From(result.Error);
         });
 
         v1.MapGet(OnHandRoute, async (HttpRequest request, StockQueries queries, CancellationToken ct) =>
