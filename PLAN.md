@@ -3,7 +3,7 @@
 Glavni pregled petlje arhitekt -> tester -> builder -> review -> merge. Redoslijed koraka dolazi iz
 `docs/roadmap.md` (piše ga arhitekt); ovaj dokument vodi orkestrator i ažurira ga nakon svakog koraka.
 
-Zadnje ažuriranje: 2026-10-09 09:55
+Zadnje ažuriranje: 2026-10-09 10:10
 
 ## Opseg MVP-a
 
@@ -32,8 +32,8 @@ Oznake: ✅ gotovo · 🔄 u tijeku · ⬜ nije započeto · — ne primjenjuje 
 | 004 | Partneri i skladišta | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 005 | Skladišna knjiga, primke i izdatnice | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 006 | Međuskladišnice i storno | ✅ | ✅ | 🔄 | ⬜ | ⬜ |
-| 007 | Preračun jedinica mjere po artiklu | ✅ | 🔄 | ⬜ | ⬜ | ⬜ |
-| 008 | Inventura / korekcija zaliha | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 007 | Preračun jedinica mjere po artiklu | ✅ | ✅ | ⬜ | ⬜ | ⬜ |
+| 008 | Inventura / korekcija zaliha | ✅ | ✅ | ⬜ | ⬜ | ⬜ |
 | 009 | Narudžbe dobavljačima -> primka robe | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 010 | Prodajne narudžbe -> isporuka | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
 | | **— granica MVP-a — sve ispod je nakon MVP-a —** | | | | | |
@@ -52,9 +52,9 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 
 ## Što tko trenutno radi
 
-- **Arhitekt:** čeka sljedeći review (006).
+- **Arhitekt:** čeka review 006 (namjerno bez zadatka zbog limita plana; čekaju ga pitanja testera za 007 i 008).
 - **Builder:** implementacija speca 006 (grana `feat/006-stock-transfers-reversal`).
-- **Tester:** usklađivanje grana s `main`om i odgovorima za 005, zatim testovi za 007 i 008.
+- **Tester:** čeka (limit plana na 95 %); sljedeće: testovi za 009 i 010.
 
 ## Dnevnik
 
@@ -73,6 +73,8 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 - 2026-10-09 — kod za 005 gotov (skladišna knjiga); spec 009 (nabava) napisan.
 - 2026-10-09 — spec 010 (prodaja) napisan; svi specovi MVP-a (001–010) su napisani.
 - 2026-10-09 — 005 prošao review (OK; arhitekt pokrenuo 296 unit + 795 integracijskih testova), spojen u `main` i pushan.
+- 2026-10-09 — specovi 007–010 usklađeni s izgrađenim kodom; napisan `docs/getting-started.md`.
+- 2026-10-09 — testovi za 007 i 008 napisani. Limit plana na 95 % (reset 13:50); prednost ima builder na 006.
 
 ## Odluke vlasnika
 
