@@ -176,6 +176,21 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
                 .HasForeignKey(d => new { d.TenantId, d.WarehouseId })
                 .HasPrincipalKey(w => new { w.TenantId, w.Id })
                 .OnDelete(DeleteBehavior.Restrict);
+            // Spec 006: the destination of a transfer; its index also serves "documents into this warehouse".
+            e.HasOne<Warehouse>().WithMany()
+                .HasForeignKey(d => new { d.TenantId, d.ToWarehouseId })
+                .HasPrincipalKey(w => new { w.TenantId, w.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            // Spec 006: the two ends of a reversal. At most one reversing document per original.
+            e.HasOne<StockDocument>().WithMany()
+                .HasForeignKey(d => new { d.TenantId, d.ReversalOfId })
+                .HasPrincipalKey(d => new { d.TenantId, d.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(d => new { d.TenantId, d.ReversalOfId }).IsUnique().HasFilter("\"ReversalOfId\" IS NOT NULL");
+            e.HasOne<StockDocument>().WithMany()
+                .HasForeignKey(d => new { d.TenantId, d.ReversedById })
+                .HasPrincipalKey(d => new { d.TenantId, d.Id })
+                .OnDelete(DeleteBehavior.Restrict);
             e.HasOne<ApiKey>().WithMany()
                 .HasForeignKey(d => new { d.TenantId, d.CreatedBy })
                 .HasPrincipalKey(k => new { k.TenantId, k.Id })
@@ -277,7 +292,7 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
     {
         EnforceTenant();
         if (EnforcePostedIsImmutable() is { Count: > 0 } documentIds
-            && StockDocuments.Any(d => documentIds.Contains(d.Id) && d.Status == StockDocumentStatus.Posted))
+            && StockDocuments.Any(d => documentIds.Contains(d.Id) && d.Status != StockDocumentStatus.Draft))
             throw PostedDocumentChanged();
         try
         {
@@ -293,7 +308,7 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
     {
         EnforceTenant();
         if (EnforcePostedIsImmutable() is { Count: > 0 } documentIds
-            && await StockDocuments.AnyAsync(d => documentIds.Contains(d.Id) && d.Status == StockDocumentStatus.Posted, cancellationToken))
+            && await StockDocuments.AnyAsync(d => documentIds.Contains(d.Id) && d.Status != StockDocumentStatus.Draft, cancellationToken))
             throw PostedDocumentChanged();
         try
         {
@@ -324,10 +339,14 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
     }
 
     /// <summary>
-    /// Spec 005, S3: the ledger is append-only and a posted document is immutable, whatever code asks for the
-    /// save. Throws for a modified or deleted ledger entry and for a change to a posted document or its lines
-    /// when the document is tracked; returns the ids of documents that are not tracked but whose lines are
-    /// being changed, for the caller to look up.
+    /// Spec 005, S3 and spec 006, S2: the ledger is append-only and a posted document is immutable, whatever
+    /// code asks for the save. Throws for a modified or deleted ledger entry and for a change to a posted or
+    /// reversed document or its lines when the document is tracked; returns the ids of documents that are not
+    /// tracked but whose lines are being changed, for the caller to look up.
+    /// <para>
+    /// The one change a posted document accepts is its reversal: <c>posted -> reversed</c> together with
+    /// <c>ReversedById</c>, naming a reversing document that is inserted by the same save.
+    /// </para>
     /// </summary>
     private List<Guid> EnforcePostedIsImmutable()
     {
@@ -335,9 +354,13 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
             throw new InvalidOperationException("Stock ledger entries are append-only: they cannot be changed or deleted.");
 
         var documents = ChangeTracker.Entries<StockDocument>().ToDictionary(d => d.Entity.Id);
-        if (documents.Values.Any(d => d.State is EntityState.Modified or EntityState.Deleted
-                && d.Property(x => x.Status).OriginalValue == StockDocumentStatus.Posted))
-            throw PostedDocumentChanged();
+        foreach (var document in documents.Values)
+        {
+            if (document.State is not (EntityState.Modified or EntityState.Deleted) || WasDraft(document))
+                continue;
+            if (document.State == EntityState.Deleted || !IsReversalOf(document, documents))
+                throw PostedDocumentChanged();
+        }
 
         var untracked = new List<Guid>();
         foreach (var line in ChangeTracker.Entries<StockDocumentLine>())
@@ -348,15 +371,41 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
             {
                 if (!documents.TryGetValue(documentId, out var document))
                     untracked.Add(documentId);
-                else if (document.State != EntityState.Added && document.Property(x => x.Status).OriginalValue == StockDocumentStatus.Posted)
+                else if (document.State != EntityState.Added && !WasDraft(document))
                     throw PostedDocumentChanged();
             }
         }
         return untracked;
     }
 
+    private static bool WasDraft(Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<StockDocument> document) =>
+        document.Property(d => d.Status).OriginalValue == StockDocumentStatus.Draft;
+
+    /// <summary>
+    /// Whether the modification of a posted document is exactly its reversal: nothing but <c>Status</c> and
+    /// <c>ReversedById</c> changed, from <c>posted</c> and null, to <c>reversed</c> and a document added by
+    /// this save that names it as the one it reverses.
+    /// </summary>
+    private static bool IsReversalOf(
+        Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<StockDocument> document,
+        Dictionary<Guid, Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<StockDocument>> tracked)
+    {
+        var status = document.Property(d => d.Status);
+        var reversedBy = document.Property(d => d.ReversedById);
+        if (status.OriginalValue != StockDocumentStatus.Posted || status.CurrentValue != StockDocumentStatus.Reversed)
+            return false;
+        if (reversedBy.OriginalValue is not null || reversedBy.CurrentValue is not { } reversalId)
+            return false;
+        if (document.Properties.Any(p => p.IsModified && p.Metadata.Name is not (nameof(StockDocument.Status) or nameof(StockDocument.ReversedById))))
+            return false;
+        return tracked.TryGetValue(reversalId, out var reversal)
+            && reversal.State == EntityState.Added
+            && reversal.Entity.ReversalOfId == document.Entity.Id
+            && reversal.Entity.Status == StockDocumentStatus.Posted;
+    }
+
     private static InvalidOperationException PostedDocumentChanged() =>
-        new("A posted stock document and its lines are immutable.");
+        new("A posted stock document and its lines are immutable; the only change it accepts is its reversal.");
 
     /// <summary>
     /// Constraint violations that Application has an answer for (CODE_TAKEN, REFERENCE_NOT_FOUND, IN_USE),
