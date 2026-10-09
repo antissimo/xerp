@@ -202,7 +202,9 @@ The order
 - R9. **Amounts.** `lineAmount` = `quantity` × `unitPrice`, rounded to 2 decimal places, half away from zero.
   `totalAmount` = the sum of the line amounts. A line whose `lineAmount` would exceed 9999999999.99 -> `400`
   with keys `lines[i].quantity` and `lines[i].unitPrice`. Amounts depend on nothing but the line's own
-  `quantity` and `unitPrice`: they never change with a factor or with receipts.
+  `quantity` and `unitPrice`: they never change with a factor or with receipts. The maximum is compared with
+  the rounded amount: `999999999.9995 × 10` rounds to 10000000000.00 and is refused. `totalAmount` has no
+  limit of its own (at most 200 × 9999999999.99).
 - R10. Order of checks on create and replace: validation (`400`, all fields and lines together) -> order exists
   (`404`) -> order is a draft (`INVALID_STATE`) -> supplier (`REFERENCE_NOT_FOUND`, then `REFERENCE_INACTIVE`,
   then `PARTNER_ROLE_MISSING`) -> warehouse -> lines, by the kinds and in the order of 007/R16. Each stage
@@ -235,7 +237,9 @@ Lifecycle
 Goods receipt — the link
 - R18. A stock document may carry `purchaseOrderId` only when its `type` is `receipt`; on any other type a
   non-null value -> `400` with key `purchaseOrderId`. Omitted or `null` means an unlinked document, which
-  behaves exactly as before this spec.
+  behaves exactly as before this spec. The type decides about `purchaseOrderId` only: a document that sends
+  a non-null `purchaseOrderId` is judged as linked by R20, so a valid `orderLineNo` on its lines is not
+  reported (`009-q.md`, T-Q7).
 - R19. The link is set at creation and never changes: `purchaseOrderId` in a replace body is an unknown
   property (`400`).
 - R20. On a linked document every line must have `orderLineNo`: a JSON integer of 1 or more; missing, `null`,
