@@ -1,7 +1,7 @@
-# Open non-blocking items — reviews 001 to 009
+# Open non-blocking items — reviews 001 to 010
 
 Consolidated by the architect, 2026-10-09. Sources: the "Non-blocking" sections of `docs/reviews/001.md` …
-`006.md` and the builder's notes (005-q and 006-q, B-Q9); items 007/1 and 007/2 were added with review 007; review 008 closed 006/2 and added no item; review 009 closed 004/4 and 005/3 on `12f33ff` (not yet on `main`: review 009 waits for two test corrections by the tester) and added 009/1. Each item was checked against the code on `main`
+`006.md` and the builder's notes (005-q and 006-q, B-Q9); items 007/1 and 007/2 were added with review 007; review 008 closed 006/2 and added no item; review 009 closed 004/4 and 005/3 on `12f33ff` (re-review 009 OK on `fcbb111`, ready to merge) and added 009/1; review 010 closed 005/2 on `1230f27` (code as read; the green run on the closed tip is pending) and added 010/1. Each item was checked against the code on `main`
 (`4fc742e`) and, for review 006, on `db01f2c`. This list is the input for one cleanup task for the builder
 after spec 010; it replaces the "still open from earlier reviews" lines in the individual reviews.
 
@@ -18,17 +18,16 @@ Call: **before MVP** only for correctness, security or data integrity. Everythin
 
 | | Count |
 |---|---:|
-| Items looked at | 34 |
-| Done | 8 |
+| Items looked at | 35 |
+| Done | 9 |
 | No action (remarks) | 6 |
 | Open or partly open | 20 |
 | — of these, before MVP in the cleanup task | 1 |
-| — before MVP, checked in a review (review 010) | 1 |
-| — after MVP | 18 |
+| — before MVP, checked in a review | 0 |
+| — after MVP | 19 |
 
 **The cleanup task after spec 010 has one item: 001/7, a request body limit.**
-Before the MVP is declared finished, one more must be true, and it belongs to the reviews: 005/2 (checked in
-every review; done up to spec 009, pending for 010). 006/2 is done (spec 008, `41d275b`); 004/4 and 005/3 are
+005/2, the standing review check, is done for every MVP spec (review 010, `1230f27`). 006/2 is done (spec 008, `41d275b`); 004/4 and 005/3 are
 done (spec 009, `12f33ff`).
 
 ## Items
@@ -60,7 +59,7 @@ done (spec 009, `12f33ff`).
 | 004/2 | `Address.Create` / `Partner.Replace` throw for input validation already rejected | no action | — | Second barrier, on the same rule classes. |
 | 004/3 | `PartnerInput.Code` / `Name` are not tracked as "given" | no action | — | Harmless: `null` and omitted are the same error for both. |
 | 004/4 | `partner_delete` / `warehouse_delete` descriptions need `IN_USE` once references exist | **done** on `12f33ff` (review 009): `PartnerOperations.DeleteAsync` answers `IN_USE` while an order names the partner, checked first and when the foreign key refuses the delete (the raced case); the descriptions of `partner_delete` and `warehouse_delete` say so (`warehouse_delete` since spec 005) | was **before MVP**, in spec 009 | Data integrity from spec 009 on (orders name partners): 009 §4.4 and AC-80. |
-| 005/2 | Every later stock-relevant write takes the per-tenant lock (ADR-0012 amendment, condition 1) | 006: done on `db01f2c` (reversal runs under it). 007: done on `8312ef7` (set and delete of a conversion, delete of an article). 008: done on `41d275b` (create and replace of a count read the book quantity under it; posting compares under it). 009: done on `12f33ff` (create, replace, delete, confirm, close and reopen of an order run under it; posting and reversal read and write the order inside it). 010: pending | **before MVP**, in each review | Data integrity: "no negative stock", "never more than ordered" and gapless numbers rest on it. A standing review check, not a cleanup task. |
+| 005/2 | Every later stock-relevant write takes the per-tenant lock (ADR-0012 amendment, condition 1) | 006: done on `db01f2c` (reversal runs under it). 007: done on `8312ef7` (set and delete of a conversion, delete of an article). 008: done on `41d275b` (create and replace of a count read the book quantity under it; posting compares under it). 009: done on `12f33ff` (create, replace, delete, confirm, close and reopen of an order run under it; posting and reversal read and write the order inside it). 010: **done** on `1230f27` (review 010): sales orders use the same operations as purchase orders, all inside the lock; a delivery reads the order and the stock inside it | was **before MVP**, in each review | Data integrity: "no negative stock", "never more than ordered" and gapless numbers rest on it. A standing review check, not a cleanup task. |
 | 005/3 | `DocumentCounter.Start` takes a `StockDocumentType`; orders need a document kind | **done** on `12f33ff` (review 009): `DocumentSeries` (key and prefix); `purchaseOrder` / `PO` is one, every stock document type has one; no order kind in `StockDocumentType` | was **before MVP**, in spec 009 | Spec 009 could not number `PO-` without it. Spec 010 adds a series for sales orders. |
 | 005/4 | Immutability of posted documents and the ledger is enforced in the application, not in the database | open | after MVP | By design (005/S3). The DbContext guard covers every write path of the application; a database-level guard belongs with row-level security (019). |
 | 005/5 | Deactivating a warehouse does not take the tenant lock | no action | — | It needs none; noted so nobody adds it. |
@@ -69,6 +68,7 @@ done (spec 009, `12f33ff`).
 | 007/1 | `GET /stock-documents/{id}` reads the document and then its masters (warehouses, articles, units, conversions) in separate statements, outside any lock; a replace of the draft plus the delete of a master it named, both committed in between, ends the read as `500` (007-q, B-Q4) | open since spec 005; reasoned from the code, not reproduced. Review 009: `GET /purchase-orders/{id}` of a draft has the same shape (order, then masters and current factors in separate statements) | after MVP | A read only: transient, a repeated `GET` is right, no data is wrong and no write is affected (writes run the same code under the tenant lock). Fix: a read-only snapshot around document reads, as a port on `IXerpDb`. |
 | 007/2 | Tool text `StockReferences` says an inactive "alternative unit"; by 007/R12 it is any unit other than the article's base unit | open on `8312ef7` | after MVP | Wording; do it with 003/1 and 003/2. |
 | 009/1 | `PurchaseOrderOperations.ListAsync` loads every line of the orders on the page (up to 200 items × 200 lines) to compute `lineCount`, `totalAmount` and `receiptStatus` | open on `12f33ff` | after MVP | Performance only; the values are right and paging and `total` are decided in SQL. Fix when order lists become large: aggregate in the query. |
+| 010/1 | `StockAvailability.Reserved` (Domain) is called by tests only — the stock-on-hand query states the rule in SQL; and the shared `OrderOperations` still passes `StockDocumentType.Receipt` to `StockLineChecks.References` / `Convert` to say "a quantity above zero that converts" (review 009, non-blocking 3) | open on `1230f27` | after MVP | Structure and naming only; both behave correctly and are tested through HTTP. |
 
 Merge notes in the reviews ("take `main`'s version of `NNN-q.md`") are instructions for the orchestrator at
 merge time, not open items, and are not listed.
@@ -81,5 +81,5 @@ Required (before the MVP is declared finished):
 
 Optional, if the owner wants a tidy hand-over — small, no behaviour change, in this order of value:
 003/1 + 003/2 + 007/2 (tool descriptions, the agent is the user), 001/4, 002/1, 002/4, 002/5, 003/5, 003/6.
-The rest (001/5 = 002/3, 001/6, 002/6, 003/4, 005/4, 007/1, 009/1) waits for the specs that touch those places
+The rest (001/5 = 002/3, 001/6, 002/6, 003/4, 005/4, 007/1, 009/1, 010/1) waits for the specs that touch those places
 (016–019).

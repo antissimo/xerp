@@ -3,7 +3,7 @@
 Glavni pregled petlje arhitekt -> tester -> builder -> review -> merge. Redoslijed koraka dolazi iz
 `docs/roadmap.md` (piše ga arhitekt); ovaj dokument vodi orkestrator i ažurira ga nakon svakog koraka.
 
-Zadnje ažuriranje: 2026-10-09 22:25
+Zadnje ažuriranje: 2026-10-09 23:05
 
 ## Opseg MVP-a
 
@@ -34,8 +34,8 @@ Oznake: ✅ gotovo · 🔄 u tijeku · ⬜ nije započeto · — ne primjenjuje 
 | 006 | Međuskladišnice i storno | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 007 | Preračun jedinica mjere po artiklu | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 008 | Inventura / korekcija zaliha | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 009 | Narudžbe dobavljačima -> primka robe | ✅ | ✅ | ✅ | 🔄 | ⬜ |
-| 010 | Prodajne narudžbe -> isporuka | ✅ | ✅ | 🔄 | ⬜ | ⬜ |
+| 009 | Narudžbe dobavljačima -> primka robe | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 010 | Prodajne narudžbe -> isporuka | ✅ | ✅ | 🔄 | ✅ | ⬜ |
 | | **— granica MVP-a — sve ispod je nakon MVP-a —** | | | | | |
 | 011 | Vrednovanje zaliha | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 012 | Kontni plan + temeljnice | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -52,9 +52,9 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 
 ## Što tko trenutno radi
 
-- **Arhitekt:** zaustavljen (vlasnik zaustavio petlju). Sljedeće: ponovni review 009, review 010.
-- **Builder:** zaustavljen. Kod za 010 je commitan na `feat/010-sales-orders-delivery` (`37b3ce9`), nije potvrđeno da svi testovi prolaze. Sljedeće: spojiti ispravljene testove `tests/009` (`309f0d6`) u `feat/009` i potvrditi zeleno.
-- **Tester:** zaustavljen; posao za MVP gotov.
+- **Arhitekt:** čeka zelenu završnu granu 010.
+- **Builder:** zatvara 010 (prodaja): provjera i dovršetak dok svi testovi ne prođu.
+- **Tester:** nije pokrenut (posao za MVP gotov); pokreće se samo za osporene testove.
 
 ## Dnevnik
 
@@ -87,6 +87,7 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 - 2026-10-09 — 008 spojen u `main` i pushan (review OK; orkestrator pokrenuo 451 unit + 1069 integracijskih testova na završnoj grani, bez novog koda nakon reviewa).
 - 2026-10-09 — limit potrošen oko 16:45, nastavak u 21:15; kod za 009 gotov (nabava), na reviewu.
 - 2026-10-09 — review 009: kod prihvaćen, 8 testerovih testova ispravljeno (`309f0d6`, `0fbe953`); builder napisao kod za 010. Vlasnik zaustavio sve agente u 22:25.
+- 2026-10-09 — agenti ponovno pokrenuti; 009 prošao ponovni review (OK; orkestrator pokrenuo 517 unit + 1261 integracijski test), spojen u `main` i pushan. Review koda 010: OK, merge čeka zelenu granu.
 
 ## Odluke vlasnika
 
