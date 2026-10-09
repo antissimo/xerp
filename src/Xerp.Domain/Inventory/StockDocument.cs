@@ -9,6 +9,12 @@ public enum StockDocumentType
 
     /// <summary>Goods leave the warehouse: one negative ledger entry per line.</summary>
     Issue,
+
+    /// <summary>
+    /// Goods move from the warehouse to the destination warehouse in one posting (ADR-0013): per line one
+    /// negative entry in the source and one positive entry in the destination.
+    /// </summary>
+    Transfer,
 }
 
 /// <summary>The contract names of <see cref="StockDocumentType"/>, as stored and as sent to clients.</summary>
@@ -16,11 +22,13 @@ public static class StockDocumentTypeNames
 {
     public const string Receipt = "receipt";
     public const string Issue = "issue";
+    public const string Transfer = "transfer";
 
     public static string ToName(this StockDocumentType type) => type switch
     {
         StockDocumentType.Receipt => Receipt,
         StockDocumentType.Issue => Issue,
+        StockDocumentType.Transfer => Transfer,
         _ => throw new ArgumentOutOfRangeException(nameof(type)),
     };
 
@@ -38,6 +46,9 @@ public static class StockDocumentTypeNames
             case Issue:
                 type = StockDocumentType.Issue;
                 return true;
+            case Transfer:
+                type = StockDocumentType.Transfer;
+                return true;
             default:
                 type = default;
                 return false;
@@ -52,6 +63,12 @@ public enum StockDocumentStatus
 
     /// <summary>Numbered, in the ledger, immutable.</summary>
     Posted,
+
+    /// <summary>
+    /// Posted and then cancelled by a reversing document (ADR-0013). Still in the ledger and still immutable;
+    /// the reversing document's entries cancel this document's exactly.
+    /// </summary>
+    Reversed,
 }
 
 /// <summary>The contract names of <see cref="StockDocumentStatus"/>.</summary>
@@ -59,11 +76,13 @@ public static class StockDocumentStatusNames
 {
     public const string Draft = "draft";
     public const string Posted = "posted";
+    public const string Reversed = "reversed";
 
     public static string ToName(this StockDocumentStatus status) => status switch
     {
         StockDocumentStatus.Draft => Draft,
         StockDocumentStatus.Posted => Posted,
+        StockDocumentStatus.Reversed => Reversed,
         _ => throw new ArgumentOutOfRangeException(nameof(status)),
     };
 
@@ -79,6 +98,9 @@ public static class StockDocumentStatusNames
                 return true;
             case Posted:
                 status = StockDocumentStatus.Posted;
+                return true;
+            case Reversed:
+                status = StockDocumentStatus.Reversed;
                 return true;
             default:
                 status = default;
@@ -119,7 +141,18 @@ public sealed class StockDocument : ITenantOwned
     /// <summary>The business date the user assigns; plays no part in the stock check (ADR-0012, decision 5).</summary>
     public DateOnly DocumentDate { get; private set; }
 
+    /// <summary>The warehouse of a receipt or issue; the source of a transfer.</summary>
     public Guid WarehouseId { get; private set; }
+
+    /// <summary>The destination of a transfer; null on every other type (spec 006, R2, R3).</summary>
+    public Guid? ToWarehouseId { get; private set; }
+
+    /// <summary>On a reversing document: the document it reverses. Null on every other document.</summary>
+    public Guid? ReversalOfId { get; private set; }
+
+    /// <summary>On a reversed document: the document that reversed it. Null until then.</summary>
+    public Guid? ReversedById { get; private set; }
+
     public string? Reference { get; private set; }
     public string? Note { get; private set; }
     public DateTime? PostedAt { get; private set; }
@@ -142,8 +175,14 @@ public sealed class StockDocument : ITenantOwned
 
     public bool IsDraft => Status == StockDocumentStatus.Draft;
 
+    /// <summary>A reversing document: posted from the start, never a draft, never reversible (spec 006, R11, R21).</summary>
+    public bool IsReversal => ReversalOfId is not null;
+
+    /// <summary>Spec 006, R11: only a posted document that is not itself a reversing document.</summary>
+    public bool CanBeReversed => Status == StockDocumentStatus.Posted && !IsReversal;
+
     public static StockDocument Create(
-        StockDocumentType type, DateOnly documentDate, Guid warehouseId, string? reference, string? note,
+        StockDocumentType type, DateOnly documentDate, Guid warehouseId, Guid? toWarehouseId, string? reference, string? note,
         IReadOnlyList<StockLineValues> lines, DateTime now, Guid actorKeyId)
     {
         var document = new StockDocument
@@ -154,7 +193,7 @@ public sealed class StockDocument : ITenantOwned
             CreatedAt = now,
             CreatedBy = actorKeyId,
         };
-        document.Replace(documentDate, warehouseId, reference, note, lines, now, actorKeyId);
+        document.Replace(documentDate, warehouseId, toWarehouseId, reference, note, lines, now, actorKeyId);
         return document;
     }
 
@@ -164,10 +203,13 @@ public sealed class StockDocument : ITenantOwned
     /// </summary>
     /// <exception cref="InvalidOperationException">The document is posted (R11).</exception>
     public IReadOnlyList<StockDocumentLine> Replace(
-        DateOnly documentDate, Guid warehouseId, string? reference, string? note,
+        DateOnly documentDate, Guid warehouseId, Guid? toWarehouseId, string? reference, string? note,
         IReadOnlyList<StockLineValues> lines, DateTime now, Guid actorKeyId)
     {
         EnsureDraft();
+        if (!TransferRules.IsValidDestination(Type, warehouseId, toWarehouseId))
+            throw new ArgumentException(
+                "A transfer needs a destination warehouse other than its source; other documents have none.", nameof(toWarehouseId));
         // Validate everything before assigning anything, so a rejected replace leaves the draft untouched.
         var newReference = OptionalTextRules.Normalize(reference, ReferenceMaxLength, nameof(reference));
         if (!NoteRules.TryNormalize(note, NoteMaxLength, out var newNote))
@@ -179,6 +221,7 @@ public sealed class StockDocument : ITenantOwned
 
         DocumentDate = documentDate;
         WarehouseId = warehouseId;
+        ToWarehouseId = toWarehouseId;
         Reference = newReference;
         Note = newNote;
         UpdatedAt = now;
@@ -198,11 +241,13 @@ public sealed class StockDocument : ITenantOwned
     }
 
     /// <summary>
-    /// Posts the draft (R12, R14): status, number and posting attribution are set and one ledger entry per
-    /// line is returned - positive for a receipt, negative for an issue. Whether stock suffices and which
-    /// number is next is decided by the caller, inside the same transaction that saves the result.
+    /// Posts the draft (R12, R14; spec 006, R6): status, number and posting attribution are set and the ledger
+    /// entries are returned - one positive entry per line for a receipt, one negative for an issue, and for a
+    /// transfer the outgoing entry in the source followed by the incoming entry in the destination. Whether
+    /// stock suffices and which number is next is decided by the caller, inside the same transaction that
+    /// saves the result.
     /// </summary>
-    /// <exception cref="InvalidOperationException">The document is already posted (R11).</exception>
+    /// <exception cref="InvalidOperationException">The document is not a draft (R11).</exception>
     public IReadOnlyList<StockLedgerEntry> Post(string number, DateTime now, Guid actorKeyId)
     {
         EnsureDraft();
@@ -214,16 +259,72 @@ public sealed class StockDocument : ITenantOwned
         PostedAt = now;
         PostedBy = actorKeyId;
 
-        var sign = Type == StockDocumentType.Issue ? -1 : 1;
         return Lines
-            .Select(l => new StockLedgerEntry(l.ArticleId, WarehouseId, sign * l.Quantity, Id, l.LineNo, DocumentDate, now, actorKeyId))
+            .SelectMany(l => StockMovements.OfLine(Type, WarehouseId, ToWarehouseId, l.Values)
+                .Select(m => new StockLedgerEntry(m.ArticleId, m.WarehouseId, m.Quantity, Id, l.LineNo, DocumentDate, now, actorKeyId)))
             .ToList();
+    }
+
+    /// <summary>
+    /// Reverses this posted document (ADR-0013; spec 006, R11-R14): returns the reversing document - same type,
+    /// warehouses, lines and reference, already posted under <paramref name="number"/> - and its ledger
+    /// entries, which are <paramref name="entries"/> with the opposite sign. This document becomes
+    /// <see cref="StockDocumentStatus.Reversed"/> and points to the reversing document; nothing else on it
+    /// changes. Whether stock allows it and which number is next is decided by the caller, inside the same
+    /// transaction that saves the result.
+    /// </summary>
+    /// <param name="entries">All ledger entries of this document, and no others.</param>
+    /// <exception cref="InvalidOperationException">The document cannot be reversed (R11).</exception>
+    public (StockDocument Reversal, IReadOnlyList<StockLedgerEntry> Entries) Reverse(
+        IReadOnlyCollection<StockLedgerEntry> entries, DateOnly documentDate, string? note, string number, DateTime now, Guid actorKeyId)
+    {
+        if (!CanBeReversed)
+            throw new InvalidOperationException("Only a posted stock document that is not itself a reversal can be reversed.");
+        if (documentDate < DocumentDate)
+            throw new ArgumentException("A reversal cannot be dated before the document it reverses.", nameof(documentDate));
+        if (!NoteRules.TryNormalize(note, NoteMaxLength, out var reversalNote))
+            throw new ArgumentException("Invalid note.", nameof(note));
+        if (string.IsNullOrWhiteSpace(number))
+            throw new ArgumentException("A posted document needs a number.", nameof(number));
+        if (entries.Count == 0 || entries.Any(e => e.DocumentId != Id))
+            throw new ArgumentException("A reversal needs exactly the ledger entries of the document it reverses.", nameof(entries));
+
+        var reversal = new StockDocument
+        {
+            Id = Guid.CreateVersion7(),
+            Type = Type,
+            Status = StockDocumentStatus.Posted,
+            Number = number,
+            DocumentDate = documentDate,
+            WarehouseId = WarehouseId,
+            ToWarehouseId = ToWarehouseId,
+            ReversalOfId = Id,
+            Reference = Reference,
+            Note = reversalNote,
+            PostedAt = now,
+            PostedBy = actorKeyId,
+            CreatedAt = now,
+            UpdatedAt = now,
+            CreatedBy = actorKeyId,
+            UpdatedBy = actorKeyId,
+        };
+        reversal._lines.AddRange(Lines.Select(l => new StockDocumentLine(reversal.Id, l.LineNo, l.Values)));
+
+        // Derived from the entries, not from the lines, so the pair sums to zero by construction (R15).
+        var reversing = entries
+            .OrderBy(e => e.LineNo).ThenByDescending(e => e.Quantity)
+            .Select(e => new StockLedgerEntry(e.ArticleId, e.WarehouseId, -e.Quantity, reversal.Id, e.LineNo, documentDate, now, actorKeyId))
+            .ToList();
+
+        Status = StockDocumentStatus.Reversed;
+        ReversedById = reversal.Id;
+        return (reversal, reversing);
     }
 
     private void EnsureDraft()
     {
         if (!IsDraft)
-            throw new InvalidOperationException("A posted stock document cannot be changed.");
+            throw new InvalidOperationException("Only a draft stock document can be changed or posted.");
     }
 }
 
@@ -264,7 +365,8 @@ public sealed class StockDocumentLine : ITenantOwned
 
 /// <summary>
 /// The unit of truth of stock (ADR-0012, decision 2): a signed quantity of an article in a warehouse, with the
-/// document line that produced it. Created only by <see cref="StockDocument.Post"/>; never changed or deleted.
+/// document line that produced it. Created only by <see cref="StockDocument.Post"/> and
+/// <see cref="StockDocument.Reverse"/>; never changed or deleted.
 /// Stock on hand of an (article, warehouse) pair is the sum of its entries.
 /// </summary>
 public sealed class StockLedgerEntry : ITenantOwned
@@ -314,7 +416,7 @@ public sealed class DocumentCounter : ITenantOwned
 
     public Guid TenantId { get; private set; }
 
-    /// <summary>The contract name of the document type (<c>receipt</c>, <c>issue</c>).</summary>
+    /// <summary>The contract name of the document type (<c>receipt</c>, <c>issue</c>, <c>transfer</c>).</summary>
     public string DocumentType { get; private set; } = "";
 
     public long LastNumber { get; private set; }

@@ -57,7 +57,10 @@ public sealed class StockQueries(IXerpDb db)
         return new PagedResult<StockOnHandDto>(items, total, query.Limit, query.Offset);
     }
 
-    /// <summary>The ledger, oldest first: by posting time, then document number, then line (4.3).</summary>
+    /// <summary>
+    /// The ledger, oldest first: by posting time, then document number, then line (4.3); of the two entries
+    /// of a transfer line the outgoing one comes first (spec 006, R6).
+    /// </summary>
     public async Task<Result<PagedResult<StockLedgerEntryDto>>> LedgerAsync(ListStockLedgerEntriesInput input, CancellationToken cancellationToken = default)
     {
         var validated = StockDocumentValidation.Ledger(input);
@@ -80,11 +83,11 @@ public sealed class StockQueries(IXerpDb db)
             join a in db.Articles.AsNoTracking() on e.ArticleId equals a.Id
             join u in db.UnitsOfMeasure.AsNoTracking() on a.BaseUnitId equals u.Id
             join w in db.Warehouses.AsNoTracking() on e.WarehouseId equals w.Id
-            orderby e.PostedAt, d.Number, e.LineNo, e.Id
+            orderby e.PostedAt, d.Number, e.LineNo, e.Quantity, e.Id
             select new
             {
                 Entry = e,
-                DocumentNumber = d.Number, DocumentType = d.Type,
+                DocumentNumber = d.Number, DocumentType = d.Type, IsReversal = d.ReversalOfId != null,
                 ArticleCode = a.Code, ArticleName = a.Name,
                 WarehouseCode = w.Code, WarehouseName = w.Name,
                 UnitId = u.Id, UnitCode = u.Code, UnitName = u.Name,
@@ -100,7 +103,7 @@ public sealed class StockQueries(IXerpDb db)
             new ReferenceSummary(r.UnitId, r.UnitCode, r.UnitName),
             QuantityRules.Normalize(r.Entry.Quantity),
             r.Entry.DocumentDate, r.Entry.PostedAt, r.Entry.PostedBy,
-            new LedgerDocumentDto(r.Entry.DocumentId, r.DocumentNumber!, r.DocumentType.ToName()),
+            new LedgerDocumentDto(r.Entry.DocumentId, r.DocumentNumber!, r.DocumentType.ToName(), r.IsReversal),
             r.Entry.LineNo)).ToList();
         return new PagedResult<StockLedgerEntryDto>(items, total, query.Limit, query.Offset);
     }
