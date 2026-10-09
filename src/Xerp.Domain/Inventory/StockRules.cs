@@ -4,7 +4,8 @@ namespace Xerp.Domain.Inventory;
 /// A line as it was entered (spec 007, R12, R13): an article, a unit of that article - its base unit or one of
 /// its alternative units - and a quantity in that unit.
 /// </summary>
-public readonly record struct StockLineEntry(Guid ArticleId, Guid UnitId, decimal Quantity);
+/// <param name="OrderLineNo">On a document linked to an order: the order line this line fulfils (spec 009, R20); otherwise null.</param>
+public readonly record struct StockLineEntry(Guid ArticleId, Guid UnitId, decimal Quantity, int? OrderLineNo = null);
 
 /// <summary>
 /// What a line means for stock: an article and a quantity in the article's base unit (spec 007, R19). The
@@ -37,8 +38,19 @@ public static class QuantityRules
 }
 
 /// <summary>
-/// The number a stock document gets when it is posted (ADR-0012, decision 6; spec 005, R17): the prefix of its
-/// type and the tenant's counter value, padded with zeros to at least six digits.
+/// A number series of a tenant (ADR-0012, decision 6; spec 009, R13): the key its counter is kept under and the
+/// prefix of its numbers. Every stock document type has one, and so has every kind of order.
+/// </summary>
+public readonly record struct DocumentSeries(string Key, string Prefix)
+{
+    public static readonly DocumentSeries PurchaseOrder = new("purchaseOrder", "PO");
+
+    public static DocumentSeries Of(StockDocumentType type) => new(type.ToName(), DocumentNumber.Prefix(type));
+}
+
+/// <summary>
+/// The number a document gets when it is posted or confirmed (ADR-0012, decision 6; spec 005, R17): the prefix
+/// of its series and the tenant's counter value, padded with zeros to at least six digits.
 /// </summary>
 public static class DocumentNumber
 {
@@ -53,10 +65,12 @@ public static class DocumentNumber
         _ => throw new ArgumentOutOfRangeException(nameof(type)),
     };
 
-    public static string Format(StockDocumentType type, long counter)
+    public static string Format(StockDocumentType type, long counter) => Format(DocumentSeries.Of(type), counter);
+
+    public static string Format(DocumentSeries series, long counter)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(counter, 1);
-        return $"{Prefix(type)}-{counter.ToString("D" + MinDigits, System.Globalization.CultureInfo.InvariantCulture)}";
+        return $"{series.Prefix}-{counter.ToString("D" + MinDigits, System.Globalization.CultureInfo.InvariantCulture)}";
     }
 }
 

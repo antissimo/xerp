@@ -3,6 +3,7 @@ using Xerp.Application.Articles;
 using Xerp.Application.ArticleUnits;
 using Xerp.Application.Common;
 using Xerp.Application.Identity;
+using Xerp.Application.Orders;
 using Xerp.Application.Partners;
 using Xerp.Application.Stock;
 using Xerp.Application.UnitsOfMeasure;
@@ -15,7 +16,7 @@ namespace Xerp.Api.Mcp;
 public sealed record NoArguments;
 
 /// <summary>
-/// The complete list of MCP tools (spec 003, 5.3; spec 004, 5.1; specs 005 to 007, 5). Adding an operation means adding its tool here; the
+/// The complete list of MCP tools (spec 003, 5.3; spec 004, 5.1; specs 005 to 009, 5). Adding an operation means adding its tool here; the
 /// tool-list test holds the expected names literally.
 /// </summary>
 public static class ToolCatalog
@@ -109,10 +110,34 @@ public static class ToolCatalog
         + "`QUANTITY_NOT_CONVERTIBLE`: a line's quantity, converted to the article's base unit with the current factor, rounds to zero or exceeds 999999999.999999 (`errors` names `lines[i].quantity`). "
         + "Errors about a line are keyed by position, for example `lines[0].articleId`.";
 
+    private const string OrderLink =
+        "`REFERENCE_NOT_FOUND` also: `purchaseOrderId` names no purchase order of this tenant, or a line's `orderLineNo` is not a line of that order (`errors` names `lines[i].orderLineNo`). "
+        + "`ORDER_NOT_OPEN`: the purchase order is a draft or closed (`errors` names `purchaseOrderId`); confirm it with `purchase_order_confirm` or reopen it with `purchase_order_reopen`. "
+        + "`ORDER_MISMATCH`: the document disagrees with its order - `warehouseId` is not the order's warehouse, or a line's `articleId` is not the article of the order line it names (`errors` says which); read the order with `purchase_order_get`.";
+
     private const string DocumentPosted = "`INVALID_STATE`: the document is already posted (or reversed); a posted document is permanent and cannot be changed, deleted or posted again. "
         + "To correct one, use `stock_document_reverse` and create a new document.";
 
     private static (string, System.Text.Json.Nodes.JsonObject)[] StockDocumentFields(bool update) =>
+    [
+        .. StockDocumentHeader(update),
+        ("lines", ArrayOf(
+            "The lines, 1 to 200; they are numbered 1…n in the order given" + (update ? " and replace all stored lines." : ".")
+            + " The same article may appear on several lines, also in different units - except on a count, where each article appears at most once."
+            + " Stock is always kept in the article's base unit: a line in another unit is converted with the article's factor for that unit,"
+            + " and the document shows both what was entered (`unit`, `quantity`) and what it is in base units (`factor`, `baseUnit`, `baseQuantity`).",
+            1, 200, ["unitId", "orderLineNo"],
+            ("articleId", Uuid("The `id` of a stock article (see `article_list`). Not the code.")),
+            ("quantity", Number("Quantity in the line's unit (`unitId`; the article's base unit when that is left out), as a JSON number (not a string): greater than 0, at most 999999999.999999, at most 6 decimal places. "
+                + "On a count it is the counted quantity and 0 is allowed: none found.")),
+            ("unitId", NullableUuid("The `id` of the unit of measure the quantity is in: the article's base unit or one of its alternative units (see `article_unit_list`). "
+                + "Optional; left out or null it defaults to the article's base unit. Not the unit's code.")),
+            ("orderLineNo", NullableInteger("Only on a receipt linked to a purchase order (`purchaseOrderId`), where it is required on every line: the `lineNo` (1…n) of the order line this line receives. "
+                + "The line's article must be that order line's article; its unit may be any unit of the article, and several lines may name the same order line. "
+                + "On a document that is not linked leave it out or pass null.", 1)))),
+    ];
+
+    private static (string, System.Text.Json.Nodes.JsonObject)[] StockDocumentHeader(bool update) =>
     [
         ("documentDate", Text("The business date of the document as YYYY-MM-DD, for example 2026-10-09. Any date, past or future; it does not affect the stock check.")),
         ("warehouseId", Uuid("The `id` of the warehouse the goods come into (receipt) or leave (issue); for a transfer the source, which the goods leave; for a count the warehouse that was counted. See `warehouse_list`. Not the code.")),
@@ -121,16 +146,39 @@ public static class ToolCatalog
         ("reference", NullableText("Your own reference, for example a delivery-note number; one line, at most 100 characters."
             + (update ? " Required: pass null for no value." : " Optional."))),
         ("note", NullableText("Free text, may have several lines, at most 2000 characters." + (update ? " Required: pass null for no value." : " Optional."))),
+    ];
+
+    private const string OrderReferences =
+        "`REFERENCE_NOT_FOUND`: `supplierId`, `warehouseId` or a line's `articleId` or `unitId` names no record of this tenant (`errors` says which; find ids with `partner_list`, `warehouse_list`, `article_list`, `uom_list`). "
+        + "`REFERENCE_INACTIVE`: that supplier, warehouse, article or unit is inactive and would be newly used. "
+        + "`PARTNER_ROLE_MISSING`: the partner named by `supplierId` does not have `isSupplier`; choose a supplier (`partner_list` with `isSupplier` true) or give the partner the role with `partner_update`. "
+        + "`ARTICLE_NOT_STOCKED`: a line names a service article; only articles of type `stock` can be ordered. "
+        + "`UNIT_NOT_ON_ARTICLE`: a line's `unitId` is neither the base unit nor an alternative unit of its article; see `article_unit_list`, or leave `unitId` out. "
+        + "`QUANTITY_NOT_CONVERTIBLE`: a line's quantity, converted to the article's base unit with the current factor, rounds to zero or exceeds 999999999.999999 (`errors` names `lines[i].quantity`). "
+        + "Errors about a line are keyed by position, for example `lines[0].articleId`.";
+
+    private const string OrderConfirmed = "`INVALID_STATE`: the order is already confirmed (or closed); a confirmed order is permanent and cannot be changed, deleted or confirmed again. "
+        + "To change what was ordered, close it with `purchase_order_close` and create a new order.";
+
+    private static (string, System.Text.Json.Nodes.JsonObject)[] PurchaseOrderFields(bool update) =>
+    [
+        ("orderDate", Text("The date of the order as YYYY-MM-DD, for example 2026-10-09.")),
+        ("expectedDate", NullableText("When the goods are expected, as YYYY-MM-DD; not earlier than `orderDate`."
+            + (update ? " Required: pass null for no value." : " Optional."))),
+        ("supplierId", Uuid("The `id` of the partner the goods are ordered from; it must have `isSupplier` = true (see `partner_list`). Not the code.")),
+        ("warehouseId", Uuid("The `id` of the warehouse the goods are expected in; receipts against the order go into this warehouse (see `warehouse_list`). Not the code.")),
+        ("reference", NullableText("The supplier's own number for the order, or your reference; one line, at most 100 characters."
+            + (update ? " Required: pass null for no value." : " Optional."))),
+        ("note", NullableText("Free text, may have several lines, at most 2000 characters." + (update ? " Required: pass null for no value." : " Optional."))),
         ("lines", ArrayOf(
             "The lines, 1 to 200; they are numbered 1…n in the order given" + (update ? " and replace all stored lines." : ".")
-            + " The same article may appear on several lines, also in different units - except on a count, where each article appears at most once."
-            + " Stock is always kept in the article's base unit: a line in another unit is converted with the article's factor for that unit,"
-            + " and the document shows both what was entered (`unit`, `quantity`) and what it is in base units (`factor`, `baseUnit`, `baseQuantity`).",
+            + " The same article may appear on several lines. A receipt names an order line by this number (`orderLineNo`).",
             1, 200, ["unitId"],
             ("articleId", Uuid("The `id` of a stock article (see `article_list`). Not the code.")),
-            ("quantity", Number("Quantity in the line's unit (`unitId`; the article's base unit when that is left out), as a JSON number (not a string): greater than 0, at most 999999999.999999, at most 6 decimal places. "
-                + "On a count it is the counted quantity and 0 is allowed: none found.")),
-            ("unitId", NullableUuid("The `id` of the unit of measure the quantity is in: the article's base unit or one of its alternative units (see `article_unit_list`). "
+            ("quantity", Number("Ordered quantity in the line's unit (`unitId`; the article's base unit when that is left out), as a JSON number (not a string): greater than 0, at most 999999999.999999, at most 6 decimal places.")),
+            ("unitPrice", Number("The price of one unit of the line (of one `unitId`: per box when the line is in boxes), in the tenant's currency, without tax, as a JSON number (not a string): "
+                + "0 or greater (0 = free of charge), at most 999999999.999999, at most 6 decimal places. `quantity` × `unitPrice`, rounded to 2 decimals, may be at most 9999999999.99.")),
+            ("unitId", NullableUuid("The `id` of the unit of measure the quantity and the price are in: the article's base unit or one of its alternative units (see `article_unit_list`). "
                 + "Optional; left out or null it defaults to the article's base unit. Not the unit's code.")))),
     ];
 
@@ -188,7 +236,7 @@ public static class ToolCatalog
             "Deletes a unit of measure that nothing uses; returns `{ \"deleted\": true }`. `NOT_FOUND`: no such unit in this tenant. "
             + "`IN_USE`: the unit is the base unit of articles (list them with `article_list` `baseUnitId`), an alternative unit of articles "
             + "(a conversion names it; list them with `article_list` `alternativeUnitId` and remove the conversions with `article_unit_delete`), "
-            + "or the unit of a stock document line, draft or posted. Deactivate the unit with `uom_update` instead.",
+            + "or the unit of a stock document line, draft or posted, or of a purchase order line, whatever the order's status. Deactivate the unit with `uom_update` instead.",
             Input(["id"], IdOf("unit of measure to delete")),
             (services, input, ct) => services.GetRequiredService<UnitOfMeasureOperations>().DeleteAsync(input.Id, ct)),
 
@@ -223,7 +271,7 @@ public static class ToolCatalog
             "Replaces all fields of an article; every argument is required (`description` may be null). " + Validation + " "
             + "`NOT_FOUND`: no such article in this tenant. `REFERENCE_NOT_FOUND`: `baseUnitId` names no unit of this tenant. "
             + "`REFERENCE_INACTIVE`: the unit is inactive and the article did not already use it. "
-            + "`IN_USE`: stock documents use the article, so `type` and `baseUnitId` cannot change, or the article has unit conversions, "
+            + "`IN_USE`: stock documents or purchase orders use the article, so `type` and `baseUnitId` cannot change, or the article has unit conversions, "
             + "so `baseUnitId` cannot change (`errors` names which); keep the values. To change the base unit of an article no stock document uses, "
             + "delete its conversions with `article_unit_delete` first and set them again afterwards. " + CodeTaken,
             Input(["id", "code", "name", "description", "type", "baseUnitId", "isActive"],
@@ -231,8 +279,8 @@ public static class ToolCatalog
             (services, id, input, ct) => services.GetRequiredService<ArticleOperations>().ReplaceAsync(id, input, ct)),
 
         XerpTool.For<RecordIdInput, ArticleDeleted>("article_delete", ToolKind.Delete,
-            "Deletes an article that no stock document uses, together with its unit conversions; returns `{ \"deleted\": true }`. `NOT_FOUND`: no such article in this tenant. "
-            + "`IN_USE`: a stock document (draft or posted) has a line with this article; deactivate it with `article_update` instead.",
+            "Deletes an article that no stock document and no purchase order uses, together with its unit conversions; returns `{ \"deleted\": true }`. `NOT_FOUND`: no such article in this tenant. "
+            + "`IN_USE`: a stock document (draft or posted) or a purchase order (draft, confirmed or closed) has a line with this article; deactivate it with `article_update` instead.",
             Input(["id"], IdOf("article to delete")),
             (services, input, ct) => services.GetRequiredService<ArticleOperations>().DeleteAsync(input.Id, ct)),
 
@@ -276,7 +324,8 @@ public static class ToolCatalog
             "Deletes a unit conversion of an article; returns `{ \"deleted\": true }`. New lines can then no longer be entered in that unit for this article. "
             + "Posted stock documents are unaffected: their lines keep the factor they were posted with. `VALIDATION_FAILED`: `articleId` or `unitId` is missing. "
             + "`NOT_FOUND`: no such article in this tenant, or it has no conversion for this unit. "
-            + "`IN_USE`: a line of a draft stock document is in this unit of this article; post or delete the draft, or change the line's unit with `stock_document_update`, then delete again.",
+            + "`IN_USE`: a line of a draft stock document or of a draft purchase order is in this unit of this article; post, confirm or delete the draft, "
+            + "or change the line's unit with `stock_document_update` or `purchase_order_update`, then delete again. Lines of confirmed and closed orders keep the factor they were confirmed with and do not block it.",
             Input(["articleId", "unitId"], ArticleUnitAddress("the alternative unit")),
             (services, input, ct) => services.GetRequiredService<ArticleUnitOperations>().DeleteAsync(input, ct)),
 
@@ -317,7 +366,8 @@ public static class ToolCatalog
             (services, id, input, ct) => services.GetRequiredService<PartnerOperations>().ReplaceAsync(id, input, ct)),
 
         XerpTool.For<RecordIdInput, PartnerDeleted>("partner_delete", ToolKind.Delete,
-            "Deletes a partner; returns `{ \"deleted\": true }`. `NOT_FOUND`: no such partner in this tenant.",
+            "Deletes a partner that no order names; returns `{ \"deleted\": true }`. `NOT_FOUND`: no such partner in this tenant. "
+            + "`IN_USE`: a purchase order (draft, confirmed or closed) names this partner as its supplier; deactivate it with `partner_update` instead.",
             Input(["id"], IdOf("partner to delete")),
             (services, input, ct) => services.GetRequiredService<PartnerOperations>().DeleteAsync(input.Id, ct)),
 
@@ -345,8 +395,8 @@ public static class ToolCatalog
             (services, id, input, ct) => services.GetRequiredService<WarehouseOperations>().ReplaceAsync(id, input, ct)),
 
         XerpTool.For<RecordIdInput, WarehouseDeleted>("warehouse_delete", ToolKind.Delete,
-            "Deletes a warehouse that no stock document uses; returns `{ \"deleted\": true }`. `NOT_FOUND`: no such warehouse in this tenant. "
-            + "`IN_USE`: a stock document (draft or posted) names this warehouse; deactivate it with `warehouse_update` instead.",
+            "Deletes a warehouse that no stock document and no purchase order uses; returns `{ \"deleted\": true }`. `NOT_FOUND`: no such warehouse in this tenant. "
+            + "`IN_USE`: a stock document (draft or posted) or a purchase order (draft, confirmed or closed) names this warehouse; deactivate it with `warehouse_update` instead.",
             Input(["id"], IdOf("warehouse to delete")),
             (services, input, ct) => services.GetRequiredService<WarehouseOperations>().DeleteAsync(input.Id, ct)),
 
@@ -360,6 +410,7 @@ public static class ToolCatalog
                 ("type", Text("Return only documents of this type.", "receipt", "issue", "transfer", "count")),
                 ("status", Text("Return only documents in this status. `posted` includes reversing documents; `reversed` are the originals that were reversed.", "draft", "posted", "reversed")),
                 ("warehouseId", Uuid("Return only documents of the warehouse with this `id`: as the warehouse of the document or as the destination of a transfer.")),
+                ("purchaseOrderId", Uuid("Return only the documents linked to the purchase order with this `id`: its receipts, drafts and posted, and their reversals.")),
                 Search("the document number or the reference"),
                 .. Paging,
             ]),
@@ -384,19 +435,24 @@ public static class ToolCatalog
             + "and when you know what is there but not the difference; for a known difference use a receipt or an issue. "
             + "A line's `unitId` defaults to the article's base unit; stock is always kept in base units. "
             + "A draft changes no stock and reserves nothing; it takes effect only when posted with `stock_document_post`. "
-            + Validation + " " + StockReferences,
+            + "To receive goods of a purchase order, create a `receipt` with `purchaseOrderId`, the order's warehouse and `orderLineNo` on every line; "
+            + "the draft reserves nothing of the order either - quantities are compared with it when the receipt is posted. "
+            + Validation + " " + StockReferences + " " + OrderLink,
             Input(["type", "documentDate", "warehouseId", "lines"],
             [
                 ("type", Text("`receipt`: goods come into the warehouse. `issue`: goods leave it. `transfer`: goods move from `warehouseId` to `toWarehouseId`. `count`: stock in `warehouseId` is set to the counted quantities. Cannot be changed later.", "receipt", "issue", "transfer", "count")),
-                .. StockDocumentFields(update: false),
+                .. StockDocumentHeader(update: false),
+                ("purchaseOrderId", NullableUuid("Only for a receipt: the `id` of the confirmed purchase order whose goods it receives (see `purchase_order_list`); not the order's number. "
+                    + "Every line then needs `orderLineNo`. The link cannot be changed later. Left out or null: a document that is not linked to an order.")),
+                StockDocumentFields(update: false)[^1],
             ]),
             (services, input, ct) => services.GetRequiredService<StockDocumentOperations>().CreateAsync(input, ct)),
 
         XerpTool.WithId<ReplaceStockDocumentInput, StockDocumentDto>("stock_document_update", ToolKind.Update,
             "Replaces the date, warehouse, reference, note and all lines of a draft; every argument is required (`reference` and `note` may be null), "
             + "except `toWarehouseId`, which is required for a transfer only (the destination; `warehouseId` is the source). "
-            + "The type cannot change. Saving a count takes the current stock on hand as `bookQuantity` of every line anew. A line's `unitId` defaults to the article's base unit; stock is always kept in base units. "
-            + Validation + " `NOT_FOUND`: no such document in this tenant. " + DocumentPosted + " " + StockReferences,
+            + "The type and the link to a purchase order cannot change; on a linked receipt every line needs `orderLineNo`. Saving a count takes the current stock on hand as `bookQuantity` of every line anew. A line's `unitId` defaults to the article's base unit; stock is always kept in base units. "
+            + Validation + " `NOT_FOUND`: no such document in this tenant. " + DocumentPosted + " " + StockReferences + " " + OrderLink,
             Input(["id", "documentDate", "warehouseId", "reference", "note", "lines"],
                 [IdOf("draft stock document to replace"), .. StockDocumentFields(update: true)]),
             (services, id, input, ct) => services.GetRequiredService<StockDocumentOperations>().ReplaceAsync(id, input, ct)),
@@ -420,7 +476,12 @@ public static class ToolCatalog
             + "or receive stock first, and post again. A count never returns it. "
             + "`COUNT_OUTDATED`: stock of a counted article changed since the count was saved, so it no longer equals the line's `bookQuantity` (`errors` names those lines, `lines[0].quantity`). "
             + "Nothing was posted: read the document with `stock_document_get`, check the count, save it again with `stock_document_update` "
-            + "(this takes the current book quantity) and post again.",
+            + "(this takes the current book quantity) and post again. "
+            + "A receipt linked to a purchase order also raises the received quantity of the order lines it names, and is checked against the order last: "
+            + "`ORDER_NOT_OPEN`: the order is closed (or a draft), `errors` names `purchaseOrderId`; reopen it with `purchase_order_reopen` or delete the draft receipt. "
+            + "`QUANTITY_EXCEEDS_ORDER`: the document would take an order line above what was ordered, counted in base units over all its lines naming that order line "
+            + "(`errors` names those lines, `lines[0].quantity`). Nothing was posted: read the order with `purchase_order_get` - `outstandingBaseQuantity` of a line is what can still be received - "
+            + "lower the quantities with `stock_document_update` and post again.",
             Input(["id"], IdOf("draft stock document to post")),
             (services, input, ct) => services.GetRequiredService<StockDocumentOperations>().PostAsync(input.Id, ct)),
 
@@ -430,6 +491,7 @@ public static class ToolCatalog
             + "its own number from the same series, and ledger entries with the opposite sign, so stock is as if the original had never been posted; "
             + "the original gets status `reversed`. To correct a mistake, reverse and then create a new document with `stock_document_create`. "
             + "It either does all of this or nothing. Inactive warehouses or articles do not prevent a reversal. "
+            + "Reversing a receipt linked to a purchase order gives its quantities back to the order lines, whatever the order's status, and does not change that status. "
             + Validation + " `documentDate` earlier than the original's is one of them. `NOT_FOUND`: no such document in this tenant. "
             + "`INVALID_STATE`: the document is a draft, is already reversed, or is itself a reversing document. "
             + "`INSUFFICIENT_STOCK`: the goods the original brought in have already left, so the reversal would make stock negative; `errors` names the original's lines (`lines[0].quantity`). "
@@ -444,8 +506,9 @@ public static class ToolCatalog
             (services, id, input, ct) => services.GetRequiredService<StockDocumentOperations>().ReverseAsync(id, input, ct)),
 
         XerpTool.For<ListStockOnHandInput, PagedResult<StockOnHandDto>>("stock_on_hand_list", ToolKind.Read,
-            "Lists stock on hand: one item per article and warehouse with a quantity other than zero, in the article's base unit, "
-            + "ordered by article code then warehouse code. A pair that is not listed has zero stock. Drafts do not count. " + Validation,
+            "Lists stock on hand: one item per article and warehouse whose `quantity` or `incomingQuantity` is not zero, both in the article's base unit, "
+            + "ordered by article code then warehouse code. `quantity` is what is in the warehouse now; `incomingQuantity` is what confirmed purchase orders for that warehouse "
+            + "still expect (ordered minus received) - it is not stock and cannot be issued. A pair that is not listed has neither. Drafts and closed orders do not count. " + Validation,
             Input([],
             [
                 ("articleId", Uuid("Return only the stock of the article with this `id`.")),
@@ -466,6 +529,81 @@ public static class ToolCatalog
                 .. Paging,
             ]),
             (services, input, ct) => services.GetRequiredService<StockQueries>().LedgerAsync(input, ct)),
+
+        // ---- purchase orders (spec 009, section 5)
+        XerpTool.For<ListPurchaseOrdersInput, PagedResult<PurchaseOrderSummaryDto>>("purchase_order_list", ToolKind.Read,
+            "Lists the tenant's purchase orders, newest first, with paging; each item has `lineCount` instead of the lines, with `totalAmount` and `receiptStatus`. "
+            + "Filters combine with AND. " + Validation,
+            Input([],
+            [
+                ("status", Text("Return only orders in this status. `draft`: not yet ordered. `confirmed`: ordered, can be received against. `closed`: nothing more will come.", "draft", "confirmed", "closed")),
+                ("receiptStatus", Text("Return only orders of which nothing (`none`), a part (`partial`) or everything (`full`) was received. A draft is `none`.", "none", "partial", "full")),
+                ("supplierId", Uuid("Return only orders for the supplier (partner) with this `id`.")),
+                ("warehouseId", Uuid("Return only orders whose goods are expected in the warehouse with this `id`.")),
+                Search("the order number or the reference"),
+                .. Paging,
+            ]),
+            (services, input, ct) => services.GetRequiredService<PurchaseOrderOperations>().ListAsync(input, ct)),
+
+        XerpTool.For<OrderAddressInput, PurchaseOrderDto>("purchase_order_get", ToolKind.Read,
+            "Returns one purchase order with its lines, addressed by `id` or by `number` (exactly one of the two). Every line shows what was ordered (`unit`, `quantity`, `unitPrice`, `lineAmount`), "
+            + "what that is in the article's base unit (`factor`, `baseQuantity`), and the progress: `receivedBaseQuantity` and `outstandingBaseQuantity`, both in base units. "
+            + "How to receive goods of a confirmed order: create a stock document of type `receipt` with `stock_document_create`, giving `purchaseOrderId` (this order's `id`), "
+            + "the order's warehouse as `warehouseId`, and one line per delivery position with `articleId`, `quantity` and `orderLineNo` (the `lineNo` of the order line); then post it with `stock_document_post`. "
+            + "`outstandingBaseQuantity` is what can still be received; it is 0 on a draft and on a closed order. "
+            + "`VALIDATION_FAILED`: both or neither of `id` and `number` were given. `NOT_FOUND`: no such order in this tenant; a draft has no number yet.",
+            Input([],
+            [
+                ("id", Uuid("The order's `id`. Give either `id` or `number`, not both.")),
+                ("number", Text("The number of a confirmed order, for example `PO-000001`, in any letter case. Give either `id` or `number`, not both.")),
+            ]),
+            (services, input, ct) => services.GetRequiredService<PurchaseOrderOperations>().FindAsync(input, ct)),
+
+        XerpTool.For<CreatePurchaseOrderInput, PurchaseOrderDto>("purchase_order_create", ToolKind.Create,
+            "Creates a purchase order as a draft and returns it with its `id`: goods ordered from one supplier into one warehouse. "
+            + "A line's `unitPrice` is the price of one unit of the line (per box when the line is in boxes), in the tenant's currency, without tax; `lineAmount` is `quantity` × `unitPrice` rounded to 2 decimals. "
+            + "Only stock articles can be ordered. The supplier must be a partner with `isSupplier` = true. "
+            + "A draft orders nothing: it has no number, no incoming quantity and cannot be received against until confirmed with `purchase_order_confirm`. "
+            + Validation + " " + OrderReferences,
+            Input(["orderDate", "supplierId", "warehouseId", "lines"], PurchaseOrderFields(update: false)),
+            (services, input, ct) => services.GetRequiredService<PurchaseOrderOperations>().CreateAsync(input, ct)),
+
+        XerpTool.WithId<ReplacePurchaseOrderInput, PurchaseOrderDto>("purchase_order_update", ToolKind.Update,
+            "Replaces the dates, supplier, warehouse, reference, note and all lines of a draft purchase order; every argument is required (`expectedDate`, `reference` and `note` may be null). "
+            + Validation + " `NOT_FOUND`: no such order in this tenant. " + OrderConfirmed + " " + OrderReferences,
+            Input(["id", "orderDate", "expectedDate", "supplierId", "warehouseId", "reference", "note", "lines"],
+                [IdOf("draft purchase order to replace"), .. PurchaseOrderFields(update: true)]),
+            (services, id, input, ct) => services.GetRequiredService<PurchaseOrderOperations>().ReplaceAsync(id, input, ct)),
+
+        XerpTool.For<RecordIdInput, PurchaseOrderDeleted>("purchase_order_delete", ToolKind.Delete,
+            "Deletes a draft purchase order with its lines; returns `{ \"deleted\": true }`. `NOT_FOUND`: no such order in this tenant. " + OrderConfirmed,
+            Input(["id"], IdOf("draft purchase order to delete")),
+            (services, input, ct) => services.GetRequiredService<PurchaseOrderOperations>().DeleteAsync(input.Id, ct)),
+
+        XerpTool.For<RecordIdInput, PurchaseOrderDto>("purchase_order_confirm", ToolKind.Post,
+            "Confirms a draft purchase order. Confirmation is permanent: the order gets its number (`PO-…`) and can no longer be edited or deleted; "
+            + "every line keeps the `factor` and `baseQuantity` of this moment for good, and the order's outstanding quantities count as `incomingQuantity` in `stock_on_hand_list`. "
+            + "To change a confirmed order, close it with `purchase_order_close` and create a new one. It either does all of this or nothing. "
+            + "`NOT_FOUND`: no such order in this tenant. " + OrderConfirmed + " "
+            + "`REFERENCE_INACTIVE`: the supplier, the warehouse or an article of the order is inactive (`errors` says which: `supplierId`, `warehouseId`, `lines[0].articleId`); reactivate it or change the draft. "
+            + "`PARTNER_ROLE_MISSING`: the supplier no longer has `isSupplier` (`errors` names `supplierId`). "
+            + "`QUANTITY_NOT_CONVERTIBLE`: with the current factor a line converts to zero or to more than 999999999.999999 (`errors` names `lines[i].quantity`); correct the draft or the factor.",
+            Input(["id"], IdOf("draft purchase order to confirm")),
+            (services, input, ct) => services.GetRequiredService<PurchaseOrderOperations>().ConfirmAsync(input.Id, ct)),
+
+        XerpTool.For<RecordIdInput, PurchaseOrderDto>("purchase_order_close", ToolKind.Create,
+            "Closes a confirmed purchase order: nothing more will be received against it, and its outstanding quantities become 0 and stop counting as incoming. "
+            + "Use it when the rest will not be delivered, or to cancel an order nothing was received against. What was received stays received. "
+            + "Draft receipts against a closed order cannot be posted; delete them, or reopen the order with `purchase_order_reopen`. "
+            + "`NOT_FOUND`: no such order in this tenant. `INVALID_STATE`: the order is a draft (delete it instead) or already closed.",
+            Input(["id"], IdOf("confirmed purchase order to close")),
+            (services, input, ct) => services.GetRequiredService<PurchaseOrderOperations>().CloseAsync(input.Id, ct)),
+
+        XerpTool.For<RecordIdInput, PurchaseOrderDto>("purchase_order_reopen", ToolKind.Create,
+            "Reopens a closed purchase order: it is `confirmed` again, with the same number, lines and received quantities, and what was not received is outstanding again. "
+            + "`NOT_FOUND`: no such order in this tenant. `INVALID_STATE`: the order is not closed (a draft, or already confirmed).",
+            Input(["id"], IdOf("closed purchase order to reopen")),
+            (services, input, ct) => services.GetRequiredService<PurchaseOrderOperations>().ReopenAsync(input.Id, ct)),
 
         // ---- API keys (creating a key is HTTP only: a secret never travels through a tool result, ADR-0010)
         XerpTool.For<ListApiKeysInput, PagedResult<ApiKeyDto>>("api_key_list", ToolKind.Read,

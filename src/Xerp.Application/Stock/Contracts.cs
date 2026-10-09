@@ -10,16 +10,22 @@ namespace Xerp.Application.Stock;
 /// <c>BookQuantity</c> and <c>DifferenceQuantity</c> are null unless the document is a count (spec 008, section 4):
 /// the stock the count was saved against and the base quantity minus it, both in the base unit.
 /// </summary>
+/// <param name="OrderLineNo">The number of the order line the line fulfils; null unless the document is linked to an order (spec 009, 4.2).</param>
 public sealed record StockDocumentLineDto(
     int LineNo, ReferenceSummary Article, ReferenceSummary Unit, decimal Quantity,
-    decimal Factor, ReferenceSummary BaseUnit, decimal BaseQuantity, decimal? BookQuantity, decimal? DifferenceQuantity);
+    decimal Factor, ReferenceSummary BaseUnit, decimal BaseQuantity, decimal? BookQuantity, decimal? DifferenceQuantity,
+    int? OrderLineNo);
 
 /// <summary>Another stock document, as a document links to it: the reversed original or the reversing document.</summary>
 public sealed record StockDocumentLinkDto(Guid Id, string Number);
 
+/// <summary>The order a stock document fulfils, as the document shows it (spec 009, 4.2).</summary>
+public sealed record OrderLinkDto(Guid Id, string Number);
+
 /// <summary>
 /// <c>ToWarehouse</c> is null unless the document is a transfer; <c>ReversalOf</c> is set on a reversing
-/// document and <c>ReversedBy</c> on a reversed one (spec 006, 4.1). All three are always present.
+/// document and <c>ReversedBy</c> on a reversed one (spec 006, 4.1); <c>PurchaseOrder</c> is set on a receipt
+/// linked to a purchase order (spec 009, 4.2). All four are always present.
 /// </summary>
 public sealed record StockDocumentDto(
     Guid Id,
@@ -31,6 +37,7 @@ public sealed record StockDocumentDto(
     ReferenceSummary? ToWarehouse,
     StockDocumentLinkDto? ReversalOf,
     StockDocumentLinkDto? ReversedBy,
+    OrderLinkDto? PurchaseOrder,
     string? Reference,
     string? Note,
     IReadOnlyList<StockDocumentLineDto> Lines,
@@ -52,6 +59,7 @@ public sealed record StockDocumentSummaryDto(
     ReferenceSummary? ToWarehouse,
     StockDocumentLinkDto? ReversalOf,
     StockDocumentLinkDto? ReversedBy,
+    OrderLinkDto? PurchaseOrder,
     string? Reference,
     string? Note,
     int LineCount,
@@ -62,8 +70,13 @@ public sealed record StockDocumentSummaryDto(
     DateTime? PostedAt,
     Guid? PostedBy);
 
-/// <summary>Stock on hand of one (article, warehouse) pair: the sum of its ledger entries (R19).</summary>
-public sealed record StockOnHandDto(ReferenceSummary Article, ReferenceSummary Warehouse, ReferenceSummary Unit, decimal Quantity);
+/// <summary>
+/// Stock on hand of one (article, warehouse) pair: <c>Quantity</c> is the sum of its ledger entries (R19);
+/// <c>IncomingQuantity</c> is what confirmed purchase orders still expect into the warehouse, in base units
+/// (spec 009, R35). An order never changes <c>Quantity</c>.
+/// </summary>
+public sealed record StockOnHandDto(
+    ReferenceSummary Article, ReferenceSummary Warehouse, ReferenceSummary Unit, decimal Quantity, decimal IncomingQuantity);
 
 /// <summary>The posted document a ledger entry came from; <c>IsReversal</c> when that is a reversing document.</summary>
 public sealed record LedgerDocumentDto(Guid Id, string Number, string Type, bool IsReversal);
@@ -84,19 +97,23 @@ public sealed record StockLedgerEntryDto(
 /// A line of a request: the ids are the raw strings, so a malformed one is reported with the other invalid
 /// fields. <c>UnitId</c> omitted or null means the article's base unit (spec 007, R12).
 /// </summary>
-public sealed record StockLineInput(string? ArticleId = null, decimal? Quantity = null, string? UnitId = null);
+/// <param name="OrderLineNo">On a document linked to an order: the number of the order line the line fulfils (spec 009, R20).</param>
+public sealed record StockLineInput(string? ArticleId = null, decimal? Quantity = null, string? UnitId = null, int? OrderLineNo = null);
 
 /// <summary>A validated line of a request: well-formed, not yet known to exist. <c>UnitId</c> null is the article's base unit.</summary>
-public readonly record struct StockLineRequest(Guid ArticleId, decimal Quantity, Guid? UnitId = null);
+public readonly record struct StockLineRequest(Guid ArticleId, decimal Quantity, Guid? UnitId = null, int? OrderLineNo = null);
 
+/// <param name="PurchaseOrderId">The purchase order a receipt fulfils; omitted or null for an unlinked document (spec 009, R18).</param>
 public sealed record CreateStockDocumentInput(
     string? Type = null, string? DocumentDate = null, string? WarehouseId = null,
-    IReadOnlyList<StockLineInput?>? Lines = null, string? Reference = null, string? Note = null, string? ToWarehouseId = null);
+    IReadOnlyList<StockLineInput?>? Lines = null, string? Reference = null, string? Note = null, string? ToWarehouseId = null,
+    string? PurchaseOrderId = null);
 
 /// <summary>
 /// All five fields must be present (R7); <c>Reference</c> and <c>Note</c> may be null but must have been given.
 /// There is no <c>type</c>: it never changes (R1). <c>ToWarehouseId</c> is needed for a transfer and must be
-/// absent or null for the other types (spec 006, 4.1), which only the stored document can tell.
+/// absent or null for the other types (spec 006, 4.1), which only the stored document can tell. There is no
+/// <c>purchaseOrderId</c> either: the link is set at creation and never changes (spec 009, R19).
 /// </summary>
 public sealed record ReplaceStockDocumentInput : TrackedInput
 {
@@ -119,7 +136,7 @@ public sealed record StockReversalValues(DateOnly DocumentDate, string? Note);
 
 public sealed record ListStockDocumentsInput(
     string? Type = null, string? Status = null, string? WarehouseId = null, string? Search = null,
-    int? Limit = null, int? Offset = null);
+    int? Limit = null, int? Offset = null, string? PurchaseOrderId = null);
 
 /// <summary>How a client without a URL path names one document: by <c>id</c> or by <c>number</c>.</summary>
 public sealed record StockDocumentAddressInput(string? Id = null, string? Number = null);
@@ -133,11 +150,11 @@ public sealed record ListStockLedgerEntriesInput(
 public sealed record StockDocumentValues(
     DateOnly DocumentDate, Guid WarehouseId, Guid? ToWarehouseId, string? Reference, string? Note, IReadOnlyList<StockLineRequest> Lines);
 
-/// <summary>Validated input of a create: the type and the values.</summary>
-public sealed record NewStockDocumentValues(StockDocumentType Type, StockDocumentValues Values);
+/// <summary>Validated input of a create: the type, the values and the order the document is linked to, if any.</summary>
+public sealed record NewStockDocumentValues(StockDocumentType Type, StockDocumentValues Values, Guid? PurchaseOrderId = null);
 
 public sealed record StockDocumentListQuery(
-    StockDocumentType? Type, StockDocumentStatus? Status, Guid? WarehouseId, string? Search, int Limit, int Offset);
+    StockDocumentType? Type, StockDocumentStatus? Status, Guid? WarehouseId, string? Search, int Limit, int Offset, Guid? PurchaseOrderId = null);
 
 public sealed record StockOnHandQuery(Guid? ArticleId, Guid? WarehouseId, int Limit, int Offset);
 

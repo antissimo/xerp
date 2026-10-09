@@ -3,6 +3,7 @@ using Xerp.Application.Common;
 using Xerp.Application.Ports;
 using Xerp.Domain.Catalog;
 using Xerp.Domain.Inventory;
+using Xerp.Domain.Orders;
 
 namespace Xerp.Application.ArticleUnits;
 
@@ -141,6 +142,16 @@ public sealed class ArticleUnitOperations(IXerpDb db, ITenantContext context, IC
                 return AppError.InUse(
                     $"The conversion is used by lines of {drafts} draft stock document(s) and cannot be deleted. "
                     + "Post or delete those drafts, or change their lines to another unit of the article, then delete it again.");
+            // Spec 009, R38: so does a line of a draft order; confirmed and closed orders carry their own factor.
+            var draftOrders = await db.PurchaseOrderLines
+                .Where(l => l.ArticleId == articleId && l.UnitId == unitId)
+                .Join(db.PurchaseOrders.Where(o => o.Status == OrderStatus.Draft), l => l.OrderId, o => o.Id, (l, o) => o.Id)
+                .Distinct()
+                .CountAsync(ct);
+            if (draftOrders > 0)
+                return AppError.InUse(
+                    $"The conversion is used by lines of {draftOrders} draft order(s) and cannot be deleted. "
+                    + "Confirm or delete those drafts, or change their lines to another unit of the article, then delete it again.");
 
             db.ArticleUnits.Remove(conversion);
             await db.SaveChangesAsync(ct);

@@ -98,6 +98,9 @@ public sealed class WarehouseOperations(IXerpDb db, ITenantContext context, IClo
         // A draft counts like a posted document (spec 005, R24, R25).
         if (await db.StockDocuments.AnyAsync(d => d.WarehouseId == id || d.ToWarehouseId == id, cancellationToken))
             return InUse();
+        // Spec 009, R37: so does an order of any status.
+        if (await db.PurchaseOrders.AnyAsync(o => o.WarehouseId == id, cancellationToken))
+            return InUse();
         db.Warehouses.Remove(warehouse);
         try
         {
@@ -164,7 +167,7 @@ public sealed class WarehouseOperations(IXerpDb db, ITenantContext context, IClo
             : DeleteAsync(parsed, cancellationToken);
 
     private static AppError InUse() =>
-        AppError.InUse("The warehouse is used by stock documents and cannot be deleted. Deactivate it instead (isActive = false).");
+        AppError.InUse("The warehouse is used by stock documents or orders and cannot be deleted. Deactivate it instead (isActive = false).");
 
     private const string NotFoundDetail = "Warehouse not found.";
 

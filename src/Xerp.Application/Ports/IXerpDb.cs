@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Xerp.Domain.Catalog;
 using Xerp.Domain.Inventory;
+using Xerp.Domain.Orders;
 using Xerp.Domain.Partners;
 using Xerp.Domain.Tenancy;
 
@@ -26,6 +27,8 @@ public interface IXerpDb
     DbSet<StockLedgerEntry> StockLedgerEntries { get; }
 
     DbSet<DocumentCounter> DocumentCounters { get; }
+    DbSet<PurchaseOrder> PurchaseOrders { get; }
+    DbSet<PurchaseOrderLine> PurchaseOrderLines { get; }
 
     /// <exception cref="UniqueConstraintViolationException">A unique index rejected the change.</exception>
     /// <exception cref="ForeignKeyViolationException">A foreign key rejected the change.</exception>

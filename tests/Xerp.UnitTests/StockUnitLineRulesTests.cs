@@ -135,7 +135,7 @@ public class StockUnitLineRulesTests
         new Dictionary<(Guid, Guid), decimal> { [(A, Box)] = 12m, [(A, Pack)] = 0.4m, [(B, Box)] = 50m });
 
     private static Result<IReadOnlyList<StockLineEntry>> References(IReadOnlyList<StockLineRequest> lines, params Guid[] unitsOnDocument) =>
-        StockLineChecks.References(lines, Facts, new HashSet<Guid>(), unitsOnDocument.ToHashSet());
+        StockLineChecks.References(lines, Facts, new HashSet<Guid>(), unitsOnDocument.ToHashSet(), StockDocumentType.Receipt);
 
     private static void AssertError<T>(Result<T> result, string code, params string[] expectedKeys) where T : notnull
     {
@@ -188,7 +188,7 @@ public class StockUnitLineRulesTests
     {
         var active = new StockLineFacts(Facts.Articles, new Dictionary<Guid, bool> { [Pcs] = true, [Kg] = true, [Box] = true, [Pack] = true }, Facts.Factors);
         var result = StockLineChecks.References(
-            [new(A, 1m, Box), new(B, 1m), new(B, 1m, Pack), new(B, 1m, Pcs), new(A, 1m, Kg)], active, new HashSet<Guid>(), new HashSet<Guid>());
+            [new(A, 1m, Box), new(B, 1m), new(B, 1m, Pack), new(B, 1m, Pcs), new(A, 1m, Kg)], active, new HashSet<Guid>(), new HashSet<Guid>(), StockDocumentType.Receipt);
 
         // Pack is a unit of A only; Pcs is A's base unit, not B's; Kg is B's base unit, not A's.
         AssertError(result, ErrorCodes.UnitNotOnArticle, "lines[2].unitId", "lines[3].unitId", "lines[4].unitId");
@@ -227,7 +227,7 @@ public class StockUnitLineRulesTests
         StockLineFacts With(decimal box, decimal pack) =>
             new(Facts.Articles, Facts.Units, new Dictionary<(Guid, Guid), decimal> { [(A, Box)] = box, [(A, Pack)] = pack });
 
-        var converted = StockLineChecks.Convert(lines, With(12m, 0.5m));
+        var converted = StockLineChecks.Convert(lines, With(12m, 0.5m), StockDocumentType.Receipt);
         Assert.True(converted.IsSuccess);
         Assert.Equal(
             [new ConvertedLine(A, 12m, 60m), new(A, 1m, 6m), new(A, 0.5m, 0.000001m)],
@@ -235,12 +235,12 @@ public class StockUnitLineRulesTests
         Assert.Equal(new StockLineValues(A, 60m), converted.Value[0].BaseValues);
 
         // The same lines after the factors changed (E7, E8).
-        Assert.Equal(50m, StockLineChecks.Convert(lines, With(10m, 0.5m)).Value![0].BaseQuantity);
-        AssertError(StockLineChecks.Convert(lines, With(10m, 0.2m)), ErrorCodes.QuantityNotConvertible, "lines[2].quantity");
-        AssertError(StockLineChecks.Convert([new(A, Box, 999999999m)], With(999999.999999m, 1m)), ErrorCodes.QuantityNotConvertible, "lines[0].quantity");
+        Assert.Equal(50m, StockLineChecks.Convert(lines, With(10m, 0.5m), StockDocumentType.Receipt).Value![0].BaseQuantity);
+        AssertError(StockLineChecks.Convert(lines, With(10m, 0.2m), StockDocumentType.Receipt), ErrorCodes.QuantityNotConvertible, "lines[2].quantity");
+        AssertError(StockLineChecks.Convert([new(A, Box, 999999999m)], With(999999.999999m, 1m), StockDocumentType.Receipt), ErrorCodes.QuantityNotConvertible, "lines[0].quantity");
 
         // A line in a unit that is not a unit of its article cannot exist on a saved document.
-        Assert.Throws<InvalidOperationException>(() => StockLineChecks.Convert([new(B, Pack, 1m)], Facts));
+        Assert.Throws<InvalidOperationException>(() => StockLineChecks.Convert([new(B, Pack, 1m)], Facts, StockDocumentType.Receipt));
     }
 
     [Fact]
@@ -249,7 +249,7 @@ public class StockUnitLineRulesTests
         // 30 pcs on hand: 2 box (24) and 6 pcs are covered, 3 box (36) are not, 1 box and 20 pcs are not.
         var onHand = new Dictionary<Guid, decimal> { [A] = 30m };
         IReadOnlyList<StockLineValues> Base(params StockLineEntry[] lines) =>
-            StockLineChecks.Convert(lines, Facts).Value!.Select(c => c.BaseValues).ToList();
+            StockLineChecks.Convert(lines, Facts, StockDocumentType.Receipt).Value!.Select(c => c.BaseValues).ToList();
 
         Assert.Null(StockLineChecks.Sufficiency(Base(new(A, Box, 2m), new(A, Pcs, 6m)), onHand));
         Assert.Equal(["lines[0].quantity"], StockLineChecks.Sufficiency(Base(new StockLineEntry(A, Box, 3m)), onHand)!.Errors!.Keys);
