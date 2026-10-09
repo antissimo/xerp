@@ -55,10 +55,16 @@ public static class ArticleValidation
             if (Guid.TryParse(input.BaseUnitId, out var parsed)) baseUnitId = parsed;
             else errors.Add("baseUnitId", "baseUnitId must be a UUID.");
         }
+        Guid? alternativeUnitId = null;
+        if (!string.IsNullOrEmpty(input.AlternativeUnitId))
+        {
+            if (Guid.TryParse(input.AlternativeUnitId, out var parsed)) alternativeUnitId = parsed;
+            else errors.Add("alternativeUnitId", "alternativeUnitId must be a UUID.");
+        }
 
         if (errors.Any)
             return errors.ToError();
-        return new ArticleListQuery(search, type, baseUnitId, input.IsActive, limit, offset);
+        return new ArticleListQuery(search, type, baseUnitId, input.IsActive, limit, offset, alternativeUnitId);
     }
 
     private const string TypeMessage = $"type must be \"{ArticleTypeNames.Stock}\" or \"{ArticleTypeNames.Service}\".";
