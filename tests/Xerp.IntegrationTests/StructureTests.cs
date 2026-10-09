@@ -37,8 +37,10 @@ public class StructureTests(XerpFixture app)
     }
 
     [Fact]
-    public async Task AC06_Database_has_exactly_the_specified_tables_each_with_TenantId_except_Tenants()
+    public async Task AC06_Every_table_except_Tenants_has_a_TenantId_that_references_Tenants()
     {
+        // No literal list (architecture section 9): the invariant is asserted on every table that exists, and
+        // the tables the specs name must be among them.
         await using var connection = await app.OpenDbAsync();
         var tables = new List<string>();
         await using (var command = new Npgsql.NpgsqlCommand(
@@ -48,19 +50,32 @@ public class StructureTests(XerpFixture app)
             while (await reader.ReadAsync())
                 tables.Add(reader.GetString(0));
 
-        Assert.Equal(
-            [
-                "ApiKeys", "Articles", "DocumentCounters", "Partners", "StockDocumentLines", "StockDocuments", "StockLedgerEntries",
-                "Tenants", "UnitsOfMeasure", "Warehouses",
-            ],
-            tables); // spec 002 adds Articles; spec 004 Partners, Warehouses; spec 005 the four stock tables
+        string[] named =
+        [
+            "Tenants", "ApiKeys", "UnitsOfMeasure", // spec 001
+            "Articles", // spec 002
+            "Partners", "Warehouses", // spec 004
+            "StockDocuments", "StockDocumentLines", "StockLedgerEntries", "DocumentCounters", // spec 005
+        ];
+        foreach (var table in named)
+            Assert.Contains(table, tables);
 
         foreach (var table in tables.Where(t => t != "Tenants"))
         {
             var nullable = await app.ScalarAsync<string>(
                 "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' AND table_name = @t AND column_name = 'TenantId'",
                 ("t", table));
-            Assert.Equal("NO", nullable);
+            Assert.True(nullable == "NO", $"Table {table} has no non-null TenantId column.");
+
+            var referencesTenants = await app.ScalarAsync<long>(
+                """
+                SELECT count(*) FROM pg_constraint c
+                JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+                WHERE c.contype = 'f' AND c.conrelid = ('public."' || @t || '"')::regclass
+                  AND c.confrelid = 'public."Tenants"'::regclass AND array_length(c.conkey, 1) = 1 AND a.attname = 'TenantId'
+                """,
+                ("t", table));
+            Assert.True(referencesTenants == 1, $"Table {table} has no foreign key from TenantId to Tenants.");
         }
     }
 
