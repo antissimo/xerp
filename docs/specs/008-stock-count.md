@@ -129,7 +129,9 @@ Posting
 Reversal
 - R17. A posted count is reversed by the rules of spec 006. The reversing document is a `count` whose lines
   are copies of the original's posted lines, including `bookQuantity` and `differenceQuantity`; its entries
-  are the original's with the opposite sign (006/R14); its number is the next `SC-` number.
+  are the original's with the opposite sign (006/R14); its number is the next `SC-` number. A posted count
+  that wrote no entries (R14) is reversed like any other: `201`, a reversing document with a number and no
+  entries. A reversal is never judged "outdated": R10 applies to posting only (`008-q.md`, T-Q5).
 - R18. Reversing a count is refused with `409 INSUFFICIENT_STOCK` if it would take a pair below zero
   (006/R16): a line that added stock needs that quantity still on hand. Keys `lines[i].quantity`.
 - R19. A reversal undoes the count's entries; it does not restore the counted or the book quantity. After it,
@@ -320,6 +322,8 @@ Builder
   pairs in the fixed order, compare each pair's stock with the line's `BookQuantity`, then write the
   differences. The comparison without the locks fails AC-45. (Or under the per-tenant lock: ADR-0012,
   amendment of 2026-10-09.)
+- As built (spec 006), `StockDocument.Reverse` refuses an empty set of ledger entries. A count without
+  differences has none and must still be reversible (R17): relax that guard for counts.
 - `BookQuantity` is written by create and replace only; reading a draft computes `differenceQuantity` from
   the stored book quantity and the current `baseQuantity`.
 - Reversal needs nothing new: it negates the original's ledger entries (006). Copy `BookQuantity` to the

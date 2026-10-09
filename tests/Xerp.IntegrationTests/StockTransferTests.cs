@@ -214,6 +214,42 @@ public class StockTransferTests(XerpFixture app)
         await Stock.AssertUnchangedAsync(s.Http, withNull);
     }
 
+    [Fact]
+    public async Task AC23_R4_On_replace_the_destination_rule_comes_after_404_and_before_the_state()
+    {
+        var s = await Stock.SetupAsync(app);
+        await Stock.ReceiveAsync(s.Http, s.W1, s.A, 10);
+        var transfer = await Stock.TransferAsync(s.Http, s.W1, s.W2, s.A, 4);
+        var receipt = await Stock.ReceiveAsync(s.Http, s.W1, s.A, 1);
+        var draft = await Stock.CreateTransferAsync(s.Http, s.W1, s.W2, (s.A, 1));
+
+        // A replace has no type: only the stored document says whether a destination is required (006-q B-Q3).
+        // Form of the fields -> 404 -> destination rule -> INVALID_STATE -> references.
+        using var formFirst = await Stock.PutAsync(s.Http, Guid.NewGuid(), Stock.Replacement(s.W1));
+        using var unknownWithout = await Stock.PutAsync(s.Http, Guid.NewGuid(), Stock.Replacement(s.W1, (s.A, 1)));
+        using var unknownWith = await Stock.PutAsync(s.Http, Guid.NewGuid(), Stock.TransferReplacement(s.W1, s.W2, (s.A, 1)));
+        using var postedTransferWithout = await Stock.PutAsync(s.Http, transfer.Id(), Stock.Replacement(s.W1, (s.A, 4)));
+        using var postedTransferSame = await Stock.PutAsync(s.Http, transfer.Id(), Stock.TransferReplacement(s.W1, s.W1, (s.A, 4)));
+        using var postedReceiptWith = await Stock.PutAsync(s.Http, receipt.Id(), Stock.TransferReplacement(s.W1, s.W2, (s.A, 1)));
+        using var postedTransfer = await Stock.PutAsync(s.Http, transfer.Id(), Stock.TransferReplacement(Guid.NewGuid(), s.W2, (s.A, 4)));
+        using var postedReceipt = await Stock.PutAsync(s.Http, receipt.Id(), Stock.Replacement(Guid.NewGuid(), (s.A, 1)));
+        // On a draft the destination rule also comes before the references.
+        using var draftWithout = await Stock.PutAsync(s.Http, draft.Id(), Stock.Replacement(Guid.NewGuid(), (Guid.NewGuid(), 1)));
+
+        await HttpAssert.ValidationAsync(formFirst, "lines");
+        await HttpAssert.NotFoundAsync(unknownWithout);
+        await HttpAssert.NotFoundAsync(unknownWith);
+        await HttpAssert.ValidationAsync(postedTransferWithout, "toWarehouseId");
+        await HttpAssert.ValidationAsync(postedTransferSame, "toWarehouseId");
+        await HttpAssert.ValidationAsync(postedReceiptWith, "toWarehouseId");
+        await Stock.ConflictAsync(postedTransfer, "INVALID_STATE");
+        await Stock.ConflictAsync(postedReceipt, "INVALID_STATE");
+        await HttpAssert.ValidationAsync(draftWithout, "toWarehouseId");
+        await Stock.AssertUnchangedAsync(s.Http, transfer);
+        await Stock.AssertUnchangedAsync(s.Http, receipt);
+        await Stock.AssertUnchangedAsync(s.Http, draft);
+    }
+
     // ---- posting ----
 
     [Fact]
@@ -406,6 +442,78 @@ public class StockTransferTests(XerpFixture app)
         var problem = await Stock.ConflictAsync(sourceOnly, "REFERENCE_INACTIVE", "warehouseId");
         Assert.DoesNotContain("toWarehouseId", McpAssert.ErrorKeys(problem));
         await Stock.AssertDraftAsync(s.Http, draft.Id());
+    }
+
+    /// <summary>The keys of a <c>409 REFERENCE_INACTIVE</c>, which must be exactly the given ones.</summary>
+    private static async Task AssertInactiveExactlyAsync(HttpClient client, Guid draft, params string[] keys)
+    {
+        using var refused = await Stock.SendPostAsync(client, draft);
+        var problem = await Stock.ConflictAsync(refused, "REFERENCE_INACTIVE", keys);
+        Assert.Equal(keys.Order().ToArray(), McpAssert.ErrorKeys(problem).Order().ToArray());
+        await Stock.AssertDraftAsync(client, draft);
+    }
+
+    [Fact]
+    public async Task AC36_R5_Inactive_warehouses_are_reported_alone_and_inactive_articles_only_when_the_header_is_clean()
+    {
+        var s = await Stock.SetupAsync(app);
+        // No stock at all, so every refusal below is about the masters (005/R13: masters before stock).
+        var draft = await Stock.CreateTransferAsync(s.Http, s.W1, s.W2, (s.A, 4), (s.B, 1));
+        await Stock.SetWarehouseActiveAsync(s.Http, s.W1, false);
+        await Stock.SetWarehouseActiveAsync(s.Http, s.W2, false);
+        await Stock.SetArticleActiveAsync(s.Http, s.A, false);
+        await Stock.SetArticleActiveAsync(s.Http, s.B, false);
+
+        // Header before lines: both warehouses together, and no article beside them.
+        await AssertInactiveExactlyAsync(s.Http, draft.Id(), "warehouseId", "toWarehouseId");
+
+        await Stock.SetWarehouseActiveAsync(s.Http, s.W1, true);
+        await AssertInactiveExactlyAsync(s.Http, draft.Id(), "toWarehouseId");
+
+        await Stock.SetWarehouseActiveAsync(s.Http, s.W1, false);
+        await Stock.SetWarehouseActiveAsync(s.Http, s.W2, true);
+        await AssertInactiveExactlyAsync(s.Http, draft.Id(), "warehouseId");
+
+        // The header is clean: now all inactive articles, together.
+        await Stock.SetWarehouseActiveAsync(s.Http, s.W1, true);
+        await AssertInactiveExactlyAsync(s.Http, draft.Id(), "lines[0].articleId", "lines[1].articleId");
+
+        await Stock.SetArticleActiveAsync(s.Http, s.A, true);
+        await AssertInactiveExactlyAsync(s.Http, draft.Id(), "lines[1].articleId");
+
+        // Every master is active: only now the stock is judged.
+        await Stock.SetArticleActiveAsync(s.Http, s.B, true);
+        using var stock = await Stock.SendPostAsync(s.Http, draft.Id());
+        await Stock.ConflictAsync(stock, "INSUFFICIENT_STOCK", "lines[0].quantity", "lines[1].quantity");
+        await Stock.AssertDraftAsync(s.Http, draft.Id());
+        Assert.Equal(0, (await Stock.LedgerAsync(s.Http)).Total());
+    }
+
+    [Theory]
+    [InlineData("receipt")]
+    [InlineData("issue")]
+    public async Task AC36_R5_An_inactive_warehouse_of_a_receipt_or_issue_is_reported_without_the_inactive_articles(string type)
+    {
+        var s = await Stock.SetupAsync(app);
+        await Stock.ReceiveAsync(s.Http, s.W1, s.A, 10);
+        await Stock.ReceiveAsync(s.Http, s.W1, s.B, 10);
+        var draft = await Stock.CreateAsync(s.Http, type, s.W1, (s.A, 4), (s.B, 1));
+        await Stock.SetWarehouseActiveAsync(s.Http, s.W1, false);
+        await Stock.SetArticleActiveAsync(s.Http, s.A, false);
+        await Stock.SetArticleActiveAsync(s.Http, s.B, false);
+
+        // 005/R13 as amended: the warehouse alone, although both articles are inactive too.
+        await AssertInactiveExactlyAsync(s.Http, draft.Id(), "warehouseId");
+
+        await Stock.SetWarehouseActiveAsync(s.Http, s.W1, true);
+        await AssertInactiveExactlyAsync(s.Http, draft.Id(), "lines[0].articleId", "lines[1].articleId");
+
+        await Stock.SetArticleActiveAsync(s.Http, s.A, true);
+        await Stock.SetArticleActiveAsync(s.Http, s.B, true);
+        var posted = await Stock.PostDocumentAsync(s.Http, draft.Id());
+
+        Assert.Equal(type == "receipt" ? "SR-000003" : "SI-000001", posted.Number());
+        Assert.Equal(type == "receipt" ? 14m : 6m, await Stock.QuantityAsync(s.Http, s.A, s.W1));
     }
 
     [Fact]

@@ -166,7 +166,9 @@ Lines
   with key `lines[i].unitId`. **The article's base unit is never checked for being active on a line**,
   whether it is given or omitted: it is the article's own unit (002/R9 lets an article keep a base unit
   deactivated since), and specs 005 and 006 as built do not check it. `REFERENCE_INACTIVE` on a line's unit
-  therefore concerns alternative units only.
+  therefore concerns every unit other than the article's base unit — whether or not it is an alternative
+  unit of the article: a newly assigned inactive unit that is not a unit of the article at all is
+  `REFERENCE_INACTIVE`, not `UNIT_NOT_ON_ARTICLE` (R16 orders the kinds; `007-q.md`, T-Q6).
 - R13. `quantity` is in the line's unit and obeys 005/R6 unchanged.
 - R14. **Conversion.** `baseQuantity` = `quantity` × `factor`, rounded to 6 decimal places, half away from
   zero. For the base unit, `factor` is 1 and `baseQuantity` equals `quantity`.
@@ -179,7 +181,10 @@ Lines
 - R17. **A draft follows the article's current factor; a posted line keeps its own.** `factor` and
   `baseQuantity` of a draft line are computed with the conversion as it is when the document is read. Posting
   computes them once more, with the factor at that moment, and stores them on the line; from then on they
-  never change, whatever happens to the conversion.
+  never change, whatever happens to the conversion. A change of factor writes nothing to a draft: its
+  `updatedAt` / `updatedBy` do not change. Reading never fails on R15: a draft line that no longer converts
+  shows the current `factor` and the `baseQuantity` R14 gives (`0`, or a value above the maximum); only
+  saving and posting refuse it (`007-q.md`, T-Q7).
 - R18. Posting (extends 005/R13 and 006/R5): … masters active -> conversion (`QUANTITY_NOT_CONVERTIBLE`, R15,
   with the current factors) -> stock. Units are not re-checked for being active.
 - R19. **The ledger is in base units.** Every ledger entry a posted line produces has `quantity` equal to

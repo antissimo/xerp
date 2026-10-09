@@ -105,6 +105,34 @@ public class McpStockCountToolTests(XerpFixture app)
         Assert.Equal(96m, await Stock.QuantityAsync(s.Http, a, w1));
     }
 
+    [Fact]
+    public async Task AC81_A_count_without_differences_is_reversed_through_the_tool()
+    {
+        // R17 (008-q T-Q5): a posted count that wrote no entries is reversed like any other.
+        await using var s = await AgentAsync();
+        var (a, w1) = (s.S.A, s.S.W1);
+        await Stock.ReceiveAsync(s.Http, w1, a, 100);
+        var draft = await s.Mcp.OkAsync("stock_document_create", Stock.Draft("count", w1, (a, 100)));
+        var posted = await s.Mcp.OkAsync("stock_document_post", new { id = draft.Id() });
+        Assert.Empty(await Stock.EntriesAsync(s.Http, posted.Id()));
+
+        var reversing = await s.Mcp.OkAsync("stock_document_reverse", new { id = posted.Id(), documentDate = Stock.NextDay });
+
+        Assert.Equal(("count", "posted", "SC-000002"), (reversing.Str("type"), reversing.Str("status"), reversing.Number()));
+        Assert.Equal(posted.Id(), reversing.GetProperty("reversalOf").Id());
+        Assert.Equal(s.Agent.Id, reversing.GetProperty("postedBy").GetGuid());
+        Counts.AssertLine(Assert.Single(reversing.DocumentLines()), quantity: 100m, baseQuantity: 100m, book: 100m, difference: 0m);
+        McpAssert.JsonEqual(await Stock.GetAsync(s.Http, reversing.Id()), reversing);
+        Assert.Empty(await Stock.EntriesAsync(s.Http, reversing.Id()));
+        Assert.Equal("reversed", (await s.Mcp.OkAsync("stock_document_get", new { id = posted.Id() })).Str("status"));
+        Assert.Equal(100m, await Stock.QuantityAsync(s.Http, a, w1));
+
+        using var http = await Stock.SendReverseAsync(s.Http, posted.Id(), Stock.NextDay);
+        await AssertParityAsync(http,
+            await s.Mcp.CallAsync("stock_document_reverse", new { id = posted.Id(), documentDate = Stock.NextDay }),
+            HttpStatusCode.Conflict, "INVALID_STATE");
+    }
+
     // ---- AC-82 ----
 
     [Fact]
