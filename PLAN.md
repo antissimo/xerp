@@ -3,7 +3,14 @@
 Glavni pregled petlje arhitekt -> tester -> builder -> review -> merge. Redoslijed koraka dolazi iz
 `docs/roadmap.md` (piše ga arhitekt); ovaj dokument vodi orkestrator i ažurira ga nakon svakog koraka.
 
-Zadnje ažuriranje: 2026-10-09 09:25
+Zadnje ažuriranje: 2026-10-09 09:35
+
+## Opseg MVP-a
+
+Odluka vlasnika (2026-10-09): rad se ograničava na MVP. Prijedlog granice (orkestrator, čeka potvrdu vlasnika):
+**MVP = specovi 001–010** — matični podaci, MCP sučelje, zalihe (primke, izdatnice, međuskladišnice, storno,
+preračun jedinica, inventura), nabava i prodaja. Sve od 011 nadalje (vrednovanje, računovodstvo, računi,
+plaćanja, platforma) je nakon MVP-a i petlja ga ne radi dok vlasnik ne kaže.
 
 ## Koraci po specifikaciji
 
@@ -29,6 +36,7 @@ Oznake: ✅ gotovo · 🔄 u tijeku · ⬜ nije započeto · — ne primjenjuje 
 | 008 | Inventura / korekcija zaliha | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 009 | Narudžbe dobavljačima -> primka robe | 🔄 | ⬜ | ⬜ | ⬜ | ⬜ |
 | 010 | Prodajne narudžbe -> isporuka | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| | **— granica MVP-a — sve ispod je nakon MVP-a —** | | | | | |
 | 011 | Vrednovanje zaliha | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 012 | Kontni plan + temeljnice | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 013 | Brojčane serije dokumenata | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -61,6 +69,7 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 - 2026-10-09 — 003 prošao review (OK), spojen u `main` i pushan.
 - 2026-10-09 — 004 prošao review (OK; arhitekt sam pokrenuo 234 unit + 632 integracijska testa), spojen u `main` i pushan.
 - 2026-10-09 — testovi za 006 napisani (`tests/006-stock-transfers-reversal`).
+- 2026-10-09 — vlasnik ograničio opseg na MVP; lokalni model qwen3:4b isproban i odbačen (preslab).
 
 ## Odluke vlasnika
 
