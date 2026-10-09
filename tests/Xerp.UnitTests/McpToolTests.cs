@@ -106,7 +106,7 @@ public class McpToolTests
     [Fact]
     public void Catalogue_input_schemas_are_closed_and_list_exactly_the_bound_properties()
     {
-        Assert.Equal(24, ToolCatalog.All.Count); // spec 004 adds ten
+        Assert.Equal(32, ToolCatalog.All.Count); // spec 004 adds ten, spec 005 eight
         foreach (var tool in ToolCatalog.All)
         {
             var schema = tool.InputSchema;

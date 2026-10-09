@@ -24,6 +24,10 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
     public DbSet<Article> Articles => Set<Article>();
     public DbSet<Partner> Partners => Set<Partner>();
     public DbSet<Warehouse> Warehouses => Set<Warehouse>();
+    public DbSet<StockDocument> StockDocuments => Set<StockDocument>();
+    public DbSet<StockDocumentLine> StockDocumentLines => Set<StockDocumentLine>();
+    public DbSet<StockLedgerEntry> StockLedgerEntries => Set<StockLedgerEntry>();
+    public DbSet<DocumentCounter> DocumentCounters => Set<DocumentCounter>();
 
     private Guid? CurrentTenantId => tenant.TenantId;
 
@@ -148,6 +152,91 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
+        // Spec 005 / ADR-0012. Every key between these tables and to the masters includes TenantId and
+        // restricts deletes: a used master cannot be deleted, and lines go only with their draft.
+        modelBuilder.Entity<StockDocument>(e =>
+        {
+            e.ToTable("StockDocuments");
+            e.Property(d => d.Id).ValueGeneratedNever();
+            e.Property(d => d.Type).HasMaxLength(20).HasConversion(v => v.ToName(), v => StockDocumentTypeNames.Parse(v));
+            e.Property(d => d.Status).HasMaxLength(20).HasConversion(v => v.ToName(), v => StockDocumentStatusNames.Parse(v));
+            e.Property(d => d.Number).HasMaxLength(StockDocument.NumberMaxLength);
+            e.Property(d => d.Reference).HasMaxLength(StockDocument.ReferenceMaxLength);
+            e.Property(d => d.Note).HasMaxLength(StockDocument.NoteMaxLength);
+            // Drafts have no number; PostgreSQL does not compare NULLs, so only posted documents are constrained.
+            e.HasIndex(d => new { d.TenantId, d.Number }).IsUnique();
+            e.HasAlternateKey(d => new { d.TenantId, d.Id });
+            e.HasMany(d => d.Lines).WithOne()
+                .HasForeignKey(l => new { l.TenantId, l.DocumentId })
+                .HasPrincipalKey(d => new { d.TenantId, d.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.Navigation(d => d.Lines).UsePropertyAccessMode(PropertyAccessMode.Field);
+            // Its index (TenantId, WarehouseId) also serves "documents by warehouse".
+            e.HasOne<Warehouse>().WithMany()
+                .HasForeignKey(d => new { d.TenantId, d.WarehouseId })
+                .HasPrincipalKey(w => new { w.TenantId, w.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<ApiKey>().WithMany()
+                .HasForeignKey(d => new { d.TenantId, d.CreatedBy })
+                .HasPrincipalKey(k => new { k.TenantId, k.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<ApiKey>().WithMany()
+                .HasForeignKey(d => new { d.TenantId, d.UpdatedBy })
+                .HasPrincipalKey(k => new { k.TenantId, k.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<ApiKey>().WithMany()
+                .HasForeignKey(d => new { d.TenantId, d.PostedBy })
+                .HasPrincipalKey(k => new { k.TenantId, k.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<StockDocumentLine>(e =>
+        {
+            e.ToTable("StockDocumentLines");
+            e.Property(l => l.Id).ValueGeneratedNever();
+            e.Property(l => l.Quantity).HasPrecision(18, QuantityRules.DecimalPlaces);
+            e.Ignore(l => l.Values);
+            e.HasIndex(l => new { l.TenantId, l.DocumentId, l.LineNo }).IsUnique();
+            // Its index (TenantId, ArticleId) also serves "is this article used".
+            e.HasOne<Article>().WithMany()
+                .HasForeignKey(l => new { l.TenantId, l.ArticleId })
+                .HasPrincipalKey(a => new { a.TenantId, a.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<StockLedgerEntry>(e =>
+        {
+            e.ToTable("StockLedgerEntries");
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.Quantity).HasPrecision(18, QuantityRules.DecimalPlaces);
+            // Stock on hand is a sum over this index.
+            e.HasIndex(x => new { x.TenantId, x.ArticleId, x.WarehouseId });
+            e.HasIndex(x => new { x.TenantId, x.DocumentId, x.LineNo });
+            e.HasOne<Article>().WithMany()
+                .HasForeignKey(x => new { x.TenantId, x.ArticleId })
+                .HasPrincipalKey(a => new { a.TenantId, a.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<Warehouse>().WithMany()
+                .HasForeignKey(x => new { x.TenantId, x.WarehouseId })
+                .HasPrincipalKey(w => new { w.TenantId, w.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<StockDocument>().WithMany()
+                .HasForeignKey(x => new { x.TenantId, x.DocumentId })
+                .HasPrincipalKey(d => new { d.TenantId, d.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<ApiKey>().WithMany()
+                .HasForeignKey(x => new { x.TenantId, x.PostedBy })
+                .HasPrincipalKey(k => new { k.TenantId, k.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<DocumentCounter>(e =>
+        {
+            e.ToTable("DocumentCounters");
+            e.HasKey(c => new { c.TenantId, c.DocumentType });
+            e.Property(c => c.DocumentType).HasMaxLength(20);
+        });
+
         // Applied by type, not by hand, so a new tenant-owned entity cannot be forgotten.
         var configure = typeof(XerpDbContext).GetMethod(nameof(ConfigureTenantOwned), BindingFlags.Instance | BindingFlags.NonPublic)!;
         foreach (var entityType in modelBuilder.Model.GetEntityTypes().Where(t => typeof(ITenantOwned).IsAssignableFrom(t.ClrType)).ToList())
@@ -187,6 +276,9 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         EnforceTenant();
+        if (EnforcePostedIsImmutable() is { Count: > 0 } documentIds
+            && StockDocuments.Any(d => documentIds.Contains(d.Id) && d.Status == StockDocumentStatus.Posted))
+            throw PostedDocumentChanged();
         try
         {
             return base.SaveChanges(acceptAllChangesOnSuccess);
@@ -200,6 +292,9 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
     public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
         EnforceTenant();
+        if (EnforcePostedIsImmutable() is { Count: > 0 } documentIds
+            && await StockDocuments.AnyAsync(d => documentIds.Contains(d.Id) && d.Status == StockDocumentStatus.Posted, cancellationToken))
+            throw PostedDocumentChanged();
         try
         {
             return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
@@ -227,6 +322,41 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
                 throw new InvalidOperationException($"Cannot save {entry.Metadata.ClrType.Name}: it belongs to another tenant.");
         }
     }
+
+    /// <summary>
+    /// Spec 005, S3: the ledger is append-only and a posted document is immutable, whatever code asks for the
+    /// save. Throws for a modified or deleted ledger entry and for a change to a posted document or its lines
+    /// when the document is tracked; returns the ids of documents that are not tracked but whose lines are
+    /// being changed, for the caller to look up.
+    /// </summary>
+    private List<Guid> EnforcePostedIsImmutable()
+    {
+        if (ChangeTracker.Entries<StockLedgerEntry>().Any(e => e.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Stock ledger entries are append-only: they cannot be changed or deleted.");
+
+        var documents = ChangeTracker.Entries<StockDocument>().ToDictionary(d => d.Entity.Id);
+        if (documents.Values.Any(d => d.State is EntityState.Modified or EntityState.Deleted
+                && d.Property(x => x.Status).OriginalValue == StockDocumentStatus.Posted))
+            throw PostedDocumentChanged();
+
+        var untracked = new List<Guid>();
+        foreach (var line in ChangeTracker.Entries<StockDocumentLine>())
+        {
+            if (line.State is not (EntityState.Added or EntityState.Modified or EntityState.Deleted))
+                continue;
+            foreach (var documentId in new[] { line.Property(l => l.DocumentId).OriginalValue, line.Property(l => l.DocumentId).CurrentValue }.Distinct())
+            {
+                if (!documents.TryGetValue(documentId, out var document))
+                    untracked.Add(documentId);
+                else if (document.State != EntityState.Added && document.Property(x => x.Status).OriginalValue == StockDocumentStatus.Posted)
+                    throw PostedDocumentChanged();
+            }
+        }
+        return untracked;
+    }
+
+    private static InvalidOperationException PostedDocumentChanged() =>
+        new("A posted stock document and its lines are immutable.");
 
     /// <summary>
     /// Constraint violations that Application has an answer for (CODE_TAKEN, REFERENCE_NOT_FOUND, IN_USE),
