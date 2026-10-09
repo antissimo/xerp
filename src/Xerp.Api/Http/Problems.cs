@@ -27,7 +27,8 @@ public static class Problems
         ErrorCodes.NotFound => StatusCodes.Status404NotFound,
         ErrorCodes.CodeTaken or ErrorCodes.InUse or ErrorCodes.InvalidState or ErrorCodes.CannotRevokeSelf
             or ErrorCodes.ReferenceNotFound or ErrorCodes.ReferenceInactive
-            or ErrorCodes.InsufficientStock or ErrorCodes.ArticleNotStocked => StatusCodes.Status409Conflict,
+            or ErrorCodes.InsufficientStock or ErrorCodes.ArticleNotStocked
+            or ErrorCodes.UnitIsBaseUnit or ErrorCodes.UnitNotOnArticle or ErrorCodes.QuantityNotConvertible => StatusCodes.Status409Conflict,
         _ => StatusCodes.Status500InternalServerError,
     };
 

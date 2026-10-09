@@ -15,6 +15,9 @@ public static class ErrorCodes
     public const string InvalidState = "INVALID_STATE";
     public const string InsufficientStock = "INSUFFICIENT_STOCK";
     public const string ArticleNotStocked = "ARTICLE_NOT_STOCKED";
+    public const string UnitIsBaseUnit = "UNIT_IS_BASE_UNIT";
+    public const string UnitNotOnArticle = "UNIT_NOT_ON_ARTICLE";
+    public const string QuantityNotConvertible = "QUANTITY_NOT_CONVERTIBLE";
     public const string InternalError = "INTERNAL_ERROR";
 }
 

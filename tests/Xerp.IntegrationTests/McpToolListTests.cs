@@ -10,6 +10,7 @@ namespace Xerp.IntegrationTests;
 /// Spec 003, AC-40 to AC-45 (tool list and metadata) and AC-03 (MCP tools hold no data access).
 /// Spec 004, AC-90 to AC-93: the list grows to 24 tools; the ten new ones have the same metadata rules.
 /// Spec 005, AC-80: the list grows to 32 tools; the eight stock tools have the same metadata rules.
+/// Spec 006, AC-80: 33 tools. Spec 007, AC-80: 37 tools, a <c>lines</c> item gains <c>unitId</c>.
 /// </summary>
 [Collection(XerpCollection.Name)]
 public class McpToolListTests(XerpFixture app)
@@ -19,7 +20,7 @@ public class McpToolListTests(XerpFixture app)
     private static readonly string[] Address =
         ["addressLine1", "addressLine2", "postalCode", "city", "region", "countryCode"];
 
-    // Spec 003, section 5.3.
+    // Spec 003, section 5.3, with the argument spec 007, section 5, adds to article_list (alternativeUnitId).
     private static readonly Expected[] Spec003Tools =
     [
         new("whoami", [], [], "read"),
@@ -28,7 +29,7 @@ public class McpToolListTests(XerpFixture app)
         new("uom_create", ["code", "name", "isActive"], ["code", "name"], "create"),
         new("uom_update", ["id", "code", "name", "isActive"], ["id", "code", "name", "isActive"], "update"),
         new("uom_delete", ["id"], ["id"], "delete"),
-        new("article_list", ["search", "type", "baseUnitId", "isActive", "limit", "offset"], [], "read"),
+        new("article_list", ["search", "type", "baseUnitId", "alternativeUnitId", "isActive", "limit", "offset"], [], "read"),
         new("article_get", ["id", "code"], [], "read"),
         new("article_create", ["code", "name", "type", "baseUnitId", "description", "isActive"],
             ["code", "name", "type", "baseUnitId"], "create"),
@@ -79,8 +80,18 @@ public class McpToolListTests(XerpFixture app)
         new("stock_document_reverse", ["id", "documentDate", "note"], ["id", "documentDate"], "post"),
     ];
 
-    // The complete list (spec 004, section 5.3; spec 005 and 006, section 5): a new tool must be added here by its spec.
-    private static readonly Expected[] Tools = [.. Spec003Tools, .. Spec004Tools, .. Spec005Tools, .. Spec006Tools];
+    // Spec 007, section 5. article_unit_set creates or replaces: annotated as an update.
+    private static readonly Expected[] Spec007Tools =
+    [
+        new("article_unit_list", ["articleId", "limit", "offset"], ["articleId"], "read"),
+        new("article_unit_get", ["articleId", "unitId"], ["articleId", "unitId"], "read"),
+        new("article_unit_set", ["articleId", "unitId", "factor"], ["articleId", "unitId", "factor"], "update"),
+        new("article_unit_delete", ["articleId", "unitId"], ["articleId", "unitId"], "delete"),
+    ];
+
+    // The complete list (spec 004, section 5.3; specs 005 to 007, section 5): a new tool must be added here by its spec.
+    private static readonly Expected[] Tools =
+        [.. Spec003Tools, .. Spec004Tools, .. Spec005Tools, .. Spec006Tools, .. Spec007Tools];
 
     private async Task<Dictionary<string, Tool>> ListToolsAsync(string? key = null)
     {
@@ -93,7 +104,7 @@ public class McpToolListTests(XerpFixture app)
     private static string[] Sorted(IEnumerable<string> values) => values.Order(StringComparer.Ordinal).ToArray();
 
     [Fact]
-    public async Task AC40_S004_AC90_S005_AC80_S006_AC80_Tool_list_is_exactly_the_33_tools_of_the_specs()
+    public async Task AC40_S004_AC90_S005_AC80_S006_AC80_S007_AC80_Tool_list_is_exactly_the_37_tools_of_the_specs()
     {
         var tools = await ListToolsAsync();
 
@@ -101,7 +112,8 @@ public class McpToolListTests(XerpFixture app)
         Assert.Equal(10, Spec004Tools.Length);
         Assert.Equal(8, Spec005Tools.Length);
         Assert.Single(Spec006Tools);
-        Assert.Equal(33, Tools.Length);
+        Assert.Equal(4, Spec007Tools.Length);
+        Assert.Equal(37, Tools.Length);
         Assert.Equal(Sorted(Tools.Select(t => t.Name)), Sorted(tools.Keys));
         Assert.DoesNotContain("api_key_create", tools.Keys);
         Assert.DoesNotContain(tools.Keys, name => name.StartsWith("tenant", StringComparison.OrdinalIgnoreCase));
@@ -200,9 +212,10 @@ public class McpToolListTests(XerpFixture app)
     [Theory]
     [InlineData("stock_document_create")]
     [InlineData("stock_document_update")]
-    public async Task S005_AC80_Lines_is_an_array_of_closed_article_and_quantity_objects(string toolName)
+    public async Task S005_AC80_S007_AC80_Lines_is_an_array_of_closed_article_quantity_and_unit_objects(string toolName)
     {
-        // Section 5: "lines is an array of { articleId: uuid, quantity: number } objects (closed schema)".
+        // Spec 005, section 5: "lines is an array of { articleId: uuid, quantity: number } objects (closed schema)".
+        // Spec 007, section 5: "a lines item is { articleId, quantity, unitId? } (unitId: uuid or null)".
         var tools = await ListToolsAsync();
 
         Assert.True(tools.TryGetValue(toolName, out var tool), $"Tool '{toolName}' is not listed.");
@@ -213,11 +226,45 @@ public class McpToolListTests(XerpFixture app)
         Assert.True(items.TryGetProperty("additionalProperties", out var additional)
             && additional.ValueKind == JsonValueKind.False, $"{toolName}.lines: the line schema is not closed: {items}");
         var properties = items.GetProperty("properties");
-        Assert.Equal(["articleId", "quantity"], Sorted(properties.EnumerateObject().Select(p => p.Name)));
+        Assert.Equal(["articleId", "quantity", "unitId"], Sorted(properties.EnumerateObject().Select(p => p.Name)));
         Assert.Equal(["articleId", "quantity"], Sorted(items.GetProperty("required").EnumerateArray().Select(r => r.GetString()!)));
         var quantity = SchemaTypes(properties.GetProperty("quantity"));
         Assert.True(quantity.Contains("number") && !quantity.Contains("string"),
             $"{toolName}.lines[].quantity must be a JSON number: {properties.GetProperty("quantity")}");
+        var unitId = properties.GetProperty("unitId");
+        Assert.True(unitId.TryGetProperty("description", out var description) && !string.IsNullOrWhiteSpace(description.GetString()),
+            $"{toolName}.lines[].unitId has no description: {unitId}");
+        var unitTypes = SchemaTypes(unitId);
+        Assert.True(unitTypes.Contains("string") && unitTypes.Contains("null"),
+            $"{toolName}.lines[].unitId must allow a string and null: {unitId}");
+    }
+
+    [Fact]
+    public async Task S007_AC80_Article_unit_tools_have_description_closed_input_schema_output_schema_and_annotations()
+    {
+        var tools = await ListToolsAsync();
+
+        AssertMetadata(tools, Spec007Tools);
+        AssertAnnotations(tools, Spec007Tools);
+        var set = tools["article_unit_set"];
+        var factor = SchemaTypes(set.InputSchema.GetProperty("properties").GetProperty("factor"));
+        Assert.True(factor.Contains("number") && !factor.Contains("string"), "article_unit_set.factor must be a JSON number.");
+        Assert.True(set.Annotations!.DestructiveHint);
+        Assert.True(set.Annotations.IdempotentHint);
+    }
+
+    [Fact]
+    public async Task S007_AC80_Article_list_has_a_described_optional_alternativeUnitId()
+    {
+        var tools = await ListToolsAsync();
+
+        Assert.True(tools.TryGetValue("article_list", out var tool), "Tool 'article_list' is not listed.");
+        Assert.True(tool!.InputSchema.GetProperty("properties").TryGetProperty("alternativeUnitId", out var property),
+            "article_list has no alternativeUnitId property.");
+        Assert.True(property.TryGetProperty("description", out var description) && !string.IsNullOrWhiteSpace(description.GetString()),
+            "article_list.alternativeUnitId has no description.");
+        if (tool.InputSchema.TryGetProperty("required", out var required))
+            Assert.DoesNotContain("alternativeUnitId", required.EnumerateArray().Select(r => r.GetString()));
     }
 
     /// <summary>Follows a local <c>$ref</c> (<c>#/$defs/Name</c>) inside the tool's input schema.</summary>

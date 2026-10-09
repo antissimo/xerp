@@ -14,14 +14,34 @@ public static class RecordAddress
 {
     /// <summary>
     /// Null when <paramref name="id"/> is a UUID. Otherwise the error: a missing id is a validation error
-    /// under <c>id</c>; a text that is not a UUID is <c>NOT_FOUND</c>.
+    /// under the argument's name; a text that is not a UUID is <c>NOT_FOUND</c>.
     /// </summary>
-    public static AppError? Id(string? id, string notFoundDetail, out Guid value)
+    /// <param name="name">The name of the addressing argument: <c>id</c>, or <c>articleId</c> / <c>unitId</c> where a record is addressed by two ids (spec 007, section 5).</param>
+    public static AppError? Id(string? id, string notFoundDetail, out Guid value, string name = "id")
     {
         value = default;
         if (string.IsNullOrEmpty(id))
-            return AppError.Validation("id", "id is required.");
+            return AppError.Validation(name, $"{name} is required.");
         return Guid.TryParse(id, out value) ? null : AppError.NotFound(notFoundDetail);
+    }
+
+    /// <summary>
+    /// As <see cref="Id"/> for a record addressed by two ids: every missing one is reported, each under its own
+    /// name; only then does a text that is not a UUID make the record <c>NOT_FOUND</c>.
+    /// </summary>
+    public static AppError? Ids(
+        string? first, string firstName, out Guid firstValue, string? second, string secondName, out Guid secondValue, string notFoundDetail)
+    {
+        firstValue = default;
+        secondValue = default;
+        var missing = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        if (string.IsNullOrEmpty(first))
+            missing[firstName] = [$"{firstName} is required."];
+        if (string.IsNullOrEmpty(second))
+            missing[secondName] = [$"{secondName} is required."];
+        if (missing.Count > 0)
+            return AppError.Validation(missing);
+        return Guid.TryParse(first, out firstValue) && Guid.TryParse(second, out secondValue) ? null : AppError.NotFound(notFoundDetail);
     }
 
     /// <summary>
