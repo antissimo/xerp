@@ -525,7 +525,7 @@ public class PurchaseReceiptTests(XerpFixture app)
         await Stock.PostDocumentAsync(s.Http, (await O.CreateDocumentAsync(s.Http, s.W1, order.Id(),
             (s.B, 20, 2, null), (s.A, 12.5m, 3, null), (s.A, 1, 3, s.Box))).Id());                      // line 2: 20, line 3: 24.5
         var reversed = await O.FulfilAsync(s.Http, order, 2, 30);                                   // line 2: 50 …
-        await Stock.ReverseAsync(s.Http, reversed.Id());                                            // … and back to 20
+        await Stock.ReverseAsync(s.Http, reversed.Id(), Stock.NextDay); // … and back to 20
         await O.FulfilAsync(s.Http, order, 1, 30);                                                  // line 1: 66
         await O.FulfilAsync(s.Http, order, 2, 0.000001m);                                           // line 2: 20.000001
         var left = await O.DraftDocumentAsync(s.Http, order, 3, 5);                                 // a draft: nothing
