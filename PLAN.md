@@ -3,7 +3,14 @@
 Glavni pregled petlje arhitekt -> tester -> builder -> review -> merge. Redoslijed koraka dolazi iz
 `docs/roadmap.md` (piše ga arhitekt); ovaj dokument vodi orkestrator i ažurira ga nakon svakog koraka.
 
-Zadnje ažuriranje: 2026-10-09 09:10
+Zadnje ažuriranje: 2026-10-09 09:35
+
+## Opseg MVP-a
+
+Odluka vlasnika (2026-10-09): rad se ograničava na MVP. Prijedlog granice (orkestrator, čeka potvrdu vlasnika):
+**MVP = specovi 001–010** — matični podaci, MCP sučelje, zalihe (primke, izdatnice, međuskladišnice, storno,
+preračun jedinica, inventura), nabava i prodaja. Sve od 011 nadalje (vrednovanje, računovodstvo, računi,
+plaćanja, platforma) je nakon MVP-a i petlja ga ne radi dok vlasnik ne kaže.
 
 ## Koraci po specifikaciji
 
@@ -21,14 +28,15 @@ Oznake: ✅ gotovo · 🔄 u tijeku · ⬜ nije započeto · — ne primjenjuje 
 |---|---|:-:|:-:|:-:|:-:|:-:|
 | 001 | Temelj + jedinice mjere (slojevi, tenanti, API ključevi, model grešaka) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 002 | Artikli (matični podaci artikala) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 003 | MCP server + upravljanje API ključevima | ✅ | ✅ | ✅ | 🔄 | ⬜ |
-| 004 | Partneri i skladišta | ✅ | ✅ | ✅ | ⬜ | ⬜ |
+| 003 | MCP server + upravljanje API ključevima | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 004 | Partneri i skladišta | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 005 | Skladišna knjiga, primke i izdatnice | ✅ | ✅ | 🔄 | ⬜ | ⬜ |
-| 006 | Međuskladišnice i storno | ✅ | 🔄 | ⬜ | ⬜ | ⬜ |
-| 007 | Preračun jedinica mjere po artiklu | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 006 | Međuskladišnice i storno | ✅ | ✅ | ⬜ | ⬜ | ⬜ |
+| 007 | Preračun jedinica mjere po artiklu | ✅ | 🔄 | ⬜ | ⬜ | ⬜ |
 | 008 | Inventura / korekcija zaliha | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 009 | Narudžbe dobavljačima -> primka robe | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 009 | Narudžbe dobavljačima -> primka robe | 🔄 | ⬜ | ⬜ | ⬜ | ⬜ |
 | 010 | Prodajne narudžbe -> isporuka | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| | **— granica MVP-a — sve ispod je nakon MVP-a —** | | | | | |
 | 011 | Vrednovanje zaliha | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 012 | Kontni plan + temeljnice | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 013 | Brojčane serije dokumenata | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -44,9 +52,9 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 
 ## Što tko trenutno radi
 
-- **Arhitekt:** review speca 003.
+- **Arhitekt:** piše spec 009 (nabava).
 - **Builder:** implementacija speca 005 (grana `feat/005-stock-ledger-receipts-issues`).
-- **Tester:** usklađivanje testova 004 s odgovorima arhitekta, zatim testovi za spec 006.
+- **Tester:** usklađivanje grana s `main`om i odgovorima za 005, zatim testovi za 007 i 008.
 
 ## Dnevnik
 
@@ -58,6 +66,10 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 - 2026-10-09 — specovi 003–008 napisani; testovi za 003, 004, 005 napisani; kod za 003 gotov
   (172 unit + 376 integracijskih testova prolazi, provjerio orkestrator).
 - 2026-10-09 — kod za 004 gotov (builder javlja 234 unit + 632 integracijska testa, sve prolazi); čeka review.
+- 2026-10-09 — 003 prošao review (OK), spojen u `main` i pushan.
+- 2026-10-09 — 004 prošao review (OK; arhitekt sam pokrenuo 234 unit + 632 integracijska testa), spojen u `main` i pushan.
+- 2026-10-09 — testovi za 006 napisani (`tests/006-stock-transfers-reversal`).
+- 2026-10-09 — vlasnik ograničio opseg na MVP; lokalni model qwen3:4b isproban i odbačen (preslab).
 
 ## Odluke vlasnika
 

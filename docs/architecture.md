@@ -118,6 +118,13 @@ Rules:
   while `draft`, and changes state through action routes (`POST /<resource>/{id}/post`). A posted document is
   immutable and has a `number`, `postedAt`, `postedBy`; lookup by number is `GET /<resource>/by-number/{number}`.
   An error about a line is keyed `lines[i].<field>` with a zero-based index into the request's array.
+- Orders (ADR-0016): a purchase or sales order is a document that moves no stock. It is edited while `draft`,
+  gets its `number` when confirmed (`POST /<resource>/{id}/confirm`) and is then immutable; `close` and
+  `reopen` switch it between `confirmed` and `closed`. Goods are received or delivered by a stock document
+  linked to the order (`purchaseOrderId` / `salesOrderId` on the header, `orderLineNo` on each line); progress
+  per order line is kept in base units and never exceeds the ordered quantity.
+- Prices and amounts are exact decimals in the tenant's one currency: a unit price has at most 6 decimal
+  places; an amount is rounded to 2 decimal places, half away from zero.
 - Quantities are exact decimals sent as JSON numbers: at most 6 decimal places and 15 significant digits;
   a quoted number is a wrong type. Consumers compare numerically (`10` equals `10.000000`).
 
@@ -142,13 +149,17 @@ Every non-2xx response under `/api/v1` is `application/problem+json` (RFC 9457) 
 | 409 | `REFERENCE_NOT_FOUND` | A `<role>Id` in the body is well-formed but no such record exists in this tenant (also: other tenant's record). `errors` has the field's key. |
 | 409 | `REFERENCE_INACTIVE` | A `<role>Id` in the body points at an inactive record that is being newly assigned. `errors` has the field's key. |
 | 409 | `CANNOT_REVOKE_SELF` | An API key tried to revoke itself. |
-| 409 | `INVALID_STATE` | Operation not allowed in the document's current status (e.g. replace, delete or post of a posted document; reversal of a draft, of a reversed or of a reversing document). |
+| 409 | `INVALID_STATE` | Operation not allowed in the document's current status (e.g. replace, delete or post of a posted document; reversal of a draft, of a reversed or of a reversing document; replace of a confirmed order; close of a draft order). |
 | 409 | `INSUFFICIENT_STOCK` | Posting would make stock on hand negative. `errors` has `lines[i].quantity` for the short lines. |
 | 409 | `ARTICLE_NOT_STOCKED` | A stock document line names a `service` article. `errors` has `lines[i].articleId`. |
 | 409 | `UNIT_IS_BASE_UNIT` | A unit conversion was set for the article's own base unit (spec 007). `errors` has `unitId`. |
 | 409 | `UNIT_NOT_ON_ARTICLE` | A document line's unit is neither the base unit nor an alternative unit of its article. `errors` has `lines[i].unitId`. |
 | 409 | `QUANTITY_NOT_CONVERTIBLE` | A line's quantity converts to a base quantity of zero or above the maximum. `errors` has `lines[i].quantity`. |
 | 409 | `COUNT_OUTDATED` | Posting a stock count whose book quantity no longer equals stock on hand (spec 008). `errors` has `lines[i].quantity` for the outdated lines. |
+| 409 | `PARTNER_ROLE_MISSING` | The partner named on an order lacks the role the order needs (`isSupplier` / `isCustomer`). `errors` has `supplierId` / `customerId`. |
+| 409 | `ORDER_NOT_OPEN` | A stock document is saved or posted against an order that is not `confirmed`. `errors` has `purchaseOrderId` / `salesOrderId`. |
+| 409 | `ORDER_MISMATCH` | A stock document linked to an order names another warehouse, or a line's article is not its order line's. `errors` has `warehouseId` and/or `lines[i].articleId`. |
+| 409 | `QUANTITY_EXCEEDS_ORDER` | Posting would take an order line above its ordered quantity. `errors` has `lines[i].quantity` for the lines linked to it. |
 | 500 | `INTERNAL_ERROR` | Unexpected. No stack trace or SQL in the body. |
 
 `code` values are part of the contract: clients and tests branch on `code`, never on `detail` text.
@@ -199,7 +210,8 @@ MCP maps the same error to a tool error with the same `code` (shape in section 7
   another tenant, and an API key that has written anything can be revoked but never deleted (ADR-0010).
 - Ledger tables (stock ledger from spec 005; journal lines later) are append-only: no `UPDATE`, no `DELETE`;
   corrections are reversing entries (ADR-0007). Stock on hand is the sum of the stock ledger and is never
-  negative (ADR-0012). Document numbers are gapless per tenant and document type and are assigned at posting.
+  negative (ADR-0012). Document numbers are gapless per tenant and document type and are assigned at posting
+  (stock documents) or at confirmation (orders).
 
 ## 9. Testing (ADR-0006)
 
@@ -223,6 +235,12 @@ MCP maps the same error to a tool error with the same `code` (shape in section 7
   container and run in parallel.
 - Each acceptance criterion maps to at least one named test. Each feature has a tenant-isolation test, over
   HTTP and over MCP.
+- **Inventory tests.** A test that holds a complete list of what exists (the literal tool list, a count of
+  catalogue entries) is updated by whoever adds to the inventory; the spec that defines the addition approves
+  it, and no separate approval is needed. Removing a name or an assertion still needs explicit approval.
+  The tool list stays literal on purpose: an extra or missing tool must fail the build.
+- The table test holds no literal list: it reads the tables from the database, asserts the tenant invariant
+  (section 3) on every table except `Tenants`, and asserts that the tables the specs name are among them.
 
 ## 10. Build environment constraint
 
