@@ -59,8 +59,8 @@ public class ArticleStructureTests(XerpFixture app)
     {
         var a = await app.NewTenantAsync();
         var b = await app.NewTenantAsync();
-        var unitA = await Art.UnitAsync(a.Client);
-        var unitB = await Art.UnitAsync(b.Client);
+        var unitA = await ArticleApi.UnitAsync(a.Client);
+        var unitB = await ArticleApi.UnitAsync(b.Client);
         var id = Guid.CreateVersion7();
 
         var crossTenant = await Assert.ThrowsAsync<Npgsql.PostgresException>(() => app.ExecuteSqlAsync(InsertArticle,
@@ -77,8 +77,8 @@ public class ArticleStructureTests(XerpFixture app)
     public async Task AC06_Database_refuses_to_delete_a_unit_that_an_article_references()
     {
         var tenant = await app.NewTenantAsync();
-        var unit = await Art.UnitAsync(tenant.Client);
-        var article = await Art.CreateAsync(tenant.Client, "A1", "Bolt", unit);
+        var unit = await ArticleApi.UnitAsync(tenant.Client);
+        var article = await ArticleApi.CreateAsync(tenant.Client, "A1", "Bolt", unit);
 
         var blocked = await Assert.ThrowsAsync<Npgsql.PostgresException>(() =>
             app.ExecuteSqlAsync("""DELETE FROM "UnitsOfMeasure" WHERE "Id" = @id""", ("id", unit)));
@@ -96,8 +96,8 @@ public class ArticleStructureTests(XerpFixture app)
         // The deterministic half of the AC-85 race: the Application pre-check is bypassed, so only the
         // database can refuse, and Infrastructure must report it as a blocked delete (ADR-0008, decision 6).
         var tenant = await app.NewTenantAsync();
-        var unit = await Art.UnitAsync(tenant.Client);
-        await Art.CreateAsync(tenant.Client, "A1", "Bolt", unit);
+        var unit = await ArticleApi.UnitAsync(tenant.Client);
+        await ArticleApi.CreateAsync(tenant.Client, "A1", "Bolt", unit);
 
         await using var db = new XerpDbContext(
             new DbContextOptionsBuilder<XerpDbContext>().UseNpgsql(app.ConnectionString).Options,
@@ -115,8 +115,8 @@ public class ArticleStructureTests(XerpFixture app)
     public async Task T5_Database_rejects_duplicate_article_codes_on_its_own()
     {
         var tenant = await app.NewTenantAsync();
-        var unit = await Art.UnitAsync(tenant.Client);
-        await Art.CreateAsync(tenant.Client, "ART-1", "Bolt", unit);
+        var unit = await ArticleApi.UnitAsync(tenant.Client);
+        await ArticleApi.CreateAsync(tenant.Client, "ART-1", "Bolt", unit);
 
         var duplicate = await Assert.ThrowsAsync<Npgsql.PostgresException>(() => app.ExecuteSqlAsync(InsertArticle,
             ("id", Guid.CreateVersion7()), ("tenant", tenant.Id), ("code", "art-1"), ("unit", unit), ("key", tenant.ApiKeyId)));
@@ -128,14 +128,14 @@ public class ArticleStructureTests(XerpFixture app)
     public async Task AC98_Every_new_kind_of_error_is_a_problem_with_code_status_title_and_detail()
     {
         var tenant = await app.NewTenantAsync();
-        var unit = await Art.UnitAsync(tenant.Client);
-        var inactive = await Art.UnitAsync(tenant.Client, "old", "Obsolete", isActive: false);
-        await Art.CreateAsync(tenant.Client, "A1", "Bolt", unit);
+        var unit = await ArticleApi.UnitAsync(tenant.Client);
+        var inactive = await ArticleApi.UnitAsync(tenant.Client, "old", "Obsolete", isActive: false);
+        await ArticleApi.CreateAsync(tenant.Client, "A1", "Bolt", unit);
 
-        using var notFound = await Art.PostAsync(tenant.Client, "A2", "Nut", Guid.CreateVersion7());
-        using var referenceInactive = await Art.PostAsync(tenant.Client, "A2", "Nut", inactive);
+        using var notFound = await ArticleApi.PostAsync(tenant.Client, "A2", "Nut", Guid.CreateVersion7());
+        using var referenceInactive = await ArticleApi.PostAsync(tenant.Client, "A2", "Nut", inactive);
         using var inUse = await tenant.Client.DeleteAsync($"{Uom.Path}/{unit}");
-        using var validation = await Art.PostAsync(tenant.Client, "a b", "Bad", unit);
+        using var validation = await ArticleApi.PostAsync(tenant.Client, "a b", "Bad", unit);
 
         // HttpAssert.ProblemAsync checks content type, code, status, title and detail for each of them.
         Assert.Equal("REFERENCE_NOT_FOUND", (await HttpAssert.ReferenceNotFoundAsync(notFound, "baseUnitId")).Str("title"));

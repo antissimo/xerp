@@ -45,6 +45,15 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
             e.Property(k => k.ActorType).HasMaxLength(10).HasConversion(v => v.ToName(), v => ActorTypeNames.Parse(v));
             e.Property(k => k.KeyHash).HasMaxLength(64);
             e.HasIndex(k => k.KeyHash).IsUnique();
+            // Provenance of a key (spec 003, section 3): audit columns like any other, so they include TenantId.
+            e.HasOne<ApiKey>().WithMany()
+                .HasForeignKey(k => new { k.TenantId, k.CreatedBy })
+                .HasPrincipalKey(k => new { k.TenantId, k.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<ApiKey>().WithMany()
+                .HasForeignKey(k => new { k.TenantId, k.RevokedBy })
+                .HasPrincipalKey(k => new { k.TenantId, k.Id })
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<UnitOfMeasure>(e =>
@@ -104,6 +113,18 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
         var entity = modelBuilder.Entity<T>();
         entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
         entity.HasOne<Tenant>().WithMany().HasForeignKey(e => e.TenantId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    public async Task<T> SerializedPerTenantAsync<T>(Func<CancellationToken, Task<T>> work, CancellationToken cancellationToken = default)
+    {
+        var tenantId = CurrentTenantId ?? throw new InvalidOperationException("There is no current tenant to serialise work for.");
+        await using var transaction = await Database.BeginTransactionAsync(cancellationToken);
+        // A row lock on the tenant: it conflicts only with itself, not with the key-share locks that
+        // foreign-key checks of ordinary writes take on the same row.
+        await Database.ExecuteSqlAsync($"""SELECT 1 FROM "Tenants" WHERE "Id" = {tenantId} FOR NO KEY UPDATE""", cancellationToken);
+        var result = await work(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return result;
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
