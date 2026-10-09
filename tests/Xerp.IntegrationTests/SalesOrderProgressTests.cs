@@ -172,6 +172,41 @@ public class SalesOrderProgressTests(XerpFixture app)
         await AssertOnHandAsync(s.Http, s.A, s.W1, quantity: 93m, reserved: 3m);
     }
 
+    [Fact]
+    public async Task AC60_R1_A_fully_delivered_order_can_be_closed_and_reopening_it_opens_nothing()
+    {
+        // 009/R15 mirrored (010-q.md, T-Q2): an order is closed whatever was delivered.
+        var s = await Orders.SetupAsync(app);
+        await Stock.ReceiveAsync(s.Http, s.W1, s.A, 100);
+        await Stock.ReceiveAsync(s.Http, s.W1, s.B, 100);
+        var order = await O.OrderedAsync(s, (s.A, 10, null, 1m), (s.B, 2, null, 1m));
+        await Stock.PostDocumentAsync(s.Http, (await O.CreateDocumentAsync(s.Http, s.W1, order.Id(), (s.B, 2, 2, null), (s.A, 10, 1, null))).Id());
+        await O.AssertProgressAsync(s.Http, order.Id(), "confirmed", "full", (10m, 0m), (2m, 0m));
+        var before = await O.GetAsync(s.Http, order.Id());
+        await AssertOnHandAsync(s.Http, s.A, s.W1, quantity: 90m, reserved: 0m);
+
+        var closed = await O.CloseAsync(s.Http, order.Id());
+
+        Assert.Equal("closed", closed.Str("status"));
+        Assert.Equal(JsonValueKind.String, closed.GetProperty("closedAt").ValueKind);
+        await O.AssertProgressAsync(s.Http, order.Id(), "closed", "full", (10m, 0m), (2m, 0m));
+        await AssertOnHandAsync(s.Http, s.A, s.W1, quantity: 90m, reserved: 0m);
+        await AssertOnHandAsync(s.Http, s.B, s.W1, quantity: 98m, reserved: 0m);
+        using var onClosed = await Stock.PostAsync(s.Http, O.Document(s.W1, order.Id(), (s.A, 1, 1, null)));
+        Assert.Equal(new[] { "salesOrderId" }, McpAssert.ErrorKeys(await Stock.ConflictAsync(onClosed, "ORDER_NOT_OPEN", "salesOrderId")));
+
+        // A fully delivered order is not closed by itself, and reopening it reserves and opens nothing.
+        var reopened = await O.ReopenAsync(s.Http, order.Id());
+
+        McpAssert.JsonEqual(before, reopened, "Close and reopen changed the order");
+        await O.AssertProgressAsync(s.Http, order.Id(), "confirmed", "full", (10m, 0m), (2m, 0m));
+        await AssertOnHandAsync(s.Http, s.A, s.W1, quantity: 90m, reserved: 0m);
+        var (_, above) = await O.TryFulfilAsync(s.Http, order, 1, 1);
+        await Stock.ConflictAsync(above, "QUANTITY_EXCEEDS_ORDER", "lines[0].quantity");
+        above.Dispose();
+        Assert.Equal(90m, await Stock.QuantityAsync(s.Http, s.A, s.W1));
+    }
+
     // ---- AC-70 to AC-72 ----
 
     [Fact]
