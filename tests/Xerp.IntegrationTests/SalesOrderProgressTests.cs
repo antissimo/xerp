@@ -251,7 +251,7 @@ public class SalesOrderProgressTests(XerpFixture app)
         var delivery = await O.FulfilAsync(s.Http, order, 1, 10);
         Assert.Null(await Orders.OnHandItemAsync(s.Http, s.A, s.W1));
 
-        await Stock.ReverseAsync(s.Http, delivery.Id());
+        await Stock.ReverseAsync(s.Http, delivery.Id(), Stock.NextDay);
 
         await O.AssertProgressAsync(s.Http, order.Id(), "confirmed", "none", (0m, 10m));
         await AssertOnHandAsync(s.Http, s.A, s.W1, quantity: 10m, reserved: 10m);
@@ -267,7 +267,7 @@ public class SalesOrderProgressTests(XerpFixture app)
         await O.FulfilAsync(s.Http, order, 1, 1);
         var closed = await O.CloseAsync(s.Http, order.Id());
 
-        using var response = await Stock.SendReverseAsync(s.Http, delivery.Id());
+        using var response = await Stock.SendReverseAsync(s.Http, delivery.Id(), Stock.NextDay);
 
         O.AssertLinked(await HttpAssert.JsonAsync(response, HttpStatusCode.Created), order);
         var after = await O.AssertProgressAsync(s.Http, order.Id(), "closed", "partial", (1m, 0m));
@@ -286,7 +286,7 @@ public class SalesOrderProgressTests(XerpFixture app)
         await Stock.ReceiveAsync(s.Http, s.W1, s.A, 100);
         var order = await O.OrderedAsync(s, (s.A, 10, null, 1m));
         var delivery = await O.FulfilAsync(s.Http, order, 1, 4);
-        var reversing = await Stock.ReverseAsync(s.Http, delivery.Id());
+        var reversing = await Stock.ReverseAsync(s.Http, delivery.Id(), Stock.NextDay);
         var original = await Stock.GetAsync(s.Http, delivery.Id());
         Assert.Equal("reversed", original.Str("status"));
 
@@ -560,7 +560,7 @@ public class SalesOrderProgressTests(XerpFixture app)
         Assert.Equal(180m, delivered.Dec("totalAmount"));
         Assert.Equal(150m, (await Po.GetAsync(s.Http, purchase.Id())).Dec("totalAmount"));
 
-        await Stock.ReverseAsync(s.Http, second.Id());
+        await Stock.ReverseAsync(s.Http, second.Id(), Stock.NextDay);
 
         Assert.Equal(35m, await Stock.QuantityAsync(s.Http, s.A, s.W1));
         await O.AssertProgressAsync(s.Http, sales.Id(), "confirmed", "partial", (25m, 15m));
