@@ -3,7 +3,7 @@
 Glavni pregled petlje arhitekt -> tester -> builder -> review -> merge. Redoslijed koraka dolazi iz
 `docs/roadmap.md` (piše ga arhitekt); ovaj dokument vodi orkestrator i ažurira ga nakon svakog koraka.
 
-Zadnje ažuriranje: 2026-10-09 16:10
+Zadnje ažuriranje: 2026-10-09 16:20
 
 ## Opseg MVP-a
 
@@ -32,7 +32,7 @@ Oznake: ✅ gotovo · 🔄 u tijeku · ⬜ nije započeto · — ne primjenjuje 
 | 004 | Partneri i skladišta | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 005 | Skladišna knjiga, primke i izdatnice | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 006 | Međuskladišnice i storno | ✅ | ✅ | ✅ | 🔄 | ⬜ |
-| 007 | Preračun jedinica mjere po artiklu | ✅ | ✅ | 🔄 | ⬜ | ⬜ |
+| 007 | Preračun jedinica mjere po artiklu | ✅ | ✅ | ✅ | ⬜ | ⬜ |
 | 008 | Inventura / korekcija zaliha | ✅ | ✅ | ⬜ | ⬜ | ⬜ |
 | 009 | Narudžbe dobavljačima -> primka robe | ✅ | 🔄 | ⬜ | ⬜ | ⬜ |
 | 010 | Prodajne narudžbe -> isporuka | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -53,7 +53,7 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 ## Što tko trenutno radi
 
 - **Arhitekt:** čeka ispravak 006 za ponovni review.
-- **Builder:** implementacija speca 007; zatim ispravak iz reviewa 006.
+- **Builder:** ispravak iz reviewa 006, prijenos u 007, zatim spec 008 (inventura).
 - **Tester:** testovi za 009 (nabava), zatim 010 (prodaja).
 
 ## Dnevnik
@@ -78,6 +78,7 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 - 2026-10-09 — kod za 006 gotov (međuskladišnice i storno); na reviewu.
 - 2026-10-09 — nakon reseta limita sva tri agenta pokrenuta iznova (svježe sesije): review 006, kod 007, testovi 009/010.
 - 2026-10-09 — review 006: tražen jedan mali ispravak (neaktivno skladište u zaglavlju mora se prijaviti samo, bez stavki); testovi prolaze (330 unit + 880 integracijskih).
+- 2026-10-09 — kod za 007 gotov (preračun jedinica mjere); otvorene stavke reviewa skupljene u `docs/reviews/open-items.md`.
 
 ## Odluke vlasnika
 
