@@ -152,6 +152,8 @@ After this spec `tools/list` returns exactly 24 tools: the 14 of spec 003 §5.3 
 The tool-list test written for 003/AC-40 holds the list literally and therefore changes in this spec: the
 tester replaces the expected list with the 24 names (AC-90). This is a change of a test because the contract
 changed and is approved here; no other existing test may change.
+Inventory tests in general (the table list of 001/AC-06, counts of catalogue entries) follow
+`docs/architecture.md` §9: additions a spec names are approved by that spec (004-q, B-Q1).
 
 ## 6. Business rules
 
@@ -199,6 +201,8 @@ Partners
 - R14. `isCustomer` and `isSupplier` are optional on create (default `false` each) and required on replace.
 - R15. At least one of `isCustomer`, `isSupplier` must be `true` after create and after replace; otherwise
   `400 VALIDATION_FAILED` with `errors` keys `isCustomer` **and** `isSupplier`. Both may be `true`.
+  The rule is about values: when a role field is itself missing (on replace) or of the wrong type, only that
+  field is reported (004-q, B-Q2).
   *Forward notice:* later specs may refuse to remove a role that documents use.
 - R16. `taxId` is not unique: any number of partners of one tenant may have the same value.
 - R17. Partner `search` matches case-insensitively as a substring of `code`, `name` or `taxId`. Address fields

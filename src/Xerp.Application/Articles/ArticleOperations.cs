@@ -145,7 +145,7 @@ public sealed class ArticleOperations(IXerpDb db, ITenantContext context, IClock
             // The unit was deleted between the check and the write: the foreign key is the authority (E9).
             return AppError.ReferenceNotFound(BaseUnitField, values.BaseUnitId);
         }
-        catch (UniqueConstraintViolationException ex) when (ex.ConstraintName == DbNames.ArticleCodeIndex)
+        catch (UniqueConstraintViolationException ex) when (ex.IsCodeOf<Article>())
         {
             // Lost a race with a concurrent write of the same code: the unique index is the authority (E8).
             return CodeTaken(values.Code);
@@ -181,7 +181,29 @@ public sealed class ArticleOperations(IXerpDb db, ITenantContext context, IClock
     private Guid ActorKeyId() =>
         context.ApiKeyId ?? throw new InvalidOperationException("An article can only be written by a tenant API key.");
 
-    private static AppError NotFound() => AppError.NotFound("Article not found.");
+    /// <summary>By <c>id</c> or by <c>code</c>, exactly one (spec 003, R13) - for clients without a URL path.</summary>
+    public Task<Result<ArticleDto>> FindAsync(RecordAddressInput address, CancellationToken cancellationToken = default)
+    {
+        if (RecordAddress.IdOrCode(address, NotFoundDetail, out var id, out var code) is { } error)
+            return Task.FromResult<Result<ArticleDto>>(error);
+        return id is { } byId ? GetAsync(byId, cancellationToken) : GetByCodeAsync(code, cancellationToken);
+    }
+
+    /// <summary>As the overload with a <see cref="Guid"/>; an id that is not a UUID names no record (spec 003, R15).</summary>
+    public Task<Result<ArticleDto>> ReplaceAsync(string? id, ReplaceArticleInput input, CancellationToken cancellationToken = default) =>
+        RecordAddress.Id(id, NotFoundDetail, out var parsed) is { } error
+            ? Task.FromResult<Result<ArticleDto>>(error)
+            : ReplaceAsync(parsed, input, cancellationToken);
+
+    /// <summary>As the overload with a <see cref="Guid"/>; an id that is not a UUID names no record (spec 003, R15).</summary>
+    public Task<Result<ArticleDeleted>> DeleteAsync(string? id, CancellationToken cancellationToken = default) =>
+        RecordAddress.Id(id, NotFoundDetail, out var parsed) is { } error
+            ? Task.FromResult<Result<ArticleDeleted>>(error)
+            : DeleteAsync(parsed, cancellationToken);
+
+    private const string NotFoundDetail = "Article not found.";
+
+    private static AppError NotFound() => AppError.NotFound(NotFoundDetail);
 
     private static AppError CodeTaken(string code) => AppError.CodeTaken($"An article with code '{code}' already exists.");
 

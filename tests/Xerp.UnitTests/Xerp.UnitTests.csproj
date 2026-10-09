@@ -12,5 +12,6 @@
     <ProjectReference Include="../../src/Xerp.Domain/Xerp.Domain.csproj" />
     <ProjectReference Include="../../src/Xerp.Application/Xerp.Application.csproj" />
     <ProjectReference Include="../../src/Xerp.Infrastructure/Xerp.Infrastructure.csproj" />
+    <ProjectReference Include="../../src/Xerp.Api/Xerp.Api.csproj" />
   </ItemGroup>
 </Project>

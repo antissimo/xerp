@@ -1,11 +1,15 @@
 using Microsoft.EntityFrameworkCore;
 using Xerp.Api.Endpoints;
 using Xerp.Api.Http;
+using Xerp.Api.Mcp;
+using Xerp.Application.ApiKeys;
 using Xerp.Application.Articles;
 using Xerp.Application.Identity;
+using Xerp.Application.Partners;
 using Xerp.Application.Ports;
 using Xerp.Application.Tenants;
 using Xerp.Application.UnitsOfMeasure;
+using Xerp.Application.Warehouses;
 using Xerp.Infrastructure;
 using Xerp.Infrastructure.Persistence;
 
@@ -24,6 +28,10 @@ builder.Services.AddScoped<WhoAmIOperation>();
 builder.Services.AddScoped<TenantProvisioning>();
 builder.Services.AddScoped<UnitOfMeasureOperations>();
 builder.Services.AddScoped<ArticleOperations>();
+builder.Services.AddScoped<PartnerOperations>();
+builder.Services.AddScoped<WarehouseOperations>();
+builder.Services.AddScoped<ApiKeyOperations>();
+builder.Services.AddXerpMcpServer();
 
 var app = builder.Build();
 
@@ -47,6 +55,12 @@ var v1 = app.MapGroup("/api/v1").RejectUndefinedQueryParameters();
 v1.MapTenantEndpoints();
 v1.MapUnitOfMeasureEndpoints();
 v1.MapArticleEndpoints();
+v1.MapPartnerEndpoints();
+v1.MapWarehouseEndpoints();
+v1.MapApiKeyEndpoints();
+
+// One operation = one HTTP endpoint + one MCP tool; both call the same Application operations.
+app.MapMcp(ApiV1Middleware.McpPath);
 
 app.Run();
 

@@ -11,6 +11,7 @@ public static class ErrorCodes
     public const string InUse = "IN_USE";
     public const string ReferenceNotFound = "REFERENCE_NOT_FOUND";
     public const string ReferenceInactive = "REFERENCE_INACTIVE";
+    public const string CannotRevokeSelf = "CANNOT_REVOKE_SELF";
     public const string InvalidState = "INVALID_STATE";
     public const string InternalError = "INTERNAL_ERROR";
 }

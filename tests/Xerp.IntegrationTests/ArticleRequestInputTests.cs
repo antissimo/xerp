@@ -14,14 +14,14 @@ public class ArticleRequestInputTests(XerpFixture app)
     {
         var tenant = await app.NewTenantAsync();
         var unit = await Uom.CreateAsync(tenant.Client, "pcs", "Piece");
-        var existing = await Art.CreateAsync(tenant.Client, "A1", "Bolt", unit.Id());
+        var existing = await ArticleApi.CreateAsync(tenant.Client, "A1", "Bolt", unit.Id());
 
-        using var created = await Art.PostAsync(tenant.Client, "A2", "Nut", unit.Id(), description: description);
-        using var replaced = await Art.PutAsync(tenant.Client, existing.Id(), Art.ReplaceBody("A1", "Bolt", unit.Id(), description: description));
+        using var created = await ArticleApi.PostAsync(tenant.Client, "A2", "Nut", unit.Id(), description: description);
+        using var replaced = await ArticleApi.PutAsync(tenant.Client, existing.Id(), ArticleApi.ReplaceBody("A1", "Bolt", unit.Id(), description: description));
 
         await HttpAssert.ValidationAsync(created, "description");
         await HttpAssert.ValidationAsync(replaced, "description");
-        using var list = await tenant.Client.GetAsync(Art.Path);
+        using var list = await tenant.Client.GetAsync(ArticleApi.Path);
         Assert.Equal(["A1"], (await HttpAssert.JsonAsync(list, HttpStatusCode.OK)).Codes());
     }
 
@@ -31,7 +31,7 @@ public class ArticleRequestInputTests(XerpFixture app)
         var tenant = await app.NewTenantAsync();
         var unit = await Uom.CreateAsync(tenant.Client, "pcs", "Piece");
 
-        var article = await Art.CreateAsync(tenant.Client, "A1", "Bolt", unit.Id(), description: "a\r\n\tb");
+        var article = await ArticleApi.CreateAsync(tenant.Client, "A1", "Bolt", unit.Id(), description: "a\r\n\tb");
 
         Assert.Equal("a\r\n\tb", article.Str("description"));
     }
@@ -43,14 +43,14 @@ public class ArticleRequestInputTests(XerpFixture app)
     {
         var tenant = await app.NewTenantAsync();
         var unit = await Uom.CreateAsync(tenant.Client, "pcs", "Piece");
-        var existing = await Art.CreateAsync(tenant.Client, "A1", "Bolt", unit.Id());
+        var existing = await ArticleApi.CreateAsync(tenant.Client, "A1", "Bolt", unit.Id());
 
-        using var created = await Art.PostAsync(tenant.Client, "A2", name, unit.Id());
-        using var replaced = await Art.PutAsync(tenant.Client, existing.Id(), Art.ReplaceBody("A1", name, unit.Id()));
+        using var created = await ArticleApi.PostAsync(tenant.Client, "A2", name, unit.Id());
+        using var replaced = await ArticleApi.PutAsync(tenant.Client, existing.Id(), ArticleApi.ReplaceBody("A1", name, unit.Id()));
 
         await HttpAssert.ValidationAsync(created, "name");
         await HttpAssert.ValidationAsync(replaced, "name");
-        using var list = await tenant.Client.GetAsync(Art.Path);
+        using var list = await tenant.Client.GetAsync(ArticleApi.Path);
         var items = await HttpAssert.JsonAsync(list, HttpStatusCode.OK);
         Assert.Equal(["A1"], items.Codes());
         Assert.Equal("Bolt", items.GetProperty("items")[0].Str("name"));
@@ -61,18 +61,18 @@ public class ArticleRequestInputTests(XerpFixture app)
     {
         var tenant = await app.NewTenantAsync();
         var unit = await Uom.CreateAsync(tenant.Client, "pcs", "Piece");
-        var article = await Art.CreateAsync(tenant.Client, "A1", "Bolt", unit.Id());
+        var article = await ArticleApi.CreateAsync(tenant.Client, "A1", "Bolt", unit.Id());
         var id = article.Id();
 
-        using var foo = await tenant.Client.GetAsync($"{Art.Path}?foo=1");
-        using var wrongCase = await tenant.Client.GetAsync($"{Art.Path}?baseunitid={unit.Id()}");
-        using var get = await tenant.Client.GetAsync($"{Art.Path}/{id}?x=1");
-        using var byCode = await tenant.Client.GetAsync($"{Art.Path}/by-code/A1?x=1");
-        using var post = await tenant.Client.PostAsync($"{Art.Path}?x=1", System.Net.Http.Json.JsonContent.Create(Art.Body("A2", "Nut", unit.Id())));
-        using var put = await Art.PutAsync(tenant.Client, id, Art.ReplaceBody("A1", "Changed", unit.Id()));
-        using var putWithQuery = await tenant.Client.PutAsync($"{Art.Path}/{id}?x=1", System.Net.Http.Json.JsonContent.Create(Art.ReplaceBody("A1", "Again", unit.Id())));
-        using var delete = await tenant.Client.DeleteAsync($"{Art.Path}/{id}?x=1");
-        using var search = await tenant.Client.GetAsync($"{Art.Path}?search=a%00b");
+        using var foo = await tenant.Client.GetAsync($"{ArticleApi.Path}?foo=1");
+        using var wrongCase = await tenant.Client.GetAsync($"{ArticleApi.Path}?baseunitid={unit.Id()}");
+        using var get = await tenant.Client.GetAsync($"{ArticleApi.Path}/{id}?x=1");
+        using var byCode = await tenant.Client.GetAsync($"{ArticleApi.Path}/by-code/A1?x=1");
+        using var post = await tenant.Client.PostAsync($"{ArticleApi.Path}?x=1", System.Net.Http.Json.JsonContent.Create(ArticleApi.Body("A2", "Nut", unit.Id())));
+        using var put = await ArticleApi.PutAsync(tenant.Client, id, ArticleApi.ReplaceBody("A1", "Changed", unit.Id()));
+        using var putWithQuery = await tenant.Client.PutAsync($"{ArticleApi.Path}/{id}?x=1", System.Net.Http.Json.JsonContent.Create(ArticleApi.ReplaceBody("A1", "Again", unit.Id())));
+        using var delete = await tenant.Client.DeleteAsync($"{ArticleApi.Path}/{id}?x=1");
+        using var search = await tenant.Client.GetAsync($"{ArticleApi.Path}?search=a%00b");
 
         await HttpAssert.ValidationAsync(foo, "foo");
         await HttpAssert.ValidationAsync(wrongCase, "baseunitid");
@@ -80,7 +80,7 @@ public class ArticleRequestInputTests(XerpFixture app)
             await HttpAssert.ValidationAsync(response, "x");
         await HttpAssert.ValidationAsync(search, "search");
         await HttpAssert.JsonAsync(put, HttpStatusCode.OK);
-        using var list = await tenant.Client.GetAsync($"{Art.Path}?search=Changed&type=stock&baseUnitId={unit.Id()}&isActive=true&limit=5&offset=0");
+        using var list = await tenant.Client.GetAsync($"{ArticleApi.Path}?search=Changed&type=stock&baseUnitId={unit.Id()}&isActive=true&limit=5&offset=0");
         Assert.Equal(["A1"], (await HttpAssert.JsonAsync(list, HttpStatusCode.OK)).Codes());
     }
 }
