@@ -1,7 +1,7 @@
 # Open non-blocking items — reviews 001 to 010
 
 Consolidated by the architect, 2026-10-09. Sources: the "Non-blocking" sections of `docs/reviews/001.md` …
-`006.md` and the builder's notes (005-q and 006-q, B-Q9); items 007/1 and 007/2 were added with review 007; review 008 closed 006/2 and added no item; review 009 closed 004/4 and 005/3 on `12f33ff` (not yet on `main`: review 009 waits for two test corrections by the tester) and added 009/1; review 010 closed 005/2 on `1230f27` (code as read; the green run on the closed tip is pending) and added 010/1. Each item was checked against the code on `main`
+`006.md` and the builder's notes (005-q and 006-q, B-Q9); items 007/1 and 007/2 were added with review 007; review 008 closed 006/2 and added no item; review 009 closed 004/4 and 005/3 on `12f33ff` (re-review 009 OK on `fcbb111`, ready to merge) and added 009/1; review 010 closed 005/2 on `1230f27` (code as read; the green run on the closed tip is pending) and added 010/1. Each item was checked against the code on `main`
 (`4fc742e`) and, for review 006, on `db01f2c`. This list is the input for one cleanup task for the builder
 after spec 010; it replaces the "still open from earlier reviews" lines in the individual reviews.
 
