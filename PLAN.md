@@ -41,6 +41,7 @@ Oznake: ✅ gotovo · 🔄 u tijeku · ⬜ nije započeto · — ne primjenjuje 
 | 010 | Prodajne narudžbe -> isporuka | ✅ | ✅ | ✅ | ✅ | ✅ |
 | | **— granica MVP-a (dovršen) — 011 je prva značajka nakon MVP-a, na zahtjev vlasnika; ostalo ispod čeka —** | | | | | |
 | 011 | Zadano (centralno) skladište, lager lista po skladištu, spremljeni saldo zaliha | ✅ | 🔄 | ⬜ | ⬜ | ⬜ |
+| 011a | Partner u zaglavlju skladišnog dokumenta (primka: dobavljač, izdatnica: kupac) | 🔄 | ⬜ | ⬜ | ⬜ | ⬜ |
 | 012 | Vrednovanje zaliha | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 013 | Kontni plan + temeljnice | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 014 | Brojčane serije dokumenata | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -95,6 +96,7 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 - 2026-10-09 — 010 spojen u `main` i pushan (review koda OK; orkestrator pokrenuo 534 unit + 1460 integracijskih testova na završnoj grani). **Svih deset specova MVP-a je spojeno.** Preostaje stavka čišćenja 001/7.
 - 2026-10-10 — završno čišćenje spojeno (ograničenje zahtjeva 1 MB, 413 PAYLOAD_TOO_LARGE; review OK; 534 unit + 1464 integracijska testa). Dokumentacija MVP-a zatvorena (`docs/getting-started.md`, roadmap). **MVP dovršen.** Ostalo nakon MVP-a: `docs/reviews/open-items.md` (15 stavki) i specovi 011+.
 - 2026-10-10 — vlasnik tražio: centralno skladište po tenantu, lager lista po skladištu, saldo spremljen u bazi a izvediv iz dokumenata; dokument = zaglavlje (partner, narudžba, skladište) + stavke (artikl, količina). Spec 011 napisan (ADR-0018, ADR-0019). Noćni rad: pri limitu čekati reset i nastaviti.
+- 2026-10-10 — pravilo o modelu dokumenta (zaglavlje i stavke) upisano u arhitekturu; dodan red 011a (partner u zaglavlju skladišnog dokumenta), spec se piše.
 
 ## Odluke vlasnika
 
