@@ -118,6 +118,29 @@ Rules:
   while `draft`, and changes state through action routes (`POST /<resource>/{id}/post`). A posted document is
   immutable and has a `number`, `postedAt`, `postedBy`; lookup by number is `GET /<resource>/by-number/{number}`.
   An error about a line is keyed `lines[i].<field>` with a zero-based index into the request's array.
+- **Document model: header and lines** (owner, 2026-10-10; every document type that exists and every type
+  added later follows it). A document is one header and one or more lines.
+  - The **header** holds what is true of the document as a whole, once: `status`, `number`, the document's
+    date (`documentDate`, `orderDate`) and any further date (`expectedDate`, `requestedDate`), the
+    **warehouse** (a transfer: two), the **partner** under its role name (`supplier`, `customer`), the
+    **source document** it follows from (`purchaseOrder`, `salesOrder`, `reversalOf`), `reference`, `note`,
+    totals computed from the lines (`totalAmount`), and the audit and state fields (`createdAt`, `postedBy`,
+    `confirmedAt`, …).
+  - A **line** holds what differs per article: `lineNo` (assigned by the server, 1-based, in request order),
+    the **article**, the **quantity**, the **unit** (the article's base unit when omitted) with the `factor`
+    and `baseQuantity` derived from it, the **unit price** and `lineAmount` where the document has prices,
+    and the line's own pointer into the source document (`orderLineNo`) and its own progress or result
+    (`receivedBaseQuantity`, `bookQuantity`, `differenceQuantity`).
+  - Nothing of the header is repeated on a line in the API, and nothing of a line is lifted into the header
+    except a computed total. A line never has its own warehouse, partner, date or status; if a business case
+    needs two of them, it is two documents. A line names an order line only of the order in the header.
+  - A request writes the header fields and `lines` as one whole (create, replace); the server derives
+    everything else. A database column that copies a header key onto the line table to carry a foreign key
+    (the order id on a linked stock document line) is storage, not model, and is never exposed.
+  - As built: orders have the full header (partner, warehouse, dates, reference, note) and priced lines;
+    stock documents have warehouse, date, source order, reference, note and unpriced lines, and **no partner
+    of their own** — a linked receipt or delivery reaches its partner only through the order, a manual one has
+    none (005 default 5). That is the one gap against this rule; it is roadmap row 011a.
 - Warehouses on documents (ADR-0019): every document type has exactly one mandatory warehouse in its header
   (a transfer: source and destination) — the types that exist and every type added later. Each tenant has
   exactly one default warehouse (`isDefault`), created with the tenant and always active. On **create**,
