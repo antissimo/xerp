@@ -3,11 +3,11 @@
 Glavni pregled petlje arhitekt -> tester -> builder -> review -> merge. Redoslijed koraka dolazi iz
 `docs/roadmap.md` (piše ga arhitekt); ovaj dokument vodi orkestrator i ažurira ga nakon svakog koraka.
 
-Zadnje ažuriranje: 2026-10-09 09:45
+Zadnje ažuriranje: 2026-10-09 09:50
 
 ## Opseg MVP-a
 
-Odluka vlasnika (2026-10-09): rad se ograničava na MVP. Prijedlog granice (orkestrator, čeka potvrdu vlasnika):
+Odluka vlasnika (2026-10-09): rad se ograničava na MVP. Granica (prijedlog orkestratora, unesena i u `docs/roadmap.md`; vlasnik je može pomaknuti):
 **MVP = specovi 001–010** — matični podaci, MCP sučelje, zalihe (primke, izdatnice, međuskladišnice, storno,
 preračun jedinica, inventura), nabava i prodaja. Sve od 011 nadalje (vrednovanje, računovodstvo, računi,
 plaćanja, platforma) je nakon MVP-a i petlja ga ne radi dok vlasnik ne kaže.
@@ -30,7 +30,7 @@ Oznake: ✅ gotovo · 🔄 u tijeku · ⬜ nije započeto · — ne primjenjuje 
 | 002 | Artikli (matični podaci artikala) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 003 | MCP server + upravljanje API ključevima | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 004 | Partneri i skladišta | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 005 | Skladišna knjiga, primke i izdatnice | ✅ | ✅ | ✅ | ⬜ | ⬜ |
+| 005 | Skladišna knjiga, primke i izdatnice | ✅ | ✅ | ✅ | 🔄 | ⬜ |
 | 006 | Međuskladišnice i storno | ✅ | ✅ | 🔄 | ⬜ | ⬜ |
 | 007 | Preračun jedinica mjere po artiklu | ✅ | 🔄 | ⬜ | ⬜ | ⬜ |
 | 008 | Inventura / korekcija zaliha | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -52,8 +52,8 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 
 ## Što tko trenutno radi
 
-- **Arhitekt:** granica MVP-a u roadmapu, odgovori na pitanja za 005 i 006; zatim review speca 005.
-- **Builder:** zatvara 005 nad usklađenim testovima, zatim spec 006 (grana `feat/006-stock-transfers-reversal`).
+- **Arhitekt:** review speca 005.
+- **Builder:** implementacija speca 006 (grana `feat/006-stock-transfers-reversal`).
 - **Tester:** usklađivanje grana s `main`om i odgovorima za 005, zatim testovi za 007 i 008.
 
 ## Dnevnik
