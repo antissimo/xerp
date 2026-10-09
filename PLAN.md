@@ -3,7 +3,7 @@
 Glavni pregled petlje arhitekt -> tester -> builder -> review -> merge. Redoslijed koraka dolazi iz
 `docs/roadmap.md` (piše ga arhitekt); ovaj dokument vodi orkestrator i ažurira ga nakon svakog koraka.
 
-Zadnje ažuriranje: 2026-10-09 10:20
+Zadnje ažuriranje: 2026-10-09 16:00
 
 ## Opseg MVP-a
 
@@ -34,7 +34,7 @@ Oznake: ✅ gotovo · 🔄 u tijeku · ⬜ nije započeto · — ne primjenjuje 
 | 006 | Međuskladišnice i storno | ✅ | ✅ | ✅ | 🔄 | ⬜ |
 | 007 | Preračun jedinica mjere po artiklu | ✅ | ✅ | 🔄 | ⬜ | ⬜ |
 | 008 | Inventura / korekcija zaliha | ✅ | ✅ | ⬜ | ⬜ | ⬜ |
-| 009 | Narudžbe dobavljačima -> primka robe | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 009 | Narudžbe dobavljačima -> primka robe | ✅ | 🔄 | ⬜ | ⬜ | ⬜ |
 | 010 | Prodajne narudžbe -> isporuka | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
 | | **— granica MVP-a — sve ispod je nakon MVP-a —** | | | | | |
 | 011 | Vrednovanje zaliha | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -54,7 +54,7 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 
 - **Arhitekt:** review speca 006, zatim odgovori na pitanja testera za 007 i 008.
 - **Builder:** implementacija speca 007 (grana `feat/007-item-unit-conversions`).
-- **Tester:** čeka (limit plana na 95 %); sljedeće: testovi za 009 i 010.
+- **Tester:** testovi za 009 (nabava), zatim 010 (prodaja).
 
 ## Dnevnik
 
@@ -76,6 +76,7 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 - 2026-10-09 — specovi 007–010 usklađeni s izgrađenim kodom; napisan `docs/getting-started.md`.
 - 2026-10-09 — testovi za 007 i 008 napisani. Limit plana na 95 % (reset 13:50); prednost ima builder na 006.
 - 2026-10-09 — kod za 006 gotov (međuskladišnice i storno); na reviewu.
+- 2026-10-09 — nakon reseta limita sva tri agenta pokrenuta iznova (svježe sesije): review 006, kod 007, testovi 009/010.
 
 ## Odluke vlasnika
 
