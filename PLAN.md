@@ -3,7 +3,7 @@
 Glavni pregled petlje arhitekt -> tester -> builder -> review -> merge. Redoslijed koraka dolazi iz
 `docs/roadmap.md` (piše ga arhitekt); ovaj dokument vodi orkestrator i ažurira ga nakon svakog koraka.
 
-Zadnje ažuriranje: 2026-10-09 16:50
+Zadnje ažuriranje: 2026-10-09 17:00
 
 ## Opseg MVP-a
 
@@ -33,8 +33,8 @@ Oznake: ✅ gotovo · 🔄 u tijeku · ⬜ nije započeto · — ne primjenjuje 
 | 005 | Skladišna knjiga, primke i izdatnice | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 006 | Međuskladišnice i storno | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 007 | Preračun jedinica mjere po artiklu | ✅ | ✅ | ✅ | 🔄 | ⬜ |
-| 008 | Inventura / korekcija zaliha | ✅ | ✅ | 🔄 | ⬜ | ⬜ |
-| 009 | Narudžbe dobavljačima -> primka robe | ✅ | ✅ | ⬜ | ⬜ | ⬜ |
+| 008 | Inventura / korekcija zaliha | ✅ | ✅ | ✅ | ⬜ | ⬜ |
+| 009 | Narudžbe dobavljačima -> primka robe | ✅ | ✅ | 🔄 | ⬜ | ⬜ |
 | 010 | Prodajne narudžbe -> isporuka | ✅ | ✅ | ⬜ | ⬜ | ⬜ |
 | | **— granica MVP-a — sve ispod je nakon MVP-a —** | | | | | |
 | 011 | Vrednovanje zaliha | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -52,8 +52,8 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 
 ## Što tko trenutno radi
 
-- **Arhitekt:** čeka ispravljen test za 007 (ponovni review) i kod za 008.
-- **Builder:** ispravak iz reviewa 006, prijenos u 007, zatim spec 008 (inventura).
+- **Arhitekt:** čeka zelene grane 007 i 008 za review.
+- **Builder:** zatvara 007 i 008 nad ispravljenim testovima, zatim spec 009 (nabava).
 - **Tester:** usklađuje testove 006–008 s arhitektovim odgovorima (svi testovi MVP-a su napisani).
 
 ## Dnevnik
@@ -82,6 +82,7 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 - 2026-10-09 — testovi za 009 i 010 napisani; time su napisani testovi za sve specove MVP-a.
 - 2026-10-09 — review 007: kod prihvaćen, jedan testerov test treba ispravak (testovi: 1391 od 1392).
 - 2026-10-09 — 006 prošao ponovni review (OK; 331 unit + 883 integracijska testa), spojen u `main` i pushan.
+- 2026-10-09 — kod za 008 gotov (inventura); tester ispravio osporeni test za 007; arhitekt odgovorio na pitanja za 009 i 010 (bez izmjena testova).
 
 ## Odluke vlasnika
 
