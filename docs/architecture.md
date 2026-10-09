@@ -223,6 +223,12 @@ MCP maps the same error to a tool error with the same `code` (shape in section 7
   container and run in parallel.
 - Each acceptance criterion maps to at least one named test. Each feature has a tenant-isolation test, over
   HTTP and over MCP.
+- **Inventory tests.** A test that holds a complete list of what exists (the literal tool list, a count of
+  catalogue entries) is updated by whoever adds to the inventory; the spec that defines the addition approves
+  it, and no separate approval is needed. Removing a name or an assertion still needs explicit approval.
+  The tool list stays literal on purpose: an extra or missing tool must fail the build.
+- The table test holds no literal list: it reads the tables from the database, asserts the tenant invariant
+  (section 3) on every table except `Tenants`, and asserts that the tables the specs name are among them.
 
 ## 10. Build environment constraint
 
