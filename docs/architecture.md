@@ -164,12 +164,15 @@ Every non-2xx response under `/api/v1` is `application/problem+json` (RFC 9457) 
 | 409 | `ORDER_NOT_OPEN` | A stock document is saved or posted against an order that is not `confirmed`. `errors` has `purchaseOrderId` / `salesOrderId`. |
 | 409 | `ORDER_MISMATCH` | A stock document linked to an order names another warehouse, or a line's article is not its order line's. `errors` has `warehouseId` and/or `lines[i].articleId`. |
 | 409 | `QUANTITY_EXCEEDS_ORDER` | Posting would take an order line above its ordered quantity. `errors` has `lines[i].quantity` for the lines linked to it. |
+| 413 | `PAYLOAD_TOO_LARGE` | The request body is larger than 1 048 576 bytes (1 MB), declared or counted while read. Refused before anything is parsed or applied; no `errors`. Checked after the credential and before routing, on `/api/v1` and on `/mcp` (review of open item 001/7). |
 | 500 | `INTERNAL_ERROR` | Unexpected. No stack trace or SQL in the body. |
 
 `code` values are part of the contract: clients and tests branch on `code`, never on `detail` text.
 Specs add feature-specific codes; this table is the registry and is updated with them.
 Application defines the errors (`AppError { Code, Detail, Errors }`); Api maps code -> HTTP status in one place;
 MCP maps the same error to a tool error with the same `code` (shape in section 7).
+Exceptions on `/mcp`: `UNAUTHENTICATED`, `FORBIDDEN` and `PAYLOAD_TOO_LARGE` are decided before any tool runs
+and are answered as HTTP problem documents, not as tool errors (ADR-0009).
 
 ## 7. API and MCP; external clients (ADR-0005 amended, ADR-0009)
 

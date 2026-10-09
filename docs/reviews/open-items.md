@@ -18,15 +18,15 @@ Call: **before MVP** only for correctness, security or data integrity. Everythin
 
 | | Count |
 |---|---:|
-| Items looked at | 35 |
-| Done | 9 |
+| Items looked at | 36 |
+| Done | 10 |
 | No action (remarks) | 6 |
 | Open or partly open | 20 |
-| — of these, before MVP in the cleanup task | 1 |
+| — of these, before MVP in the cleanup task | 0 |
 | — before MVP, checked in a review | 0 |
-| — after MVP | 19 |
+| — after MVP | 20 |
 
-**The cleanup task after spec 010 has one item: 001/7, a request body limit.**
+**The cleanup task after spec 010 had one item, 001/7, a request body limit: done on `750c3f6` (review `cleanup-001-7.md`, OK). No before-MVP item is open.** The review added cleanup/1 (after MVP).
 005/2, the standing review check, is done for every MVP spec (review 010, `1230f27`). 006/2 is done (spec 008, `41d275b`); 004/4 and 005/3 are
 done (spec 009, `12f33ff`).
 
@@ -40,7 +40,7 @@ done (spec 009, `12f33ff`).
 | 001/4 | An admin key longer than 512 characters is silently unusable (`CredentialResolver.MaxTokenLength`); the start-up warning does not say so | open | after MVP | Fails closed: such a key is rejected, never accepted wrongly. A configuration nuisance for the operator only. |
 | 001/5 | Constraint names in Application (`DbNames`) instead of violations reported by meaning | partly: code clashes are recognised by meaning (`IsCodeOf<T>()`); two comparisons by name remain (`TenantCodeIndex` in `TenantProvisioning`, `ArticleBaseUnitForeignKey` in `ArticleOperations`) | after MVP | Structure only; both remaining cases behave correctly and are tested. |
 | 001/6 | The `404` for an unsupported method keeps routing's `Allow` header | open (`ApiV1Middleware` rewrites the status, not the header) | after MVP | Harmless; decide "keep" or "clear" when the OpenAPI document (018) is written. |
-| 001/7 | **Request body limit is Kestrel's default, 30 MB** | open (no limit set anywhere in `src`) | **before MVP** | Security: any holder of a tenant key can make the server buffer and parse 30 MB per request, in parallel; the largest legitimate body (200 lines) is a few tens of kB. Set about 1 MB for `/api/v1` and `/mcp`; an oversized body answers `413` in the error model. One setting and one test. |
+| 001/7 | **Request body limit is Kestrel's default, 30 MB** | done on `chore/mvp-cleanup` `750c3f6` (review `cleanup-001-7.md`: OK, code as read; merged when the orchestrator's run is green): 1 MB on `/api/v1` and `/mcp`, `413 PAYLOAD_TOO_LARGE` | — (was **before MVP**) | Security: any holder of a tenant key can make the server buffer and parse 30 MB per request, in parallel; the largest legitimate body (200 lines) is a few tens of kB. Set about 1 MB for `/api/v1` and `/mcp`; an oversized body answers `413` in the error model. One setting and one test. |
 | 001 re-review, remark | Unknown query parameter is reported before an invalid body | no action | — | Correct as is; no spec fixes the order. |
 | 002/1 | Make the AC-85 race test diagnosable (round, both statuses and bodies in the failure message; count the two outcomes) | open (the test still asserts without messages) | after MVP | Test ergonomics; the race itself was analysed and found sound (review 002). |
 | 002/2 | Unknown-path example `/api/v1/partners` in `ErrorModelTests` | done (`/api/v1/no-such-resource`) | — | |
@@ -69,6 +69,7 @@ done (spec 009, `12f33ff`).
 | 007/2 | Tool text `StockReferences` says an inactive "alternative unit"; by 007/R12 it is any unit other than the article's base unit | open on `8312ef7` | after MVP | Wording; do it with 003/1 and 003/2. |
 | 009/1 | `PurchaseOrderOperations.ListAsync` loads every line of the orders on the page (up to 200 items × 200 lines) to compute `lineCount`, `totalAmount` and `receiptStatus` | open on `12f33ff` | after MVP | Performance only; the values are right and paging and `total` are decided in SQL. Fix when order lists become large: aggregate in the query. |
 | 010/1 | `StockAvailability.Reserved` (Domain) is called by tests only — the stock-on-hand query states the rule in SQL; and the shared `OrderOperations` still passes `StockDocumentType.Receipt` to `StockLineChecks.References` / `Convert` to say "a quantity above zero that converts" (review 009, non-blocking 3) | open on `1230f27` | after MVP | Structure and naming only; both behave correctly and are tested through HTTP. |
+| cleanup/1 | The rest of a refused oversized body is discarded within Kestrel's defaults (30 MB, about 5 s), not a bound of ours | open | after MVP | Network and time only; nothing above 1 MB is buffered or parsed. Set `MaxRequestBodySize` a little above 1 MB as an outer bound together with rate limiting (020). |
 
 Merge notes in the reviews ("take `main`'s version of `NNN-q.md`") are instructions for the orchestrator at
 merge time, not open items, and are not listed.
@@ -76,8 +77,8 @@ merge time, not open items, and are not listed.
 ## For the cleanup task after spec 010
 
 Required (before the MVP is declared finished):
-1. **001/7** — body limit of about 1 MB on `/api/v1` and `/mcp`, `413` in the error model, one test. The
-   architect adds the status and code to the error registry (architecture §6) when the task is scheduled.
+1. **001/7** — body limit of about 1 MB on `/api/v1` and `/mcp`, `413` in the error model, one test.
+   **Done** on `750c3f6`; `413 PAYLOAD_TOO_LARGE` is in the error registry (architecture §6).
 
 Optional, if the owner wants a tidy hand-over — small, no behaviour change, in this order of value:
 003/1 + 003/2 + 007/2 (tool descriptions, the agent is the user), 001/4, 002/1, 002/4, 002/5, 003/5, 003/6.
