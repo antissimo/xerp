@@ -285,7 +285,7 @@ public class StockDocumentDraftTests(XerpFixture app)
     }
 
     [Theory]
-    [InlineData("unitId", "\"0199c0de-0000-7000-8000-000000000001\"")]
+    [InlineData("unit", "\"0199c0de-0000-7000-8000-000000000001\"")]
     [InlineData("lineNo", "1")]
     [InlineData("price", "9.99")]
     public async Task AC26_E2_A_line_with_an_extra_property_is_rejected_with_a_key_of_that_line(string property, string json)
