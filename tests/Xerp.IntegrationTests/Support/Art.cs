@@ -4,11 +4,8 @@ using System.Text.Json;
 
 namespace Xerp.IntegrationTests.Support;
 
-/// <summary>
-/// Shortcuts for the article endpoints (spec 002). The same helper as <see cref="Art"/> under the name the
-/// builder-side tests use; the extension methods live on <see cref="Art"/> only, so the two do not clash.
-/// </summary>
-public static class ArticleApi
+/// <summary>Shortcuts for the article endpoints (spec 002).</summary>
+public static class Art
 {
     public const string Path = "/api/v1/articles";
 
@@ -57,5 +54,5 @@ public static class ArticleApi
     public static async Task<Guid> UnitAsync(HttpClient client, string code = "pcs", string name = "Piece", bool? isActive = null) =>
         (await Uom.CreateAsync(client, code, name, isActive)).Id();
 
-    public static Guid BaseUnitId(JsonElement article) => article.GetProperty("baseUnit").GetProperty("id").GetGuid();
+    public static Guid BaseUnitId(this JsonElement article) => article.GetProperty("baseUnit").GetProperty("id").GetGuid();
 }
