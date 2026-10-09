@@ -493,6 +493,23 @@ public abstract class OrderDraftTests(XerpFixture app, OrderApi o)
         Assert.Equal(9999999999.99m, exact.Dec("totalAmount"));
     }
 
+    [Theory]
+    // 9999999999.995 is below 10000000000 and rounds to 10000000000.00, one cent above the maximum.
+    [InlineData("999999999.9995", "10")]
+    [InlineData("10", "999999999.9995")]
+    public async Task AC26_R9_The_maximum_is_compared_with_the_rounded_line_amount(string quantity, string price)
+    {
+        var s = await Orders.SetupAsync(app);
+        var body = o.Body(s);
+        body["lines"] = new JsonArray(Orders.Line(s.B, JsonNode.Parse(quantity), JsonNode.Parse(price)));
+
+        using var response = await o.PostAsync(s.Http, body);
+
+        var problem = await HttpAssert.ValidationAsync(response, "lines[0].quantity", "lines[0].unitPrice");
+        Assert.Equal(new[] { "lines[0].quantity", "lines[0].unitPrice" }, McpAssert.ErrorKeys(problem));
+        await AssertNothingCreatedAsync(s);
+    }
+
     [Fact]
     public async Task AC26_Accepted_a_price_of_zero_and_a_due_date_equal_to_the_order_date()
     {
