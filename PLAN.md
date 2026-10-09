@@ -41,7 +41,7 @@ Oznake: ✅ gotovo · 🔄 u tijeku · ⬜ nije započeto · — ne primjenjuje 
 | 010 | Prodajne narudžbe -> isporuka | ✅ | ✅ | ✅ | ✅ | ✅ |
 | | **— granica MVP-a (dovršen) — 011 je prva značajka nakon MVP-a, na zahtjev vlasnika; ostalo ispod čeka —** | | | | | |
 | 011 | Zadano (centralno) skladište, lager lista po skladištu, spremljeni saldo zaliha | ✅ | 🔄 | ⬜ | ⬜ | ⬜ |
-| 011a | Partner u zaglavlju skladišnog dokumenta (primka: dobavljač, izdatnica: kupac) | 🔄 | ⬜ | ⬜ | ⬜ | ⬜ |
+| 011a | Partner u zaglavlju skladišnog dokumenta (primka: dobavljač, izdatnica: kupac) | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 012 | Vrednovanje zaliha | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 013 | Kontni plan + temeljnice | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 014 | Brojčane serije dokumenata | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
