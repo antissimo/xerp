@@ -215,8 +215,8 @@ Lifecycle
   conversion (007/R17).
 - R12. **Confirm** (`draft -> confirmed`) is atomic. Order of checks: order exists -> is a draft
   (`INVALID_STATE`) -> supplier, warehouse and every article are active (`REFERENCE_INACTIVE`, keys
-  `supplierId`, `warehouseId`, `lines[i].articleId`) -> the supplier still has the role
-  (`PARTNER_ROLE_MISSING`) -> conversion with the current factors (`QUANTITY_NOT_CONVERTIBLE`). On success:
+  `supplierId`, `warehouseId`, `lines[i].articleId`; header keys together first, then lines: 005/R13) -> the
+  supplier still has the role (`PARTNER_ROLE_MISSING`) -> conversion with the current factors (`QUANTITY_NOT_CONVERTIBLE`). On success:
   `number` assigned, `confirmedAt` = now, `confirmedBy` = the acting key, and `factor` and `baseQuantity` of
   every line stored for good.
 - R13. **Numbering.** `PO-` followed by the counter value padded to at least 6 digits; one counter per tenant,
@@ -557,11 +557,13 @@ Effects on masters
 - AC-80 A partner on a draft order: `DELETE /partners/{id}` -> `409` `IN_USE`; after the draft is deleted ->
   `204`. On a confirmed or closed order: `DELETE` -> `IN_USE`; `PUT` renaming, deactivating, or changing the
   roles to customer only -> `200`, and the order still shows the partner as `supplier`.
-- AC-81 A warehouse, an article and a line's unit of measure named by a draft order: `DELETE` of each ->
-  `409` `IN_USE`; after the draft is deleted -> `204`. An article on an order line: `PUT` changing `type` or
-  `baseUnitId` -> `409` `IN_USE` with that key.
+- AC-81 A warehouse and an article named by a draft order: `DELETE` of each -> `409` `IN_USE`; after the draft
+  is deleted -> `204`. An article on an order line: `PUT` changing `type` or `baseUnitId` -> `409` `IN_USE`
+  with that key. (A line's unit of measure is always also the base unit or a conversion of its article, so
+  the order's own hold on it is only observable as in AC-82.)
 - AC-82 A draft order with a line in boxes: `DELETE /articles/{A}/units/{box}` -> `409` `IN_USE`. After the
-  order is confirmed -> `204`, and the order line still shows `unit.code == "box"`, `factor == 12`.
+  order is confirmed -> `204`, and the order line still shows `unit.code == "box"`, `factor == 12`. Then
+  `DELETE /units-of-measure/{box}` -> `409` `IN_USE`: the confirmed order line still names the unit (R37).
 
 MCP
 - AC-85 `tools/list` returns exactly 45 names (literal list). Each of the eight new tools has a description, a
@@ -618,7 +620,8 @@ Builder
 - Posting a linked receipt is the posting of spec 005 with one more lock and one more check. Lock order, the
   same for every posting and reversal: document -> order -> (article, warehouse) pairs -> counter. Compare
   with the outstanding quantities under the lock on the order; without it AC-52 fails. Close and reopen take
-  the same lock.
+  the same lock. Under the per-tenant lock accepted for the MVP (ADR-0012, amendment of 2026-10-09) confirm,
+  close, reopen and every posting and reversal simply run inside it; no lock order is needed.
 - The received quantity may be a sum over posted lines or a maintained column on the order line; if a column,
   it is written in the posting and reversal transactions and AC-55 must hold. It is not an "edit" of the
   confirmed order in the sense of S3 — state in the model which columns are progress and which are frozen.
@@ -627,4 +630,12 @@ Builder
 - `incomingQuantity` joins stock on hand in one query with correct `total` and paging; the ordering of 005
   §4.2 is unchanged.
 - The "used" checks (R37, R38) extend the existing `IN_USE` mechanism, including the raced case.
+- As built (spec 005), `DocumentCounter.Start` takes a `StockDocumentType` and `DocumentNumber` knows stock
+  prefixes only; the counter's key is already a text. Generalise both to a document kind (`purchaseOrder`,
+  later `salesOrder`) rather than adding order kinds to the stock document type.
+- `receiptStatus` is a list filter with paging (R36): it has to be decidable in SQL. A maintained received
+  quantity on the order line makes that a plain predicate; a sum over posted lines works too, but then inside
+  the list query.
+- Annotations as built: `purchase_order_confirm` has those of `stock_document_post`; `_close` and `_reopen`
+  have those of a create.
 - Anything unclear or contradictory: `docs/questions/009-q.md`, then continue with the rest.
