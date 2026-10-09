@@ -1,5 +1,9 @@
 # Roadmap
 
+**Status, 2026-10-09: the MVP is complete.** Specs 001–010 are all merged into `main` (`67dba0e`), each
+reviewed with verdict OK (`docs/reviews/`). What the MVP does and does not do is stated under "MVP boundary" in
+section 3. Nothing below row 10 of the backlog is written or built.
+
 Ordered backlog. Each item becomes one spec `docs/specs/NNN-name.md` (occasionally two) sized for one builder
 session. Only the next spec is written in full; later items are refined when they come up, so numbers after the
 written specs are indicative. Order changes are made here, by the architect, with a reason.
@@ -83,17 +87,17 @@ What stays ahead of posting, and why:
 
 | # | Spec | Modelled on | Why here |
 |---|---|---|---|
-| 1 | **001 Foundation + units of measure** — layers, tenants, API keys, error model, test harness, UoM CRUD. *Written.* | Odoo/ERPNext shared-schema company scoping; UoM list as in BC "Units of Measure". | Everything else depends on it; see section 2. |
-| 2 | **002 Articles** — item master: code, name, description, `type` (stock/service), base unit (required; frozen together with `type` once the item has ledger entries — enforced from 005), `isActive`; reference rules (ADR-0008); a unit used by an article cannot be deleted (`IN_USE`). *Written.* | ERPNext Item ("Maintain Stock", disabled), BC item card base unit. | First real master; exercises the first tenant-inclusive foreign key and `IN_USE`. |
-| 3 | **003 MCP server** — stateless `/mcp` endpoint, tools for all existing operations, tool-error mapping, tool-list and parity tests; API-key management (create over HTTP only, list/get/revoke over HTTP and MCP, including `agent` keys). *Written.* | ADR-0005, ADR-0009, ADR-0010; MCP specification 2025-11-25. | The product's primary user gets its interface as soon as there are two resources to prove the pattern; later specs then ship HTTP + MCP together. |
-| 4 | **004 Partners and warehouses** — partner with `isCustomer`/`isSupplier` (at least one), optional unvalidated tax id, one flat neutral address; warehouse with the same address fields; HTTP endpoints and MCP tools together (24 tools in total); first spec whose acceptance tests the tester writes. *Written.* | SAP B1 business partner; ERPNext warehouse; ADR-0011. | Completes the masters every document needs; restores the scaffold entities. |
-| 5 | **005 Stock ledger, receipts and issues** — stock document (`receipt` / `issue`) with lines, `draft -> posted`; posting writes the append-only stock ledger and assigns the document number; negative stock refused; stock-on-hand and ledger queries; only `stock` articles move; used articles and warehouses get `IN_USE` and frozen `type` / base unit. *Written.* | ERPNext Stock Entry (Material Receipt / Issue) and Stock Ledger Entry; BC Item Ledger Entry; ADR-0007, ADR-0012. | The core of inventory; every later flow only adds ways to produce these entries. |
-| 6 | **006 Stock transfers and reversal** — `transfer` document (two warehouses, one posting, two entries per line); reversal of a posted document by a linked reversing document; `reversed` status. *Written.* | ERPNext Material Transfer; BC reclassification journal; SAP B1 "cannot be changed, only reversed". | Second half of the stock core: completes movement types and the only way to correct a posted document. |
-| 7 | **007 Item unit conversions** — per-item alternative units with factor to base unit; document lines accept any unit of the item, the ledger stores base unit; conversion rounds to 6 decimals (rounding precision per unit deferred, ADR-0014). *Written.* | BC Item Units of Measure ("Qty. per Unit of Measure", rounding precision); ERPNext conversion table. | Needed before purchase/sales lines (boxes bought, pieces stocked). |
-| 8 | **008 Stock count / adjustment** — a `count` stock document: counted quantity per article, book quantity recorded at save, posting writes the difference and is refused if stock moved since (ADR-0015). *Written.* | ERPNext Stock Reconciliation; Odoo inventory adjustment. | Opening balances and corrections; makes inventory usable on its own. |
-| 9 | **009 Purchase orders -> goods receipt** — order (`draft -> confirmed <-> closed`) with supplier, warehouse and lines with unit and unit price; a goods receipt is a `receipt` stock document linked to the order and its lines; received quantity per line in base units, never above the ordered quantity; reversal gives it back; `incomingQuantity` in stock on hand (ADR-0016). *Written.* | SAP B1 base/target documents; BC "Qty. to Receive". | Inbound before outbound: stock must exist before it can be sold. |
-| 10 | **010 Sales orders -> delivery** — the mirror of 009: order with customer, warehouse, lines and prices; a delivery is an `issue` stock document linked to the order, refused above the ordered quantity and above stock on hand; `reservedQuantity` and `availableQuantity` in stock on hand, informational (ADR-0017). No quotation document: a draft order is the offer. *Written.* | SAP B1 (order raises committed, delivery reduces stock); BC partial shipments. | Mirror of 009 plus availability. |
-| — | **MVP boundary (owner decision, 2026-10-09).** Specs 001–010 are the MVP; everything below is post-MVP and is not written until the owner says so. See "MVP boundary" under the table. | — | — |
+| 1 | **001 Foundation + units of measure** — layers, tenants, API keys, error model, test harness, UoM CRUD. *Merged.* | Odoo/ERPNext shared-schema company scoping; UoM list as in BC "Units of Measure". | Everything else depends on it; see section 2. |
+| 2 | **002 Articles** — item master: code, name, description, `type` (stock/service), base unit (required; frozen together with `type` once the item has ledger entries — enforced from 005), `isActive`; reference rules (ADR-0008); a unit used by an article cannot be deleted (`IN_USE`). *Merged.* | ERPNext Item ("Maintain Stock", disabled), BC item card base unit. | First real master; exercises the first tenant-inclusive foreign key and `IN_USE`. |
+| 3 | **003 MCP server** — stateless `/mcp` endpoint, tools for all existing operations, tool-error mapping, tool-list and parity tests; API-key management (create over HTTP only, list/get/revoke over HTTP and MCP, including `agent` keys). *Merged.* | ADR-0005, ADR-0009, ADR-0010; MCP specification 2025-11-25. | The product's primary user gets its interface as soon as there are two resources to prove the pattern; later specs then ship HTTP + MCP together. |
+| 4 | **004 Partners and warehouses** — partner with `isCustomer`/`isSupplier` (at least one), optional unvalidated tax id, one flat neutral address; warehouse with the same address fields; HTTP endpoints and MCP tools together (24 tools in total); first spec whose acceptance tests the tester writes. *Merged.* | SAP B1 business partner; ERPNext warehouse; ADR-0011. | Completes the masters every document needs; restores the scaffold entities. |
+| 5 | **005 Stock ledger, receipts and issues** — stock document (`receipt` / `issue`) with lines, `draft -> posted`; posting writes the append-only stock ledger and assigns the document number; negative stock refused; stock-on-hand and ledger queries; only `stock` articles move; used articles and warehouses get `IN_USE` and frozen `type` / base unit. *Merged.* | ERPNext Stock Entry (Material Receipt / Issue) and Stock Ledger Entry; BC Item Ledger Entry; ADR-0007, ADR-0012. | The core of inventory; every later flow only adds ways to produce these entries. |
+| 6 | **006 Stock transfers and reversal** — `transfer` document (two warehouses, one posting, two entries per line); reversal of a posted document by a linked reversing document; `reversed` status. *Merged.* | ERPNext Material Transfer; BC reclassification journal; SAP B1 "cannot be changed, only reversed". | Second half of the stock core: completes movement types and the only way to correct a posted document. |
+| 7 | **007 Item unit conversions** — per-item alternative units with factor to base unit; document lines accept any unit of the item, the ledger stores base unit; conversion rounds to 6 decimals (rounding precision per unit deferred, ADR-0014). *Merged.* | BC Item Units of Measure ("Qty. per Unit of Measure", rounding precision); ERPNext conversion table. | Needed before purchase/sales lines (boxes bought, pieces stocked). |
+| 8 | **008 Stock count / adjustment** — a `count` stock document: counted quantity per article, book quantity recorded at save, posting writes the difference and is refused if stock moved since (ADR-0015). *Merged.* | ERPNext Stock Reconciliation; Odoo inventory adjustment. | Opening balances and corrections; makes inventory usable on its own. |
+| 9 | **009 Purchase orders -> goods receipt** — order (`draft -> confirmed <-> closed`) with supplier, warehouse and lines with unit and unit price; a goods receipt is a `receipt` stock document linked to the order and its lines; received quantity per line in base units, never above the ordered quantity; reversal gives it back; `incomingQuantity` in stock on hand (ADR-0016). *Merged.* | SAP B1 base/target documents; BC "Qty. to Receive". | Inbound before outbound: stock must exist before it can be sold. |
+| 10 | **010 Sales orders -> delivery** — the mirror of 009: order with customer, warehouse, lines and prices; a delivery is an `issue` stock document linked to the order, refused above the ordered quantity and above stock on hand; `reservedQuantity` and `availableQuantity` in stock on hand, informational (ADR-0017). No quotation document: a draft order is the offer. *Merged.* | SAP B1 (order raises committed, delivery reduces stock); BC partial shipments. | Mirror of 009 plus availability. |
+| — | **MVP boundary (owner decision, 2026-10-09).** Specs 001–010 are the MVP and are merged; everything below is post-MVP and is not written until the owner says so. See "MVP boundary" under the table. | — | — |
 | 11 | **011 Inventory valuation** — cost on inbound entries, moving average per item, value of stock report. | BC value entries; ERPNext Moving Average; Odoo AVCO. | Needs purchase prices (009); prerequisite for COGS. |
 | 12 | **012 Chart of accounts + journal entries** — accounts with categories, balanced manual journals, post/reverse, trial balance, accounting periods. | BC chart of accounts and account categories; SAP B1 reversal-only journals. | Foundation of all financial posting. |
 | 13 | **013 Number series** — per-tenant configurable series per document type (prefix/year pattern, date-effective lines, gapless flag), replacing the fixed patterns of 005. | BC No. Series (gaps not allowed by default); ERPNext naming series tokens. | Legal numbering of invoices must be configurable; nothing before invoices needs more than the fixed counter. |
@@ -113,8 +117,44 @@ the stock ledger with receipts, issues, transfers, reversal, unit conversions an
 with goods receipt, sales orders with delivery. Rows 11–20 and the "Later" row are post-MVP. No spec beyond
 010 is written unless the owner asks.
 
-What the MVP is: quantities and commitments, complete and consistent, for one tenant-scoped company, usable
-through HTTP and MCP. What it is not, because specs 009 and 010 point forward to post-MVP specs:
+**Merged (2026-10-09):**
+
+| Spec | Merged | Spec | Merged |
+|---|---|---|---|
+| 001 Foundation + units of measure | yes | 006 Stock transfers and reversal | yes |
+| 002 Articles | yes | 007 Item unit conversions | yes |
+| 003 MCP server | yes | 008 Stock count | yes |
+| 004 Partners and warehouses | yes | 009 Purchase orders -> goods receipt | yes |
+| 005 Stock ledger, receipts and issues | yes | 010 Sales orders -> delivery | yes |
+
+Open points left by the reviews are in `docs/reviews/open-items.md`; how to run and use the MVP is in
+`docs/getting-started.md`.
+
+**What the MVP does.** For each tenant (one company), over HTTP and over MCP with the same rules:
+- keeps the masters: units of measure, articles (stock or service) with further units and conversion
+  factors, partners (customer and/or supplier), warehouses;
+- moves stock only by posted documents — receipt, issue, transfer, count — into an append-only ledger, in the
+  article's base unit; stock never goes below zero; a posted document is corrected only by reversing it;
+- answers stock on hand per article and warehouse, with what is incoming from purchase orders and what is
+  reserved by sales orders;
+- keeps purchase and sales orders (draft -> confirmed <-> closed) with prices and amounts, received and
+  delivered against in parts by linked receipts and issues, never above the ordered quantity;
+- numbers every posted document and confirmed order per tenant without gaps, and records which API key —
+  human or agent — created, changed, posted or confirmed it.
+
+**What the MVP does not do.**
+- **No invoices.** No sales or purchase invoice, no tax, no credit note; an order is delivered or received
+  but never billed (014).
+- **No accounting.** No chart of accounts, no journal entries, no value of stock or cost of goods sold, no
+  payments or partner balances (011, 012, 015).
+- **No permissions.** Every API key of a tenant, human or agent, can do everything in that tenant, including
+  posting and creating keys (017).
+- **No audit log.** Documents and orders say who created, posted and confirmed them and the ledger is
+  append-only, but changes to master data are not recorded beyond `updatedBy` / `updatedAt` (016).
+
+Also absent: row-level security in the database (019), rate limiting (020), an OpenAPI document (018), a web
+UI and a CLI (separate projects). The table gives the same limits next to what the MVP has in their place,
+with the spec that would add each:
 
 | The MVP has | It lacks | Until |
 |---|---|---|
