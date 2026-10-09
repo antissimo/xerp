@@ -381,7 +381,7 @@ public abstract class OrderDraftTests(XerpFixture app, OrderApi o)
         { "orderDate not a date", """{ "orderDate": "2026-02-30" }""", ["orderDate"] },
         { "due date before orderDate", """{ "$due": "2026-10-08" }""", ["$due"] },
         { "due date not a date", """{ "$due": "2026-02-30" }""", ["$due"] },
-        { "several fields at once", """{ "orderDate": "x", "$partner": "abc", "warehouseId": 5 }""", ["orderDate", "$partner", "warehouseId"] },
+        { "several fields at once", """{ "orderDate": "x", "$partner": "abc", "warehouseId": "abc" }""", ["orderDate", "$partner", "warehouseId"] },
     };
 
     [Theory]

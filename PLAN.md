@@ -3,7 +3,7 @@
 Glavni pregled petlje arhitekt -> tester -> builder -> review -> merge. Redoslijed koraka dolazi iz
 `docs/roadmap.md` (piše ga arhitekt); ovaj dokument vodi orkestrator i ažurira ga nakon svakog koraka.
 
-Zadnje ažuriranje: 2026-10-09 17:00
+Zadnje ažuriranje: 2026-10-09 21:35
 
 ## Opseg MVP-a
 
@@ -32,10 +32,10 @@ Oznake: ✅ gotovo · 🔄 u tijeku · ⬜ nije započeto · — ne primjenjuje 
 | 004 | Partneri i skladišta | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 005 | Skladišna knjiga, primke i izdatnice | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 006 | Međuskladišnice i storno | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 007 | Preračun jedinica mjere po artiklu | ✅ | ✅ | ✅ | 🔄 | ⬜ |
-| 008 | Inventura / korekcija zaliha | ✅ | ✅ | ✅ | ⬜ | ⬜ |
-| 009 | Narudžbe dobavljačima -> primka robe | ✅ | ✅ | 🔄 | ⬜ | ⬜ |
-| 010 | Prodajne narudžbe -> isporuka | ✅ | ✅ | ⬜ | ⬜ | ⬜ |
+| 007 | Preračun jedinica mjere po artiklu | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 008 | Inventura / korekcija zaliha | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 009 | Narudžbe dobavljačima -> primka robe | ✅ | ✅ | ✅ | 🔄 | ⬜ |
+| 010 | Prodajne narudžbe -> isporuka | ✅ | ✅ | 🔄 | ⬜ | ⬜ |
 | | **— granica MVP-a — sve ispod je nakon MVP-a —** | | | | | |
 | 011 | Vrednovanje zaliha | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 012 | Kontni plan + temeljnice | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -52,9 +52,9 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 
 ## Što tko trenutno radi
 
-- **Arhitekt:** čeka zelene grane 007 i 008 za review.
-- **Builder:** zatvara 007 i 008 nad ispravljenim testovima, zatim spec 009 (nabava).
-- **Tester:** usklađuje testove 006–008 s arhitektovim odgovorima (svi testovi MVP-a su napisani).
+- **Arhitekt:** review speca 009.
+- **Builder:** implementacija speca 010 (prodaja), zadnjeg u MVP-u.
+- **Tester:** posao za MVP gotov; javlja se samo za osporene testove.
 
 ## Dnevnik
 
@@ -83,6 +83,9 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 - 2026-10-09 — review 007: kod prihvaćen, jedan testerov test treba ispravak (testovi: 1391 od 1392).
 - 2026-10-09 — 006 prošao ponovni review (OK; 331 unit + 883 integracijska testa), spojen u `main` i pushan.
 - 2026-10-09 — kod za 008 gotov (inventura); tester ispravio osporeni test za 007; arhitekt odgovorio na pitanja za 009 i 010 (bez izmjena testova).
+- 2026-10-09 — 007 prošao ponovni review (OK; orkestrator pokrenuo 410 unit + 992 integracijska testa), spojen u `main` i pushan. Review 008: OK, merge čeka zelenu završnu granu.
+- 2026-10-09 — 008 spojen u `main` i pushan (review OK; orkestrator pokrenuo 451 unit + 1069 integracijskih testova na završnoj grani, bez novog koda nakon reviewa).
+- 2026-10-09 — limit potrošen oko 16:45, nastavak u 21:15; kod za 009 gotov (nabava), na reviewu.
 
 ## Odluke vlasnika
 

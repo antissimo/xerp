@@ -22,6 +22,7 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
     public DbSet<UnitOfMeasure> UnitsOfMeasure => Set<UnitOfMeasure>();
     public DbSet<Article> Articles => Set<Article>();
+    public DbSet<ArticleUnit> ArticleUnits => Set<ArticleUnit>();
     public DbSet<Partner> Partners => Set<Partner>();
     public DbSet<Warehouse> Warehouses => Set<Warehouse>();
     public DbSet<StockDocument> StockDocuments => Set<StockDocument>();
@@ -106,6 +107,33 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
                 .OnDelete(DeleteBehavior.Restrict);
             e.HasOne<ApiKey>().WithMany()
                 .HasForeignKey(a => new { a.TenantId, a.UpdatedBy })
+                .HasPrincipalKey(k => new { k.TenantId, k.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Spec 007 / ADR-0014: a conversion belongs to one article and has no id of its own; its key is
+        // (tenant, article, unit). Both references include TenantId and restrict deletes: a unit with a
+        // conversion cannot be deleted, and an article's conversions are deleted with it by the application.
+        modelBuilder.Entity<ArticleUnit>(e =>
+        {
+            e.ToTable("ArticleUnits");
+            e.HasKey(c => new { c.TenantId, c.ArticleId, c.UnitId });
+            e.Property(c => c.Factor).HasPrecision(12, UnitConversion.FactorDecimalPlaces);
+            e.HasOne<Article>().WithMany()
+                .HasForeignKey(c => new { c.TenantId, c.ArticleId })
+                .HasPrincipalKey(a => new { a.TenantId, a.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            // Its index (TenantId, UnitId) also serves "articles by alternative unit" and "is this unit used".
+            e.HasOne<UnitOfMeasure>().WithMany()
+                .HasForeignKey(c => new { c.TenantId, c.UnitId })
+                .HasPrincipalKey(u => new { u.TenantId, u.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<ApiKey>().WithMany()
+                .HasForeignKey(c => new { c.TenantId, c.CreatedBy })
+                .HasPrincipalKey(k => new { k.TenantId, k.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<ApiKey>().WithMany()
+                .HasForeignKey(c => new { c.TenantId, c.UpdatedBy })
                 .HasPrincipalKey(k => new { k.TenantId, k.Id })
                 .OnDelete(DeleteBehavior.Restrict);
         });
@@ -210,12 +238,24 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
             e.ToTable("StockDocumentLines");
             e.Property(l => l.Id).ValueGeneratedNever();
             e.Property(l => l.Quantity).HasPrecision(18, QuantityRules.DecimalPlaces);
-            e.Ignore(l => l.Values);
+            // Spec 007: set at posting and never afterwards; null on a draft line.
+            e.Property(l => l.Factor).HasPrecision(12, UnitConversion.FactorDecimalPlaces);
+            e.Property(l => l.BaseQuantity).HasPrecision(18, QuantityRules.DecimalPlaces);
+            // Spec 008: on a count line, stock on hand when the draft was last saved; null on every other type.
+            e.Property(l => l.BookQuantity).HasPrecision(18, QuantityRules.DecimalPlaces);
+            e.Ignore(l => l.DifferenceQuantity);
+            e.Ignore(l => l.Entry);
+            e.Ignore(l => l.BaseValues);
             e.HasIndex(l => new { l.TenantId, l.DocumentId, l.LineNo }).IsUnique();
             // Its index (TenantId, ArticleId) also serves "is this article used".
             e.HasOne<Article>().WithMany()
                 .HasForeignKey(l => new { l.TenantId, l.ArticleId })
                 .HasPrincipalKey(a => new { a.TenantId, a.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            // Spec 007: the unit the line was entered in; its index also serves "is this unit used".
+            e.HasOne<UnitOfMeasure>().WithMany()
+                .HasForeignKey(l => new { l.TenantId, l.UnitId })
+                .HasPrincipalKey(u => new { u.TenantId, u.Id })
                 .OnDelete(DeleteBehavior.Restrict);
         });
 

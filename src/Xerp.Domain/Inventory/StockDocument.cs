@@ -15,6 +15,12 @@ public enum StockDocumentType
     /// negative entry in the source and one positive entry in the destination.
     /// </summary>
     Transfer,
+
+    /// <summary>
+    /// The counted quantities of articles in the warehouse (ADR-0015): posting writes, per line, the difference
+    /// between what was counted and the book quantity the draft was saved against - nothing when they agree.
+    /// </summary>
+    Count,
 }
 
 /// <summary>The contract names of <see cref="StockDocumentType"/>, as stored and as sent to clients.</summary>
@@ -23,12 +29,14 @@ public static class StockDocumentTypeNames
     public const string Receipt = "receipt";
     public const string Issue = "issue";
     public const string Transfer = "transfer";
+    public const string Count = "count";
 
     public static string ToName(this StockDocumentType type) => type switch
     {
         StockDocumentType.Receipt => Receipt,
         StockDocumentType.Issue => Issue,
         StockDocumentType.Transfer => Transfer,
+        StockDocumentType.Count => Count,
         _ => throw new ArgumentOutOfRangeException(nameof(type)),
     };
 
@@ -48,6 +56,9 @@ public static class StockDocumentTypeNames
                 return true;
             case Transfer:
                 type = StockDocumentType.Transfer;
+                return true;
+            case Count:
+                type = StockDocumentType.Count;
                 return true;
             default:
                 type = default;
@@ -141,7 +152,7 @@ public sealed class StockDocument : ITenantOwned
     /// <summary>The business date the user assigns; plays no part in the stock check (ADR-0012, decision 5).</summary>
     public DateOnly DocumentDate { get; private set; }
 
-    /// <summary>The warehouse of a receipt or issue; the source of a transfer.</summary>
+    /// <summary>The warehouse of a receipt, an issue or a count; the source of a transfer.</summary>
     public Guid WarehouseId { get; private set; }
 
     /// <summary>The destination of a transfer; null on every other type (spec 006, R2, R3).</summary>
@@ -183,7 +194,7 @@ public sealed class StockDocument : ITenantOwned
 
     public static StockDocument Create(
         StockDocumentType type, DateOnly documentDate, Guid warehouseId, Guid? toWarehouseId, string? reference, string? note,
-        IReadOnlyList<StockLineValues> lines, DateTime now, Guid actorKeyId)
+        IReadOnlyList<StockLineEntry> lines, DateTime now, Guid actorKeyId, IReadOnlyList<decimal>? bookQuantities = null)
     {
         var document = new StockDocument
         {
@@ -193,18 +204,24 @@ public sealed class StockDocument : ITenantOwned
             CreatedAt = now,
             CreatedBy = actorKeyId,
         };
-        document.Replace(documentDate, warehouseId, toWarehouseId, reference, note, lines, now, actorKeyId);
+        document.Replace(documentDate, warehouseId, toWarehouseId, reference, note, lines, now, actorKeyId, bookQuantities);
         return document;
     }
 
     /// <summary>
     /// Replaces header and lines of a draft; lines are renumbered 1…n in the order given (R4, R10).
     /// Returns the lines that are no longer part of the document, for the caller to delete.
+    /// <para>
+    /// A count (spec 008, R3, R4, R6) names each article at most once, may have counted quantities of zero and
+    /// records with every save the book quantity of every line anew: <paramref name="bookQuantities"/>, the
+    /// stock on hand of each line's article in <paramref name="warehouseId"/> at this moment, in line order.
+    /// The other types take none.
+    /// </para>
     /// </summary>
     /// <exception cref="InvalidOperationException">The document is posted (R11).</exception>
     public IReadOnlyList<StockDocumentLine> Replace(
         DateOnly documentDate, Guid warehouseId, Guid? toWarehouseId, string? reference, string? note,
-        IReadOnlyList<StockLineValues> lines, DateTime now, Guid actorKeyId)
+        IReadOnlyList<StockLineEntry> lines, DateTime now, Guid actorKeyId, IReadOnlyList<decimal>? bookQuantities = null)
     {
         EnsureDraft();
         if (!TransferRules.IsValidDestination(Type, warehouseId, toWarehouseId))
@@ -216,8 +233,17 @@ public sealed class StockDocument : ITenantOwned
             throw new ArgumentException("Invalid note.", nameof(note));
         if (lines.Count is < 1 or > MaxLines)
             throw new ArgumentException($"A stock document has 1 to {MaxLines} lines.", nameof(lines));
-        if (lines.Any(l => !QuantityRules.IsValid(l.Quantity)))
+        if (lines.Any(l => !QuantityRules.IsValidOn(Type, l.Quantity)))
             throw new ArgumentException("A line quantity breaks the quantity rule.", nameof(lines));
+        if (Type == StockDocumentType.Count)
+        {
+            if (CountRules.RepeatedLines(lines.Select(l => l.ArticleId).ToList()).Count > 0)
+                throw new ArgumentException("A count names each article at most once.", nameof(lines));
+            if (bookQuantities is null || bookQuantities.Count != lines.Count || bookQuantities.Any(b => !CountRules.IsValidBookQuantity(b)))
+                throw new ArgumentException("A count needs the book quantity of every line: stock on hand, never negative.", nameof(bookQuantities));
+        }
+        else if (bookQuantities is not null)
+            throw new ArgumentException("Only a count records book quantities.", nameof(bookQuantities));
 
         DocumentDate = documentDate;
         WarehouseId = warehouseId;
@@ -231,9 +257,9 @@ public sealed class StockDocument : ITenantOwned
         for (var i = 0; i < lines.Count; i++)
         {
             if (i < current.Count)
-                current[i].Set(lines[i]);
+                current[i].Set(lines[i], bookQuantities?[i]);
             else
-                _lines.Add(new StockDocumentLine(Id, i + 1, lines[i]));
+                _lines.Add(new StockDocumentLine(Id, i + 1, lines[i], bookQuantities?[i]));
         }
         var removed = _lines.Skip(lines.Count).ToList();
         _lines.RemoveRange(lines.Count, removed.Count);
@@ -241,26 +267,51 @@ public sealed class StockDocument : ITenantOwned
     }
 
     /// <summary>
-    /// Posts the draft (R12, R14; spec 006, R6): status, number and posting attribution are set and the ledger
-    /// entries are returned - one positive entry per line for a receipt, one negative for an issue, and for a
-    /// transfer the outgoing entry in the source followed by the incoming entry in the destination. Whether
-    /// stock suffices and which number is next is decided by the caller, inside the same transaction that
-    /// saves the result.
+    /// Posts the draft (R12, R14; spec 006, R6; spec 007, R17-R19): status, number and posting attribution are
+    /// set, every line is converted once more with the factor given for it and keeps that factor and the
+    /// resulting base quantity for good, and the ledger entries are returned - one positive entry per line for
+    /// a receipt, one negative for an issue, and for a transfer the outgoing entry in the source followed by
+    /// the incoming entry in the destination. Every entry is plus or minus its line's base quantity. A count
+    /// (spec 008, R11) writes for every line the difference between its base quantity and its book quantity,
+    /// and no entry where they agree - so it may post without entries. Whether stock suffices, whether a count
+    /// is still current, which number is next and what the factors are now is decided by the caller, inside
+    /// the same transaction that saves the result.
     /// </summary>
-    /// <exception cref="InvalidOperationException">The document is not a draft (R11).</exception>
-    public IReadOnlyList<StockLedgerEntry> Post(string number, DateTime now, Guid actorKeyId)
+    /// <param name="factors">
+    /// For every line, in line order, the factor of its unit to the article's base unit at this moment; 1 for
+    /// a line in the base unit.
+    /// </param>
+    /// <exception cref="InvalidOperationException">The document is not a draft (R11), or a line does not convert (R15).</exception>
+    public IReadOnlyList<StockLedgerEntry> Post(string number, IReadOnlyList<decimal> factors, DateTime now, Guid actorKeyId)
     {
         EnsureDraft();
         if (string.IsNullOrWhiteSpace(number))
             throw new ArgumentException("A posted document needs a number.", nameof(number));
+        var lines = Lines;
+        if (factors.Count != lines.Count)
+            throw new ArgumentException("Posting needs one factor per line.", nameof(factors));
+        // Convert everything before assigning anything, so a refused posting leaves the draft untouched.
+        var baseQuantities = new decimal[lines.Count];
+        for (var i = 0; i < lines.Count; i++)
+        {
+            if (!UnitConversion.IsValidFactor(factors[i]))
+                throw new ArgumentException($"The factor of line {lines[i].LineNo} breaks the factor rule.", nameof(factors));
+            if (!UnitConversion.TryToBaseOn(Type, lines[i].Quantity, factors[i], out baseQuantities[i]))
+                throw new InvalidOperationException($"Line {lines[i].LineNo} does not convert to a quantity in the base unit.");
+        }
 
         Status = StockDocumentStatus.Posted;
         Number = number;
         PostedAt = now;
         PostedBy = actorKeyId;
+        for (var i = 0; i < lines.Count; i++)
+            lines[i].Freeze(factors[i], baseQuantities[i]);
 
-        return Lines
-            .SelectMany(l => StockMovements.OfLine(Type, WarehouseId, ToWarehouseId, l.Values)
+        // From the stored base quantity, never from quantity × factor a second time.
+        return lines
+            .SelectMany(l => (Type == StockDocumentType.Count
+                    ? StockMovements.OfCountLine(WarehouseId, l.BaseValues, l.BookQuantity!.Value)
+                    : StockMovements.OfLine(Type, WarehouseId, ToWarehouseId, l.BaseValues))
                 .Select(m => new StockLedgerEntry(m.ArticleId, m.WarehouseId, m.Quantity, Id, l.LineNo, DocumentDate, now, actorKeyId)))
             .ToList();
     }
@@ -268,7 +319,11 @@ public sealed class StockDocument : ITenantOwned
     /// <summary>
     /// Reverses this posted document (ADR-0013; spec 006, R11-R14): returns the reversing document - same type,
     /// warehouses, lines and reference, already posted under <paramref name="number"/> - and its ledger
-    /// entries, which are <paramref name="entries"/> with the opposite sign. This document becomes
+    /// entries, which are <paramref name="entries"/> with the opposite sign. The lines are copies of this
+    /// document's posted lines - unit, quantity, factor and base quantity as posted - whatever the article's
+    /// conversions are now (spec 007, R20), and on a count with the book quantity it was posted against (spec
+    /// 008, R17). A count that wrote no entries is reversed like any other: the reversing document then has
+    /// none either. This document becomes
     /// <see cref="StockDocumentStatus.Reversed"/> and points to the reversing document; nothing else on it
     /// changes. Whether stock allows it and which number is next is decided by the caller, inside the same
     /// transaction that saves the result.
@@ -286,7 +341,9 @@ public sealed class StockDocument : ITenantOwned
             throw new ArgumentException("Invalid note.", nameof(note));
         if (string.IsNullOrWhiteSpace(number))
             throw new ArgumentException("A posted document needs a number.", nameof(number));
-        if (entries.Count == 0 || entries.Any(e => e.DocumentId != Id))
+        // Every posted line of the other types wrote at least one entry; a count wrote one per line with a difference.
+        var expectedEntries = Type == StockDocumentType.Count ? Lines.Count(l => l.DifferenceQuantity != 0) : (int?)null;
+        if (entries.Any(e => e.DocumentId != Id) || (expectedEntries is { } expected ? entries.Count != expected : entries.Count == 0))
             throw new ArgumentException("A reversal needs exactly the ledger entries of the document it reverses.", nameof(entries));
 
         var reversal = new StockDocument
@@ -308,7 +365,7 @@ public sealed class StockDocument : ITenantOwned
             CreatedBy = actorKeyId,
             UpdatedBy = actorKeyId,
         };
-        reversal._lines.AddRange(Lines.Select(l => new StockDocumentLine(reversal.Id, l.LineNo, l.Values)));
+        reversal._lines.AddRange(Lines.Select(l => StockDocumentLine.CopyOfPosted(reversal.Id, l)));
 
         // Derived from the entries, not from the lines, so the pair sums to zero by construction (R15).
         var reversing = entries
@@ -328,17 +385,32 @@ public sealed class StockDocument : ITenantOwned
     }
 }
 
-/// <summary>One line of a stock document: an article and a quantity in the article's base unit.</summary>
+/// <summary>
+/// One line of a stock document (ADR-0014, decision 4): what was entered - an article, a unit of that article
+/// and a quantity in that unit - and, once the document is posted, the factor used and the resulting quantity
+/// in the article's base unit. A draft line has neither: it is converted with the article's current factor
+/// whenever it is read and when it is posted.
+/// </summary>
 public sealed class StockDocumentLine : ITenantOwned
 {
     private StockDocumentLine() { }
 
-    internal StockDocumentLine(Guid documentId, int lineNo, StockLineValues values)
+    internal StockDocumentLine(Guid documentId, int lineNo, StockLineEntry entry, decimal? bookQuantity = null)
     {
         Id = Guid.CreateVersion7();
         DocumentId = documentId;
         LineNo = lineNo;
-        Set(values);
+        Set(entry, bookQuantity);
+    }
+
+    /// <summary>A line of a reversing document: the posted line as it is, factor and base quantity included (spec 007, R20).</summary>
+    internal static StockDocumentLine CopyOfPosted(Guid documentId, StockDocumentLine posted)
+    {
+        if (posted.Factor is not { } factor || posted.BaseQuantity is not { } baseQuantity)
+            throw new InvalidOperationException("Only a posted line has a factor and a base quantity to copy.");
+        var copy = new StockDocumentLine(documentId, posted.LineNo, posted.Entry, posted.BookQuantity);
+        copy.Freeze(factor, baseQuantity);
+        return copy;
     }
 
     public Guid Id { get; private set; }
@@ -352,15 +424,57 @@ public sealed class StockDocumentLine : ITenantOwned
     public int LineNo { get; private set; }
 
     public Guid ArticleId { get; private set; }
+
+    /// <summary>The unit the quantity was entered in: the article's base unit or one of its alternative units.</summary>
+    public Guid UnitId { get; private set; }
+
+    /// <summary>As entered, in <see cref="UnitId"/>.</summary>
     public decimal Quantity { get; private set; }
 
-    internal void Set(StockLineValues values)
+    /// <summary>The factor the line was posted with; null while the document is a draft. Never changes afterwards (R17).</summary>
+    public decimal? Factor { get; private set; }
+
+    /// <summary>The quantity in the article's base unit, as posted; null while the document is a draft. Never changes afterwards (R17).</summary>
+    public decimal? BaseQuantity { get; private set; }
+
+    /// <summary>
+    /// On a count line (spec 008, R6): stock on hand of the article in the document's warehouse when the draft
+    /// was last saved, in the article's base unit. Written by every save, never by reading; kept for good once
+    /// posted. Null on every other type.
+    /// </summary>
+    public decimal? BookQuantity { get; private set; }
+
+    /// <summary>
+    /// On a posted count line (spec 008, R7): the base quantity minus the book quantity, which is what the
+    /// line wrote to the ledger. Null on a draft (its base quantity follows the current factor) and on every
+    /// other type.
+    /// </summary>
+    public decimal? DifferenceQuantity =>
+        BaseQuantity is { } counted && BookQuantity is { } book ? CountRules.Difference(counted, book) : null;
+
+    internal void Set(StockLineEntry entry, decimal? bookQuantity = null)
     {
-        ArticleId = values.ArticleId;
-        Quantity = values.Quantity;
+        ArticleId = entry.ArticleId;
+        UnitId = entry.UnitId;
+        Quantity = entry.Quantity;
+        BookQuantity = bookQuantity;
     }
 
-    public StockLineValues Values => new(ArticleId, Quantity);
+    internal void Freeze(decimal factor, decimal baseQuantity)
+    {
+        if (Factor is not null || BaseQuantity is not null)
+            throw new InvalidOperationException("A posted line keeps its factor and base quantity.");
+        Factor = factor;
+        BaseQuantity = baseQuantity;
+    }
+
+    /// <summary>What was entered.</summary>
+    public StockLineEntry Entry => new(ArticleId, UnitId, Quantity);
+
+    /// <summary>What the posted line means for stock: the article and its base quantity (R19).</summary>
+    /// <exception cref="InvalidOperationException">The line is not posted.</exception>
+    public StockLineValues BaseValues =>
+        new(ArticleId, BaseQuantity ?? throw new InvalidOperationException("A draft line has no base quantity yet."));
 }
 
 /// <summary>
@@ -416,7 +530,7 @@ public sealed class DocumentCounter : ITenantOwned
 
     public Guid TenantId { get; private set; }
 
-    /// <summary>The contract name of the document type (<c>receipt</c>, <c>issue</c>, <c>transfer</c>).</summary>
+    /// <summary>The contract name of the document type (<c>receipt</c>, <c>issue</c>, <c>transfer</c>, <c>count</c>).</summary>
     public string DocumentType { get; private set; } = "";
 
     public long LastNumber { get; private set; }

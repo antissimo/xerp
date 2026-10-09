@@ -1,6 +1,15 @@
 namespace Xerp.Domain.Inventory;
 
-/// <summary>A line as a caller gives it: an article and a quantity in the article's base unit.</summary>
+/// <summary>
+/// A line as it was entered (spec 007, R12, R13): an article, a unit of that article - its base unit or one of
+/// its alternative units - and a quantity in that unit.
+/// </summary>
+public readonly record struct StockLineEntry(Guid ArticleId, Guid UnitId, decimal Quantity);
+
+/// <summary>
+/// What a line means for stock: an article and a quantity in the article's base unit (spec 007, R19). The
+/// ledger, the stock check and every movement are computed from these, never from an entered quantity.
+/// </summary>
 public readonly record struct StockLineValues(Guid ArticleId, decimal Quantity);
 
 /// <summary>
@@ -15,6 +24,13 @@ public static class QuantityRules
 
     public static bool IsValid(decimal quantity) =>
         quantity > 0 && quantity <= Max && decimal.Round(quantity, DecimalPlaces) == quantity;
+
+    /// <summary>
+    /// The rule for the line of a document of the given type (spec 008, R4): on a count the quantity is what
+    /// was counted and may be zero - none found; on every other type it moves stock and must be greater than zero.
+    /// </summary>
+    public static bool IsValidOn(StockDocumentType type, decimal quantity) =>
+        IsValid(quantity) || (type == StockDocumentType.Count && quantity == 0);
 
     /// <summary>The same value without trailing zeros (<c>100.000000</c> becomes <c>100</c>), so it is written one way everywhere.</summary>
     public static decimal Normalize(decimal quantity) => quantity / 1.0000000000000000000000000000m;
@@ -33,6 +49,7 @@ public static class DocumentNumber
         StockDocumentType.Receipt => "SR",
         StockDocumentType.Issue => "SI",
         StockDocumentType.Transfer => "ST",
+        StockDocumentType.Count => "SC",
         _ => throw new ArgumentOutOfRangeException(nameof(type)),
     };
 
@@ -70,7 +87,7 @@ public readonly record struct StockMovement(Guid ArticleId, Guid WarehouseId, de
 /// <summary>The destination of a transfer (spec 006, R1-R3).</summary>
 public static class TransferRules
 {
-    /// <summary>A transfer has a destination other than its source; a receipt or an issue has none.</summary>
+    /// <summary>A transfer has a destination other than its source; a receipt, an issue or a count has none.</summary>
     public static bool IsValidDestination(StockDocumentType type, Guid warehouseId, Guid? toWarehouseId) =>
         type == StockDocumentType.Transfer
             ? toWarehouseId is { } destination && destination != warehouseId
@@ -98,6 +115,16 @@ public static class StockMovements
             _ => throw new ArgumentOutOfRangeException(nameof(type)),
         };
 
+    /// <summary>
+    /// What posting one count line moves (spec 008, R11, R12): the difference between the counted base quantity
+    /// and the book quantity, into the warehouse when more was found and out of it when less - and nothing
+    /// when they agree. Applied to stock that equals the book quantity, the result is the counted quantity.
+    /// </summary>
+    public static IReadOnlyList<StockMovement> OfCountLine(Guid warehouseId, StockLineValues counted, decimal bookQuantity) =>
+        CountRules.Difference(counted.Quantity, bookQuantity) is var difference && difference != 0
+            ? [new(counted.ArticleId, warehouseId, difference)]
+            : [];
+
     /// <summary>What reversing a movement moves: the same article and warehouse, the opposite quantity (R14).</summary>
     public static StockMovement Opposite(StockMovement movement) => movement with { Quantity = -movement.Quantity };
 
@@ -113,4 +140,42 @@ public static class StockMovements
             .Where(g => onHand.GetValueOrDefault(g.Key) + g.Sum(m => m.Quantity) < 0)
             .Select(g => g.Key.ArticleId)
             .ToHashSet();
+}
+
+/// <summary>
+/// The rules of a stock count (ADR-0015; spec 008): each article once, the difference to the book quantity,
+/// and when a count is still current.
+/// </summary>
+public static class CountRules
+{
+    /// <summary>A book quantity is stock on hand: a quantity in base units, never negative.</summary>
+    public static bool IsValidBookQuantity(decimal bookQuantity) =>
+        bookQuantity >= 0 && decimal.Round(bookQuantity, QuantityRules.DecimalPlaces) == bookQuantity;
+
+    /// <summary>
+    /// R3: the zero-based positions of every line whose article is on more than one line, ascending; empty
+    /// when each article appears once. The unit plays no part: one article in two units is a repeat.
+    /// A null is a line whose article is not known and repeats nothing.
+    /// </summary>
+    public static IReadOnlyList<int> RepeatedLines(IReadOnlyList<Guid?> articleIds)
+    {
+        var repeated = articleIds.Where(a => a is not null).GroupBy(a => a).Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet();
+        return Enumerable.Range(0, articleIds.Count).Where(i => repeated.Contains(articleIds[i])).ToList();
+    }
+
+    /// <inheritdoc cref="RepeatedLines(IReadOnlyList{Guid?})"/>
+    public static IReadOnlyList<int> RepeatedLines(IReadOnlyList<Guid> articleIds) =>
+        RepeatedLines(articleIds.Select(a => (Guid?)a).ToList());
+
+    /// <summary>R7: counted minus book, in base units - positive when more was found than the books say.</summary>
+    public static decimal Difference(decimal baseQuantity, decimal bookQuantity) => baseQuantity - bookQuantity;
+
+    /// <summary>
+    /// R10: the zero-based positions of the lines whose book quantity is no longer the stock on hand of their
+    /// article in the count's warehouse, ascending; empty when the count is current. An article missing from
+    /// <paramref name="onHand"/> has zero stock. Only the quantity is compared, not how stock got there.
+    /// </summary>
+    /// <param name="lines">Per line the article and its book quantity.</param>
+    public static IReadOnlyList<int> OutdatedLines(IReadOnlyList<StockLineValues> lines, IReadOnlyDictionary<Guid, decimal> onHand) =>
+        Enumerable.Range(0, lines.Count).Where(i => onHand.GetValueOrDefault(lines[i].ArticleId) != lines[i].Quantity).ToList();
 }

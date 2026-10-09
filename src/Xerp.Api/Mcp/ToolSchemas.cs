@@ -50,8 +50,9 @@ public static class ToolSchemas
     /// <summary>A JSON number; a quoted number is a wrong type.</summary>
     public static JsonObject Number(string description) => new() { ["type"] = "number", ["description"] = description };
 
-    /// <summary>An array of closed objects with exactly the listed properties, all required.</summary>
-    public static JsonObject ArrayOf(string description, int minItems, int maxItems, params (string Name, JsonObject Schema)[] properties)
+    /// <summary>An array of closed objects with exactly the listed properties; all are required except <paramref name="optional"/>.</summary>
+    public static JsonObject ArrayOf(
+        string description, int minItems, int maxItems, string[] optional, params (string Name, JsonObject Schema)[] properties)
     {
         var declared = new JsonObject();
         foreach (var (name, property) in properties)
@@ -66,7 +67,7 @@ public static class ToolSchemas
             {
                 ["type"] = "object",
                 ["properties"] = declared,
-                ["required"] = new JsonArray(properties.Select(p => (JsonNode)p.Name).ToArray()),
+                ["required"] = new JsonArray(properties.Where(p => !optional.Contains(p.Name)).Select(p => (JsonNode)p.Name).ToArray()),
                 ["additionalProperties"] = false,
             },
         };

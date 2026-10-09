@@ -270,7 +270,7 @@ public abstract class OrderLinkTests(XerpFixture app, OrderApi o)
         var posted = await o.FulfilAsync(s.Http, order, 1, 4);
         var draft = await o.DraftDocumentAsync(s.Http, order, 2, 1);
         var reversed = await o.FulfilAsync(s.Http, order, 2, 2);
-        var reversing = await Stock.ReverseAsync(s.Http, reversed.Id());
+        var reversing = await Stock.ReverseAsync(s.Http, reversed.Id(), Stock.NextDay);
         var ofOther = await o.FulfilAsync(s.Http, other, 1, 1);
         var unlinked = await Stock.CreateAsync(s.Http, o.DocumentType, s.W1, (s.A, 1));
 

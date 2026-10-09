@@ -16,6 +16,7 @@ public interface IXerpDb
     DbSet<ApiKey> ApiKeys { get; }
     DbSet<UnitOfMeasure> UnitsOfMeasure { get; }
     DbSet<Article> Articles { get; }
+    DbSet<ArticleUnit> ArticleUnits { get; }
     DbSet<Partner> Partners { get; }
     DbSet<Warehouse> Warehouses { get; }
     DbSet<StockDocument> StockDocuments { get; }

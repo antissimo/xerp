@@ -47,7 +47,7 @@ public class StockDocumentValidationTests
         Assert.Equal(StockDocumentType.Issue, result.Value.Type);
         var values = result.Value.Values;
         Assert.Equal((new DateOnly(2026, 10, 9), Guid.Parse(W), "DN-1", "a\nb"), (values.DocumentDate, values.WarehouseId, values.Reference, values.Note));
-        Assert.Equal([new StockLineValues(A, 1m), new StockLineValues(B, 2.5m), new StockLineValues(A, 0.000001m)], values.Lines);
+        Assert.Equal([new StockLineRequest(A, 1m), new StockLineRequest(B, 2.5m), new StockLineRequest(A, 0.000001m)], values.Lines);
     }
 
     [Fact]
@@ -157,7 +157,7 @@ public class StockDocumentValidationTests
         var full = StockDocumentValidation.Replace(Body($$"""{"documentDate":"{{date}}","warehouseId":"{{W}}","reference":null,"note":null,"lines":{{lines}}}"""));
         Assert.True(full.IsSuccess);
         Assert.Equal((new DateOnly(2026, 10, 10), null, null), (full.Value.DocumentDate, full.Value.Reference, full.Value.Note));
-        Assert.Equal([new StockLineValues(A, 7m)], full.Value.Lines);
+        Assert.Equal([new StockLineRequest(A, 7m)], full.Value.Lines);
 
         AssertInvalid(StockDocumentValidation.Replace(Body($$"""{"warehouseId":"{{W}}","reference":null,"note":null,"lines":{{lines}}}""")), "documentDate");
         AssertInvalid(StockDocumentValidation.Replace(Body($$"""{"documentDate":"{{date}}","reference":null,"note":null,"lines":{{lines}}}""")), "warehouseId");
@@ -187,20 +187,30 @@ public class StockDocumentValidationTests
 
     // ---- decisions about lines
 
+    // Spec 007: every line here is in the base unit of its article (no unitId), as every line was before that spec.
+    private static readonly Guid Pcs = Guid.CreateVersion7();
+
     private static readonly Dictionary<Guid, ArticleFacts> Articles = new()
     {
-        [A] = new ArticleFacts(true, ArticleType.Stock),
-        [B] = new ArticleFacts(false, ArticleType.Stock),
-        [S] = new ArticleFacts(true, ArticleType.Service),
+        [A] = new ArticleFacts(true, ArticleType.Stock, Pcs),
+        [B] = new ArticleFacts(false, ArticleType.Stock, Pcs),
+        [S] = new ArticleFacts(true, ArticleType.Service, Pcs),
     };
 
-    private static List<StockLineValues> Lines(params Guid[] articles) => articles.Select(a => new StockLineValues(a, 1m)).ToList();
+    private static readonly StockLineFacts Facts = new(Articles, new Dictionary<Guid, bool>(), new Dictionary<(Guid, Guid), decimal>());
+
+    private static List<StockLineRequest> Lines(params Guid[] articles) => articles.Select(a => new StockLineRequest(a, 1m)).ToList();
+
+    private static List<StockLineEntry> Entries(params Guid[] articles) => articles.Select(a => new StockLineEntry(a, Pcs, 1m)).ToList();
+
+    private static Result<IReadOnlyList<StockLineEntry>> References(List<StockLineRequest> lines, params Guid[] alreadyOnDocument) =>
+        StockLineChecks.References(lines, Facts, alreadyOnDocument.ToHashSet(), new HashSet<Guid>());
 
     [Fact]
     public void R5_Stock_articles_that_are_active_or_already_on_the_draft_are_accepted()
     {
-        Assert.Null(StockLineChecks.References(Lines(A, A), Articles, new HashSet<Guid>()));
-        Assert.Null(StockLineChecks.References(Lines(A, B), Articles, new HashSet<Guid> { B })); // E10: kept although inactive
+        Assert.Null(References(Lines(A, A)).Error);
+        Assert.Null(References(Lines(A, B), B).Error); // E10: kept although inactive
     }
 
     [Fact]
@@ -208,21 +218,21 @@ public class StockDocumentValidationTests
     {
         var unknown = Guid.CreateVersion7();
 
-        AssertError(StockLineChecks.References(Lines(unknown, S, unknown, B), Articles, new HashSet<Guid>()),
+        AssertError(References(Lines(unknown, S, unknown, B)).Error,
             ErrorCodes.ReferenceNotFound, "lines[0].articleId", "lines[2].articleId");
-        AssertError(StockLineChecks.References(Lines(A, B, S, B), Articles, new HashSet<Guid>()),
+        AssertError(References(Lines(A, B, S, B)).Error,
             ErrorCodes.ReferenceInactive, "lines[1].articleId", "lines[3].articleId");
-        AssertError(StockLineChecks.References(Lines(A, S), Articles, new HashSet<Guid>()),
+        AssertError(References(Lines(A, S)).Error,
             ErrorCodes.ArticleNotStocked, "lines[1].articleId");
-        AssertError(StockLineChecks.References(Lines(B, S), Articles, new HashSet<Guid> { B }),
+        AssertError(References(Lines(B, S), B).Error,
             ErrorCodes.ArticleNotStocked, "lines[1].articleId");
     }
 
     [Fact]
     public void R13_Posting_needs_every_article_active_also_those_assigned_earlier()
     {
-        Assert.Null(StockLineChecks.ActiveForPosting([], Lines(A, A), Articles));
-        AssertError(StockLineChecks.ActiveForPosting([], Lines(A, B), Articles), ErrorCodes.ReferenceInactive, "lines[1].articleId");
+        Assert.Null(StockLineChecks.ActiveForPosting([], Entries(A, A), Articles));
+        AssertError(StockLineChecks.ActiveForPosting([], Entries(A, B), Articles), ErrorCodes.ReferenceInactive, "lines[1].articleId");
     }
 
     [Fact]
