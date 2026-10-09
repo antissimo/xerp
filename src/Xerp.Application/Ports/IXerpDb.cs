@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Xerp.Domain.Catalog;
 using Xerp.Domain.Inventory;
+using Xerp.Domain.Partners;
 using Xerp.Domain.Tenancy;
 
 namespace Xerp.Application.Ports;
@@ -15,6 +16,8 @@ public interface IXerpDb
     DbSet<ApiKey> ApiKeys { get; }
     DbSet<UnitOfMeasure> UnitsOfMeasure { get; }
     DbSet<Article> Articles { get; }
+    DbSet<Partner> Partners { get; }
+    DbSet<Warehouse> Warehouses { get; }
 
     /// <exception cref="UniqueConstraintViolationException">A unique index rejected the change.</exception>
     /// <exception cref="ForeignKeyViolationException">A foreign key rejected the change.</exception>
@@ -31,12 +34,22 @@ public interface IXerpDb
 /// <summary>
 /// Thrown by <see cref="IXerpDb.SaveChangesAsync"/> when the database rejects a change because of a
 /// unique index. Infrastructure translates the provider's error into this type because Application
-/// cannot see Npgsql.
+/// cannot see Npgsql, and says what the index means: which entity, which properties.
 /// </summary>
-public sealed class UniqueConstraintViolationException(string? constraintName, Exception inner)
+public sealed class UniqueConstraintViolationException(
+    string? constraintName, Type? entityType, IReadOnlyList<string> properties, Exception inner)
     : Exception($"Unique constraint '{constraintName}' was violated.", inner)
 {
     public string? ConstraintName { get; } = constraintName;
+
+    /// <summary>The entity whose index was violated; null when the index is not part of the model.</summary>
+    public Type? EntityType { get; } = entityType;
+
+    /// <summary>The model properties the index covers (for a code: <c>TenantId</c> and <see cref="DbNames.CodeLower"/>).</summary>
+    public IReadOnlyList<string> Properties { get; } = properties;
+
+    /// <summary>True when the violated index is the one that keeps the codes of <typeparamref name="TEntity"/> unique.</summary>
+    public bool IsCodeOf<TEntity>() => EntityType == typeof(TEntity) && Properties.Contains(DbNames.CodeLower);
 }
 
 /// <summary>

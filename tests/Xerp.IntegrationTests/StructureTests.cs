@@ -48,7 +48,7 @@ public class StructureTests(XerpFixture app)
             while (await reader.ReadAsync())
                 tables.Add(reader.GetString(0));
 
-        Assert.Equal(["ApiKeys", "Articles", "Tenants", "UnitsOfMeasure"], tables); // spec 002 adds Articles
+        Assert.Equal(["ApiKeys", "Articles", "Partners", "Tenants", "UnitsOfMeasure", "Warehouses"], tables); // spec 002 adds Articles; spec 004 Partners, Warehouses
 
         foreach (var table in tables.Where(t => t != "Tenants"))
         {

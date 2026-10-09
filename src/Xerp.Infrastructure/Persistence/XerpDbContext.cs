@@ -1,10 +1,12 @@
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Npgsql;
 using Xerp.Application.Ports;
 using Xerp.Domain.Catalog;
 using Xerp.Domain.Common;
 using Xerp.Domain.Inventory;
+using Xerp.Domain.Partners;
 using Xerp.Domain.Tenancy;
 
 namespace Xerp.Infrastructure.Persistence;
@@ -20,6 +22,8 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
     public DbSet<UnitOfMeasure> UnitsOfMeasure => Set<UnitOfMeasure>();
     public DbSet<Article> Articles => Set<Article>();
+    public DbSet<Partner> Partners => Set<Partner>();
+    public DbSet<Warehouse> Warehouses => Set<Warehouse>();
 
     private Guid? CurrentTenantId => tenant.TenantId;
 
@@ -102,10 +106,63 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
+        modelBuilder.Entity<Partner>(e =>
+        {
+            e.ToTable("Partners");
+            e.Property(p => p.Id).ValueGeneratedNever();
+            e.Property(p => p.Code).HasMaxLength(CodeRules.MaxLength);
+            e.Property(p => p.Name).HasMaxLength(NameRules.MaxLength);
+            e.Property(p => p.TaxId).HasMaxLength(PartnerRules.TaxIdMaxLength);
+            e.ComplexProperty(p => p.Address, MapAddress);
+            e.Property<string>(DbNames.CodeLower).HasComputedColumnSql("lower(\"Code\")", stored: true);
+            e.HasIndex(nameof(Partner.TenantId), DbNames.CodeLower).IsUnique();
+            // Documents of later specs reference a partner together with its tenant (ADR-0008, ADR-0011).
+            e.HasAlternateKey(p => new { p.TenantId, p.Id });
+            e.HasOne<ApiKey>().WithMany()
+                .HasForeignKey(p => new { p.TenantId, p.CreatedBy })
+                .HasPrincipalKey(k => new { k.TenantId, k.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<ApiKey>().WithMany()
+                .HasForeignKey(p => new { p.TenantId, p.UpdatedBy })
+                .HasPrincipalKey(k => new { k.TenantId, k.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<Warehouse>(e =>
+        {
+            e.ToTable("Warehouses");
+            e.Property(w => w.Id).ValueGeneratedNever();
+            e.Property(w => w.Code).HasMaxLength(CodeRules.MaxLength);
+            e.Property(w => w.Name).HasMaxLength(NameRules.MaxLength);
+            e.ComplexProperty(w => w.Address, MapAddress);
+            e.Property<string>(DbNames.CodeLower).HasComputedColumnSql("lower(\"Code\")", stored: true);
+            e.HasIndex(nameof(Warehouse.TenantId), DbNames.CodeLower).IsUnique();
+            e.HasAlternateKey(w => new { w.TenantId, w.Id });
+            e.HasOne<ApiKey>().WithMany()
+                .HasForeignKey(w => new { w.TenantId, w.CreatedBy })
+                .HasPrincipalKey(k => new { k.TenantId, k.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<ApiKey>().WithMany()
+                .HasForeignKey(w => new { w.TenantId, w.UpdatedBy })
+                .HasPrincipalKey(k => new { k.TenantId, k.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
         // Applied by type, not by hand, so a new tenant-owned entity cannot be forgotten.
         var configure = typeof(XerpDbContext).GetMethod(nameof(ConfigureTenantOwned), BindingFlags.Instance | BindingFlags.NonPublic)!;
         foreach (var entityType in modelBuilder.Model.GetEntityTypes().Where(t => typeof(ITenantOwned).IsAssignableFrom(t.ClrType)).ToList())
             configure.MakeGenericMethod(entityType.ClrType).Invoke(this, [modelBuilder]);
+    }
+
+    /// <summary>An address is six plain columns of the owning table (ADR-0011, decision 3).</summary>
+    private static void MapAddress(ComplexPropertyBuilder<Address> address)
+    {
+        address.Property(a => a.Line1).HasColumnName("AddressLine1").HasMaxLength(Address.LineMaxLength);
+        address.Property(a => a.Line2).HasColumnName("AddressLine2").HasMaxLength(Address.LineMaxLength);
+        address.Property(a => a.PostalCode).HasColumnName("PostalCode").HasMaxLength(Address.PostalCodeMaxLength);
+        address.Property(a => a.City).HasColumnName("City").HasMaxLength(Address.CityMaxLength);
+        address.Property(a => a.Region).HasColumnName("Region").HasMaxLength(Address.RegionMaxLength);
+        address.Property(a => a.CountryCode).HasColumnName("CountryCode").HasMaxLength(CountryCodeRules.Length);
     }
 
     private void ConfigureTenantOwned<T>(ModelBuilder modelBuilder) where T : class, ITenantOwned
@@ -175,10 +232,10 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
     /// Constraint violations that Application has an answer for (CODE_TAKEN, REFERENCE_NOT_FOUND, IN_USE),
     /// as provider-independent exceptions; null for anything else.
     /// </summary>
-    private static Exception? Translate(DbUpdateException exception) => exception.InnerException switch
+    private Exception? Translate(DbUpdateException exception) => exception.InnerException switch
     {
         PostgresException { SqlState: PostgresErrorCodes.UniqueViolation } postgres =>
-            new UniqueConstraintViolationException(postgres.ConstraintName, exception),
+            UniqueViolation(postgres.ConstraintName, exception),
         // ON DELETE RESTRICT has its own code: the row is still referenced.
         PostgresException { SqlState: PostgresErrorCodes.RestrictViolation } postgres =>
             new ForeignKeyViolationException(postgres.ConstraintName, blockedDelete: true, exception),
@@ -191,4 +248,14 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
                 exception),
         _ => null,
     };
+
+    /// <summary>Says what the violated index means in the model, so Application does not match index names.</summary>
+    private UniqueConstraintViolationException UniqueViolation(string? constraintName, Exception inner)
+    {
+        var index = constraintName is null
+            ? null
+            : Model.GetEntityTypes().SelectMany(t => t.GetIndexes()).FirstOrDefault(i => i.GetDatabaseName() == constraintName);
+        return new UniqueConstraintViolationException(
+            constraintName, index?.DeclaringEntityType.ClrType, index?.Properties.Select(p => p.Name).ToList() ?? [], inner);
+    }
 }

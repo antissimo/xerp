@@ -145,7 +145,7 @@ public sealed class ArticleOperations(IXerpDb db, ITenantContext context, IClock
             // The unit was deleted between the check and the write: the foreign key is the authority (E9).
             return AppError.ReferenceNotFound(BaseUnitField, values.BaseUnitId);
         }
-        catch (UniqueConstraintViolationException ex) when (ex.ConstraintName == DbNames.ArticleCodeIndex)
+        catch (UniqueConstraintViolationException ex) when (ex.IsCodeOf<Article>())
         {
             // Lost a race with a concurrent write of the same code: the unique index is the authority (E8).
             return CodeTaken(values.Code);
