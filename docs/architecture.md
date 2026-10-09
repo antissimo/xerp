@@ -123,6 +123,10 @@ Rules:
   `reopen` switch it between `confirmed` and `closed`. Goods are received or delivered by a stock document
   linked to the order (`purchaseOrderId` / `salesOrderId` on the header, `orderLineNo` on each line); progress
   per order line is kept in base units and never exceeds the ordered quantity.
+  Stock on hand shows, per (article, warehouse), `quantity` (the ledger sum), `incomingQuantity` (outstanding
+  on confirmed purchase orders), `reservedQuantity` (outstanding on confirmed sales orders) and
+  `availableQuantity` (`quantity − reservedQuantity`, may be negative). Reservation informs and blocks nothing
+  (ADR-0017).
 - Prices and amounts are exact decimals in the tenant's one currency: a unit price has at most 6 decimal
   places; an amount is rounded to 2 decimal places, half away from zero.
 - Quantities are exact decimals sent as JSON numbers: at most 6 decimal places and 15 significant digits;
