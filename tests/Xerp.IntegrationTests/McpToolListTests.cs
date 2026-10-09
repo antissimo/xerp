@@ -13,6 +13,7 @@ namespace Xerp.IntegrationTests;
 /// Spec 006, AC-80: 33 tools. Spec 007, AC-80: 37 tools, a <c>lines</c> item gains <c>unitId</c>.
 /// Spec 008, AC-80: still 37 tools; <c>type</c> allows <c>count</c>.
 /// Spec 009, AC-85: 45 tools; the stock tools gain the order link (<c>purchaseOrderId</c>, <c>orderLineNo</c>).
+/// Spec 010, AC-85: 53 tools; <c>stock_document_create</c> and <c>stock_document_list</c> gain <c>salesOrderId</c>.
 /// </summary>
 [Collection(XerpCollection.Name)]
 public class McpToolListTests(XerpFixture app)
@@ -62,12 +63,12 @@ public class McpToolListTests(XerpFixture app)
     ];
 
     // Spec 005, section 5, with the arguments spec 006, section 5, adds (toWarehouseId) and spec 009, section 5
-    // (purchaseOrderId on create and list).
+    // (purchaseOrderId on create and list) and spec 010, section 5 (salesOrderId on create and list).
     private static readonly Expected[] Spec005Tools =
     [
-        new("stock_document_list", ["type", "status", "warehouseId", "purchaseOrderId", "search", "limit", "offset"], [], "read"),
+        new("stock_document_list", ["type", "status", "warehouseId", "purchaseOrderId", "salesOrderId", "search", "limit", "offset"], [], "read"),
         new("stock_document_get", ["id", "number"], [], "read"),
-        new("stock_document_create", ["type", "documentDate", "warehouseId", "toWarehouseId", "purchaseOrderId", "lines", "reference", "note"],
+        new("stock_document_create", ["type", "documentDate", "warehouseId", "toWarehouseId", "purchaseOrderId", "salesOrderId", "lines", "reference", "note"],
             ["type", "documentDate", "warehouseId", "lines"], "create"),
         new("stock_document_update", ["id", "documentDate", "warehouseId", "toWarehouseId", "reference", "note", "lines"],
             ["id", "documentDate", "warehouseId", "reference", "note", "lines"], "update"),
@@ -108,9 +109,24 @@ public class McpToolListTests(XerpFixture app)
         new("purchase_order_reopen", ["id"], ["id"], "create"),
     ];
 
-    // The complete list (spec 004, section 5.3; specs 005 to 009, section 5): a new tool must be added here by its spec.
+    // Spec 010, section 5: the eight tools of spec 009 mirrored, with the same arguments and annotations.
+    private static readonly Expected[] Spec010Tools =
+    [
+        new("sales_order_list", ["status", "deliveryStatus", "customerId", "warehouseId", "search", "limit", "offset"], [], "read"),
+        new("sales_order_get", ["id", "number"], [], "read"),
+        new("sales_order_create", ["orderDate", "customerId", "warehouseId", "lines", "requestedDate", "reference", "note"],
+            ["orderDate", "customerId", "warehouseId", "lines"], "create"),
+        new("sales_order_update", ["id", "orderDate", "requestedDate", "customerId", "warehouseId", "reference", "note", "lines"],
+            ["id", "orderDate", "requestedDate", "customerId", "warehouseId", "reference", "note", "lines"], "update"),
+        new("sales_order_delete", ["id"], ["id"], "delete"),
+        new("sales_order_confirm", ["id"], ["id"], "post"),
+        new("sales_order_close", ["id"], ["id"], "create"),
+        new("sales_order_reopen", ["id"], ["id"], "create"),
+    ];
+
+    // The complete list (spec 004, section 5.3; specs 005 to 010, section 5): a new tool must be added here by its spec.
     private static readonly Expected[] Tools =
-        [.. Spec003Tools, .. Spec004Tools, .. Spec005Tools, .. Spec006Tools, .. Spec007Tools, .. Spec009Tools];
+        [.. Spec003Tools, .. Spec004Tools, .. Spec005Tools, .. Spec006Tools, .. Spec007Tools, .. Spec009Tools, .. Spec010Tools];
 
     private async Task<Dictionary<string, Tool>> ListToolsAsync(string? key = null)
     {
@@ -123,7 +139,7 @@ public class McpToolListTests(XerpFixture app)
     private static string[] Sorted(IEnumerable<string> values) => values.Order(StringComparer.Ordinal).ToArray();
 
     [Fact]
-    public async Task AC40_S004_AC90_S005_AC80_S006_AC80_S007_AC80_S009_AC85_Tool_list_is_exactly_the_45_tools_of_the_specs()
+    public async Task AC40_S004_AC90_S005_AC80_S006_AC80_S007_AC80_S009_AC85_S010_AC85_Tool_list_is_exactly_the_53_tools_of_the_specs()
     {
         var tools = await ListToolsAsync();
 
@@ -133,7 +149,8 @@ public class McpToolListTests(XerpFixture app)
         Assert.Single(Spec006Tools);
         Assert.Equal(4, Spec007Tools.Length);
         Assert.Equal(8, Spec009Tools.Length);
-        Assert.Equal(45, Tools.Length);
+        Assert.Equal(8, Spec010Tools.Length);
+        Assert.Equal(53, Tools.Length);
         Assert.Equal(Sorted(Tools.Select(t => t.Name)), Sorted(tools.Keys));
         Assert.DoesNotContain("api_key_create", tools.Keys);
         Assert.DoesNotContain(tools.Keys, name => name.StartsWith("tenant", StringComparison.OrdinalIgnoreCase));
@@ -285,8 +302,8 @@ public class McpToolListTests(XerpFixture app)
     {
         var tools = await ListToolsAsync();
 
-        // "No new tool; tools/list still returns exactly the 37 tools of spec 007" — 45 since spec 009.
-        Assert.Equal(45, Tools.Length);
+        // "No new tool; tools/list still returns exactly the 37 tools of spec 007" — 45 since spec 009, 53 since spec 010.
+        Assert.Equal(53, Tools.Length);
         Assert.Equal(Sorted(Tools.Select(t => t.Name)), Sorted(tools.Keys));
         Assert.DoesNotContain(tools.Keys, name => name.Contains("count", StringComparison.OrdinalIgnoreCase));
         // The one place where a criterion asks for words in a description (AC-80).
@@ -329,7 +346,9 @@ public class McpToolListTests(XerpFixture app)
     [Theory]
     [InlineData("purchase_order_create")]
     [InlineData("purchase_order_update")]
-    public async Task S009_AC85_Order_lines_is_an_array_of_closed_article_quantity_price_and_unit_objects(string toolName)
+    [InlineData("sales_order_create")]
+    [InlineData("sales_order_update")]
+    public async Task S009_AC85_S010_AC85_Order_lines_is_an_array_of_closed_article_quantity_price_and_unit_objects(string toolName)
     {
         // Section 5: "lines is an array of { articleId: uuid, quantity: number, unitPrice: number, unitId?: uuid | null }
         // (closed schema)".
@@ -362,7 +381,10 @@ public class McpToolListTests(XerpFixture app)
     [InlineData("purchase_order_create", "expectedDate,reference,note")]
     [InlineData("purchase_order_update", "expectedDate,reference,note")]
     [InlineData("stock_document_create", "purchaseOrderId")]
-    public async Task S009_AC85_Nullable_arguments_accept_a_string_or_null(string toolName, string arguments)
+    [InlineData("sales_order_create", "requestedDate,reference,note")]
+    [InlineData("sales_order_update", "requestedDate,reference,note")]
+    [InlineData("stock_document_create", "salesOrderId")]
+    public async Task S009_AC85_S010_AC85_Nullable_arguments_accept_a_string_or_null(string toolName, string arguments)
     {
         var tools = await ListToolsAsync();
 
@@ -400,6 +422,49 @@ public class McpToolListTests(XerpFixture app)
         Assert.Contains("unitPrice", tools["purchase_order_create"].Description ?? "", StringComparison.Ordinal);
         Assert.Contains("PARTNER_ROLE_MISSING", tools["purchase_order_create"].Description ?? "", StringComparison.Ordinal);
         Assert.Contains("INVALID_STATE", tools["purchase_order_confirm"].Description ?? "", StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task S010_AC85_Sales_order_tools_have_description_closed_input_schema_output_schema_and_annotations()
+    {
+        var tools = await ListToolsAsync();
+
+        AssertMetadata(tools, Spec010Tools);
+        AssertAnnotations(tools, Spec010Tools);
+        var confirm = tools["sales_order_confirm"].Annotations!;
+        Assert.True(confirm.DestructiveHint);
+        Assert.False(confirm.ReadOnlyHint);
+        Assert.False(confirm.IdempotentHint);
+        // "required as their mirrors in spec 009".
+        foreach (var (sales, purchase) in Spec010Tools.Zip(Spec009Tools))
+        {
+            Assert.Equal(purchase.Name.Replace("purchase_order", "sales_order"), sales.Name);
+            Assert.Equal(purchase.Required.Length, tools[sales.Name].InputSchema.TryGetProperty("required", out var required) ? required.GetArrayLength() : 0);
+        }
+    }
+
+    [Fact]
+    public async Task S010_AC85_The_stock_tools_carry_the_sales_order_link_and_the_descriptions_say_what_the_spec_asks()
+    {
+        var tools = await ListToolsAsync();
+
+        Assert.False(tools["stock_document_update"].InputSchema.GetProperty("properties").TryGetProperty("salesOrderId", out _));
+        foreach (var name in new[] { "stock_document_create", "stock_document_list" })
+        {
+            Assert.True(tools[name].InputSchema.GetProperty("properties").TryGetProperty("salesOrderId", out _), $"{name} has no salesOrderId.");
+            if (tools[name].InputSchema.TryGetProperty("required", out var required))
+                Assert.DoesNotContain("salesOrderId", required.EnumerateArray().Select(r => r.GetString()));
+        }
+        // Section 5, "Descriptions say": the error codes and field names an agent has to act on.
+        Assert.Contains("INSUFFICIENT_STOCK", tools["stock_document_post"].Description ?? "", StringComparison.Ordinal);
+        var get = tools["sales_order_get"].Description ?? "";
+        foreach (var word in new[] { "issue", "salesOrderId", "orderLineNo" })
+            Assert.Contains(word, get, StringComparison.Ordinal);
+        Assert.Contains("isCustomer", tools["sales_order_create"].Description ?? "", StringComparison.Ordinal);
+        Assert.Contains("availableQuantity", tools["sales_order_confirm"].Description ?? "", StringComparison.Ordinal);
+        var onHand = tools["stock_on_hand_list"].Description ?? "";
+        foreach (var quantity in new[] { "incomingQuantity", "reservedQuantity", "availableQuantity" })
+            Assert.Contains(quantity, onHand, StringComparison.Ordinal);
     }
 
     /// <summary>Follows a local <c>$ref</c> (<c>#/$defs/Name</c>) inside the tool's input schema.</summary>
@@ -498,6 +563,8 @@ public class McpToolListTests(XerpFixture app)
     [InlineData("stock_document_list", "status", "draft,posted,reversed")]
     [InlineData("purchase_order_list", "status", "closed,confirmed,draft")]
     [InlineData("purchase_order_list", "receiptStatus", "full,none,partial")]
+    [InlineData("sales_order_list", "status", "closed,confirmed,draft")]
+    [InlineData("sales_order_list", "deliveryStatus", "full,none,partial")]
     public async Task AC43_S005_AC80_S006_AC80_S008_AC80_S009_AC85_Enumerated_arguments_are_enums_in_the_input_schema(string toolName, string property, string values)
     {
         var tools = await ListToolsAsync();
