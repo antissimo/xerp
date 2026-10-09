@@ -288,6 +288,34 @@ public class StockCountPostingTests(XerpFixture app)
     }
 
     [Fact]
+    public async Task AC39_R9_An_inactive_warehouse_is_reported_alone_and_inactive_articles_only_when_it_is_active()
+    {
+        // 005/R13 as amended (008-q T-Q2): header before lines.
+        var s = await WithHundredAsync();
+        var draft = await Counts.CreateAsync(s.Http, s.W1, (s.B, 1, null), (s.A, 97, null));
+        await Stock.SetWarehouseActiveAsync(s.Http, s.W1, false);
+        await Stock.SetArticleActiveAsync(s.Http, s.A, false);
+        await Stock.SetArticleActiveAsync(s.Http, s.B, false);
+
+        using var header = await Stock.SendPostAsync(s.Http, draft.Id());
+        Assert.Equal(new[] { "warehouseId" }, McpAssert.ErrorKeys(await Stock.ConflictAsync(header, "REFERENCE_INACTIVE")));
+
+        await Stock.SetWarehouseActiveAsync(s.Http, s.W1, true);
+        using var lines = await Stock.SendPostAsync(s.Http, draft.Id());
+        Assert.Equal(new[] { "lines[0].articleId", "lines[1].articleId" },
+            McpAssert.ErrorKeys(await Stock.ConflictAsync(lines, "REFERENCE_INACTIVE")));
+        await Stock.AssertDraftAsync(s.Http, draft.Id());
+        Assert.Equal(100m, await Stock.QuantityAsync(s.Http, s.A, s.W1));
+
+        await Stock.SetArticleActiveAsync(s.Http, s.A, true);
+        await Stock.SetArticleActiveAsync(s.Http, s.B, true);
+        var posted = await Stock.PostDocumentAsync(s.Http, draft.Id());
+
+        Assert.Equal("SC-000001", posted.Number());
+        Assert.Equal(97m, await Stock.QuantityAsync(s.Http, s.A, s.W1));
+    }
+
+    [Fact]
     public async Task AC39_R9_Inactive_masters_and_conversion_are_checked_before_the_count_is_judged_current()
     {
         var s = await WithHundredAsync();
