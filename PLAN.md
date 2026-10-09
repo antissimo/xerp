@@ -39,8 +39,9 @@ Oznake: ✅ gotovo · 🔄 u tijeku · ⬜ nije započeto · — ne primjenjuje 
 | 008 | Inventura / korekcija zaliha | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 009 | Narudžbe dobavljačima -> primka robe | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 010 | Prodajne narudžbe -> isporuka | ✅ | ✅ | ✅ | ✅ | ✅ |
-| | **— granica MVP-a — sve ispod je nakon MVP-a —** | | | | | |
-| 011 | Vrednovanje zaliha | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| | **— granica MVP-a (dovršen) — 011 je prva značajka nakon MVP-a, na zahtjev vlasnika; ostalo ispod čeka —** | | | | | |
+| 011 | Zadano (centralno) skladište, lager lista po skladištu, spremljeni saldo zaliha | ✅ | 🔄 | ⬜ | ⬜ | ⬜ |
+| 012 | Vrednovanje zaliha | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 012 | Kontni plan + temeljnice | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 013 | Brojčane serije dokumenata | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 014 | Porezi + izlazni/ulazni računi | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -55,9 +56,9 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 
 ## Što tko trenutno radi
 
-- **Arhitekt:** zaustavljen (MVP dovršen).
-- **Builder:** zaustavljen (MVP dovršen).
-- **Tester:** zaustavljen (MVP dovršen).
+- **Arhitekt:** pravilo o modelu dokumenta (zaglavlje i stavke) u arhitekturi; zatim review 011.
+- **Builder:** nije pokrenut; kreće kad testovi za 011 budu gotovi.
+- **Tester:** testovi za spec 011 (`tests/011-default-warehouse-stock-balance`).
 
 ## Dnevnik
 
@@ -93,6 +94,7 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 - 2026-10-09 — agenti ponovno pokrenuti; 009 prošao ponovni review (OK; orkestrator pokrenuo 517 unit + 1261 integracijski test), spojen u `main` i pushan. Review koda 010: OK, merge čeka zelenu granu.
 - 2026-10-09 — 010 spojen u `main` i pushan (review koda OK; orkestrator pokrenuo 534 unit + 1460 integracijskih testova na završnoj grani). **Svih deset specova MVP-a je spojeno.** Preostaje stavka čišćenja 001/7.
 - 2026-10-10 — završno čišćenje spojeno (ograničenje zahtjeva 1 MB, 413 PAYLOAD_TOO_LARGE; review OK; 534 unit + 1464 integracijska testa). Dokumentacija MVP-a zatvorena (`docs/getting-started.md`, roadmap). **MVP dovršen.** Ostalo nakon MVP-a: `docs/reviews/open-items.md` (15 stavki) i specovi 011+.
+- 2026-10-10 — vlasnik tražio: centralno skladište po tenantu, lager lista po skladištu, saldo spremljen u bazi a izvediv iz dokumenata; dokument = zaglavlje (partner, narudžba, skladište) + stavke (artikl, količina). Spec 011 napisan (ADR-0018, ADR-0019). Noćni rad: pri limitu čekati reset i nastaviti.
 
 ## Odluke vlasnika
 
@@ -108,6 +110,11 @@ Arhitektovi defaulti koji vrijede dok vlasnik ne kaže drugačije (detalji u ADR
 - Spec 006 (ADR-0013): prijenos je trenutan; storno je zaseban dokument iz iste serije, cijeli i konačan,
   odbijen ako bi zaliha otišla u minus; datum storna zadaje pozivatelj.
 - Spec 007 (ADR-0014): vidi ADR.
+- Spec 011 (ADR-0018, ADR-0019): zadano skladište `CENTRAL` / "Central warehouse"; smije se preimenovati; ne smije se
+  deaktivirati ni obrisati dok je zadano; zadano se mijenja s `set-default`; postojećim tenantima zadano postaje
+  najstarije aktivno skladište; `warehouseId` se pri kreiranju dokumenta smije izostaviti (= zadano); lager lista
+  prikazuje sve artikle tipa roba uključujući nulu; sve čita spremljeni saldo; verify samo prijavljuje, rebuild je
+  izričit poziv.
 - Spec 009/010 (ADR-0016, ADR-0017): potvrđena narudžba se ne mijenja (zatvori i napravi novu); nema
   primke/isporuke preko naručenog; primka/isporuka samo u skladištu narudžbe; samo artikli tipa roba; cijene u
   jednoj valuti, 2 decimale, bez poreza i popusta; rezervacija informira, ne blokira; nema ponude (draft
