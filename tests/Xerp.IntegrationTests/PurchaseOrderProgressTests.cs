@@ -113,7 +113,7 @@ public class PurchaseOrderProgressTests(XerpFixture app)
         var order = await O.OrderedAsync(s, (s.A, 10, null, 1m));
         var receipt = await O.FulfilAsync(s.Http, order, 1, 4);
 
-        using var response = await Stock.SendReverseAsync(s.Http, receipt.Id());
+        using var response = await Stock.SendReverseAsync(s.Http, receipt.Id(), Stock.NextDay);
 
         var reversing = await HttpAssert.JsonAsync(response, HttpStatusCode.Created);
         Assert.Equal(order.Id(), reversing.GetProperty("purchaseOrder").Id());
@@ -178,7 +178,7 @@ public class PurchaseOrderProgressTests(XerpFixture app)
 
         // The factor changes before the reversal: the reversal undoes the 24 that were posted (006, 007/R17).
         await Units.SetAsync(s.Http, s.A, s.Box, 10);
-        await Stock.ReverseAsync(s.Http, first.Id());
+        await Stock.ReverseAsync(s.Http, first.Id(), Stock.NextDay);
 
         await O.AssertProgressAsync(s.Http, order.Id(), "confirmed", "partial", (30m, 30m));
         Assert.Equal(30m, await Stock.QuantityAsync(s.Http, s.A, s.W1));
@@ -195,7 +195,7 @@ public class PurchaseOrderProgressTests(XerpFixture app)
         await O.FulfilAsync(s.Http, order, 1, 1);
         var closed = await O.CloseAsync(s.Http, order.Id());
 
-        using var response = await Stock.SendReverseAsync(s.Http, receipt.Id());
+        using var response = await Stock.SendReverseAsync(s.Http, receipt.Id(), Stock.NextDay);
 
         var reversing = await HttpAssert.JsonAsync(response, HttpStatusCode.Created);
         O.AssertLinked(reversing, order);
@@ -217,7 +217,7 @@ public class PurchaseOrderProgressTests(XerpFixture app)
         var receipt = await O.FulfilAsync(s.Http, order, 1, 10);
         await Stock.IssueAsync(s.Http, s.W1, s.A, 6);
 
-        using var refused = await Stock.SendReverseAsync(s.Http, receipt.Id());
+        using var refused = await Stock.SendReverseAsync(s.Http, receipt.Id(), Stock.NextDay);
 
         await Stock.ConflictAsync(refused, "INSUFFICIENT_STOCK", "lines[0].quantity");
         await O.AssertProgressAsync(s.Http, order.Id(), "confirmed", "full", (10m, 0m));
@@ -226,7 +226,7 @@ public class PurchaseOrderProgressTests(XerpFixture app)
         Assert.Equal(0m, await O.OnHandAsync(s.Http, s.A, s.W1));
         // Once the goods are back the reversal goes through.
         await Stock.ReceiveAsync(s.Http, s.W1, s.A, 6);
-        await Stock.ReverseAsync(s.Http, receipt.Id());
+        await Stock.ReverseAsync(s.Http, receipt.Id(), Stock.NextDay);
         await O.AssertProgressAsync(s.Http, order.Id(), "confirmed", "none", (0m, 10m));
     }
 
@@ -329,7 +329,7 @@ public class PurchaseOrderProgressTests(XerpFixture app)
         // After a receipt is reversed, incoming rises by its quantity.
         var receipt = await O.FulfilAsync(s.Http, order, 1, 4);
         await AssertOnHandAsync(s, s.A, s.W1, quantity: 4m, incoming: 6m);
-        await Stock.ReverseAsync(s.Http, receipt.Id());
+        await Stock.ReverseAsync(s.Http, receipt.Id(), Stock.NextDay);
         await AssertOnHandAsync(s, s.A, s.W1, quantity: 0m, incoming: 10m);
 
         // Closed: neither stock nor incoming, so the pair is gone.
