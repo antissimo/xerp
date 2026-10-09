@@ -105,6 +105,7 @@ otherwise `null`. `errors` keys of `ORDER_NOT_OPEN` and of an unknown order are 
 
 Every item gains `"reservedQuantity"` and `"availableQuantity"` (R15, R16), in base units. The list has one
 item per (article, warehouse) pair whose `quantity`, `incomingQuantity` **or** `reservedQuantity` is not zero.
+The ordering of 005 §4.2 (article code, then warehouse code) holds for every listed pair.
 
 ### 4.4 Masters and error codes
 
@@ -225,7 +226,8 @@ Reading and masters
   until a reopen.
 - E10. A partner with both roles: supplier on a purchase order and customer on a sales order.
 - E11. `salesOrderId` and `purchaseOrderId` both non-null in one create body -> `400` (one of them is on the
-  wrong type whatever the type is).
+  wrong type whatever the type is). `errors` has the key of every link the type cannot carry:
+  `purchaseOrderId` on an `issue`, `salesOrderId` on a `receipt`, both on a `transfer` or a `count`.
 
 ## 8. Tenant isolation
 
@@ -259,8 +261,9 @@ Structure
 - AC-01 *(manual)* Build and tests exit 0; earlier tests pass unweakened. The only earlier tests changed are:
   the literal tool list; tests asserting the exact property set of a stock document, of its list summary or of
   a stock-on-hand item (they gain `salesOrder`, `reservedQuantity`, `availableQuantity`); tests pinning the
-  exact input-schema properties of `stock_document_create` or `stock_document_list`. No test of spec 009 that
-  asserts behaviour changes. One migration added.
+  exact input-schema properties of `stock_document_create` or `stock_document_list`; data-driven
+  schema tests of spec 009 may gain rows for the sales tools, their assertions unchanged. No test of spec 009
+  that asserts behaviour changes. One migration added.
 - AC-02 *(builder)* 009/AC-02 mirrored.
 - AC-03 *(builder, unit)* The amount, progress and status rules are the same code as for purchase orders
   (one implementation, two users); the reserved / available rule (R15, R16) is unit-tested without HTTP.
