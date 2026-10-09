@@ -12,6 +12,8 @@ public sealed class ValidationErrors
     /// <summary>The number of fields that have an error so far.</summary>
     public int Count => _errors.Count;
 
+    public bool Has(string field) => _errors.ContainsKey(field);
+
     public void Add(string field, string message)
     {
         if (!_errors.TryGetValue(field, out var list))

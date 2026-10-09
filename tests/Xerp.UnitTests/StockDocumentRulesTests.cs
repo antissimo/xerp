@@ -16,7 +16,7 @@ public class StockDocumentRulesTests
     private static readonly Guid B = Guid.CreateVersion7();
 
     private static StockDocument Draft(StockDocumentType type, params (Guid, decimal)[] lines) =>
-        StockDocument.Create(type, Day, Warehouse, null, null, lines.Select(l => new StockLineValues(l.Item1, l.Item2)).ToList(), T0, Actor);
+        StockDocument.Create(type, Day, Warehouse, null, null, null, lines.Select(l => new StockLineValues(l.Item1, l.Item2)).ToList(), T0, Actor);
 
     // ---- R6 quantity
 
@@ -119,7 +119,7 @@ public class StockDocumentRulesTests
     public void R9_A_new_document_is_a_draft_without_number_with_lines_numbered_in_the_order_given()
     {
         var document = StockDocument.Create(
-            StockDocumentType.Receipt, Day, Warehouse, "  DN-17 ", " line 1\nline 2 ",
+            StockDocumentType.Receipt, Day, Warehouse, null, "  DN-17 ", " line 1\nline 2 ",
             [new StockLineValues(A, 1m), new StockLineValues(B, 2.5m), new StockLineValues(A, 0.000001m)], T0, Actor);
 
         Assert.Equal(7, document.Id.Version);
@@ -140,9 +140,9 @@ public class StockDocumentRulesTests
         Assert.Throws<ArgumentException>(() => Draft(StockDocumentType.Receipt, Enumerable.Repeat((A, 1m), 201).ToArray()));
         Assert.Throws<ArgumentException>(() => Draft(StockDocumentType.Receipt, (A, 0m)));
         Assert.Throws<ArgumentException>(() => Draft(StockDocumentType.Receipt, (A, 1.0000001m)));
-        Assert.Throws<ArgumentException>(() => StockDocument.Create(StockDocumentType.Receipt, Day, Warehouse, "a\nb", null, [new StockLineValues(A, 1m)], T0, Actor));
-        Assert.Throws<ArgumentException>(() => StockDocument.Create(StockDocumentType.Receipt, Day, Warehouse, new string('r', 101), null, [new StockLineValues(A, 1m)], T0, Actor));
-        Assert.Throws<ArgumentException>(() => StockDocument.Create(StockDocumentType.Receipt, Day, Warehouse, null, new string('n', 2001), [new StockLineValues(A, 1m)], T0, Actor));
+        Assert.Throws<ArgumentException>(() => StockDocument.Create(StockDocumentType.Receipt, Day, Warehouse, null, "a\nb", null, [new StockLineValues(A, 1m)], T0, Actor));
+        Assert.Throws<ArgumentException>(() => StockDocument.Create(StockDocumentType.Receipt, Day, Warehouse, null, new string('r', 101), null, [new StockLineValues(A, 1m)], T0, Actor));
+        Assert.Throws<ArgumentException>(() => StockDocument.Create(StockDocumentType.Receipt, Day, Warehouse, null, null, new string('n', 2001), [new StockLineValues(A, 1m)], T0, Actor));
         Assert.Equal(200, Draft(StockDocumentType.Receipt, Enumerable.Repeat((A, 1m), 200).ToArray()).Lines.Count);
     }
 
@@ -154,7 +154,7 @@ public class StockDocumentRulesTests
         var document = Draft(StockDocumentType.Issue, (A, 1m), (B, 2m), (A, 3m));
         var id = document.Id;
 
-        var removed = document.Replace(Day.AddDays(1), otherWarehouse, "ref", null, [new StockLineValues(B, 7m)], T0.AddMinutes(1), editor);
+        var removed = document.Replace(Day.AddDays(1), otherWarehouse, null, "ref", null, [new StockLineValues(B, 7m)], T0.AddMinutes(1), editor);
 
         Assert.Equal(2, removed.Count);
         Assert.Equal((id, StockDocumentType.Issue, StockDocumentStatus.Draft), (document.Id, document.Type, document.Status));
@@ -162,11 +162,11 @@ public class StockDocumentRulesTests
         Assert.Equal([(1, B, 7m)], document.Lines.Select(l => (l.LineNo, l.ArticleId, l.Quantity)));
         Assert.Equal((T0, T0.AddMinutes(1), Actor, editor), (document.CreatedAt, document.UpdatedAt, document.CreatedBy, document.UpdatedBy));
 
-        Assert.Empty(document.Replace(Day, Warehouse, null, null, [new StockLineValues(A, 1m), new StockLineValues(B, 2m)], T0, Actor));
+        Assert.Empty(document.Replace(Day, Warehouse, null, null, null, [new StockLineValues(A, 1m), new StockLineValues(B, 2m)], T0, Actor));
         Assert.Equal([(1, A, 1m), (2, B, 2m)], document.Lines.Select(l => (l.LineNo, l.ArticleId, l.Quantity)));
 
         // A rejected replace leaves the draft untouched.
-        Assert.Throws<ArgumentException>(() => document.Replace(Day, Warehouse, null, null, [new StockLineValues(A, 5m), new StockLineValues(B, -1m)], T0, Actor));
+        Assert.Throws<ArgumentException>(() => document.Replace(Day, Warehouse, null, null, null, [new StockLineValues(A, 5m), new StockLineValues(B, -1m)], T0, Actor));
         Assert.Equal([(1, A, 1m), (2, B, 2m)], document.Lines.Select(l => (l.LineNo, l.ArticleId, l.Quantity)));
     }
 
@@ -205,7 +205,7 @@ public class StockDocumentRulesTests
         document.Post("SR-000001", T0, Actor);
 
         Assert.Throws<InvalidOperationException>(() => document.Post("SR-000002", T0, Actor));
-        Assert.Throws<InvalidOperationException>(() => document.Replace(Day, Warehouse, null, null, [new StockLineValues(A, 2m)], T0, Actor));
+        Assert.Throws<InvalidOperationException>(() => document.Replace(Day, Warehouse, null, null, null, [new StockLineValues(A, 2m)], T0, Actor));
         Assert.Equal(("SR-000001", 1m), (document.Number, document.Lines.Single().Quantity));
         Assert.Throws<ArgumentException>(() => Draft(StockDocumentType.Receipt, (A, 1m)).Post(" ", T0, Actor));
     }

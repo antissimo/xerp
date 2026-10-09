@@ -63,7 +63,7 @@ public class StockDocumentValidationTests
     [InlineData(null)]
     [InlineData("")]
     [InlineData("Receipt")]
-    [InlineData("transfer")]
+    [InlineData("return")]
     [InlineData(" receipt")]
     public void R1_E5_Type_is_exactly_receipt_or_issue(string? type)
     {
@@ -141,7 +141,7 @@ public class StockDocumentValidationTests
     public void R8_All_invalid_fields_and_lines_are_reported_together_valid_lines_are_not()
     {
         var input = new CreateStockDocumentInput(
-            "transfer", "2026-02-30", "abc", [Line(A, 0m), Line(B, 1m), new StockLineInput(null, -1m)], "a\nb", "a\u0000b");
+            "return", "2026-02-30", "abc", [Line(A, 0m), Line(B, 1m), new StockLineInput(null, -1m)], "a\nb", "a\u0000b");
 
         AssertInvalid(StockDocumentValidation.Create(input),
             "type", "documentDate", "warehouseId", "reference", "note", "lines[0].quantity", "lines[2].articleId", "lines[2].quantity");
@@ -175,7 +175,7 @@ public class StockDocumentValidationTests
         Assert.Equal(
             new StockDocumentListQuery(StockDocumentType.Issue, StockDocumentStatus.Draft, id, "sr-0", 10, 5),
             StockDocumentValidation.List(new ListStockDocumentsInput("issue", "draft", id.ToString(), " sr-0 ", 10, 5)).Value);
-        AssertInvalid(StockDocumentValidation.List(new ListStockDocumentsInput("transfer", "open", "abc", null, 0, -1)),
+        AssertInvalid(StockDocumentValidation.List(new ListStockDocumentsInput("return", "open", "abc", null, 0, -1)),
             "type", "status", "warehouseId", "limit", "offset");
         AssertInvalid(StockDocumentValidation.List(new ListStockDocumentsInput("Receipt", "Posted")), "type", "status");
 
@@ -221,8 +221,8 @@ public class StockDocumentValidationTests
     [Fact]
     public void R13_Posting_needs_every_article_active_also_those_assigned_earlier()
     {
-        Assert.Null(StockLineChecks.ActiveForPosting(Lines(A, A), Articles));
-        AssertError(StockLineChecks.ActiveForPosting(Lines(A, B), Articles), ErrorCodes.ReferenceInactive, "lines[1].articleId");
+        Assert.Null(StockLineChecks.ActiveForPosting([], Lines(A, A), Articles));
+        AssertError(StockLineChecks.ActiveForPosting([], Lines(A, B), Articles), ErrorCodes.ReferenceInactive, "lines[1].articleId");
     }
 
     [Fact]
