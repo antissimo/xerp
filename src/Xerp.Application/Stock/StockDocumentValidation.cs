@@ -15,10 +15,12 @@ public static class StockDocumentValidation
     private const string DateFormat = "yyyy-MM-dd";
 
     private const string TypeMessage =
-        $"type must be \"{StockDocumentTypeNames.Receipt}\" or \"{StockDocumentTypeNames.Issue}\".";
+        $"type must be \"{StockDocumentTypeNames.Receipt}\", \"{StockDocumentTypeNames.Issue}\" or \"{StockDocumentTypeNames.Transfer}\".";
 
     private const string StatusMessage =
-        $"status must be \"{StockDocumentStatusNames.Draft}\" or \"{StockDocumentStatusNames.Posted}\".";
+        $"status must be \"{StockDocumentStatusNames.Draft}\", \"{StockDocumentStatusNames.Posted}\" or \"{StockDocumentStatusNames.Reversed}\".";
+
+    public const string ToWarehouseField = "toWarehouseId";
 
     public static string LineKey(int index, string field) => $"lines[{index}].{field}";
 
@@ -27,7 +29,11 @@ public static class StockDocumentValidation
         var errors = new ValidationErrors();
         if (!StockDocumentTypeNames.TryParse(input.Type, out var type))
             errors.Add("type", string.IsNullOrEmpty(input.Type) ? "type is required. " + TypeMessage : TypeMessage);
-        var values = Values(errors, input.DocumentDate, input.WarehouseId, input.Reference, input.Note, input.Lines);
+        var values = Values(errors, input.DocumentDate, input.WarehouseId, input.ToWarehouseId, input.Reference, input.Note, input.Lines);
+        // Only for a known type can the destination be judged (spec 006, R2, R3).
+        if (!errors.Has("type") && !errors.Has(ToWarehouseField)
+            && DestinationMessage(type, values.WarehouseId, values.ToWarehouseId) is { } message)
+            errors.Add(ToWarehouseField, message);
         if (errors.Any)
             return errors.ToError();
         return new NewStockDocumentValues(type, values);
@@ -44,28 +50,83 @@ public static class StockDocumentValidation
                 errors.Add(field, $"{field} is required (it may be null).");
             }
         }
-        var values = Values(errors, input.DocumentDate, input.WarehouseId, input.Reference, input.Note, input.Lines);
+        var values = Values(errors, input.DocumentDate, input.WarehouseId, input.ToWarehouseId, input.Reference, input.Note, input.Lines);
         if (errors.Any)
             return errors.ToError();
         return values;
     }
 
-    private static StockDocumentValues Values(
-        ValidationErrors errors, string? documentDate, string? warehouseId, string? reference, string? note,
-        IReadOnlyList<StockLineInput?>? lines)
+    /// <summary>
+    /// The destination rule (spec 006, R2, R3) for a document of a known type: null when
+    /// <paramref name="toWarehouseId"/> is acceptable, otherwise <c>VALIDATION_FAILED</c> with key
+    /// <c>toWarehouseId</c> - never <c>warehouseId</c>, also when the two are equal.
+    /// </summary>
+    public static AppError? Destination(StockDocumentType type, Guid warehouseId, Guid? toWarehouseId) =>
+        DestinationMessage(type, warehouseId, toWarehouseId) is { } message ? AppError.Validation(ToWarehouseField, message) : null;
+
+    private static string? DestinationMessage(StockDocumentType type, Guid warehouseId, Guid? toWarehouseId)
     {
-        // R2: exactly YYYY-MM-DD and a real calendar date; any date, past or future.
+        if (TransferRules.IsValidDestination(type, warehouseId, toWarehouseId))
+            return null;
+        if (type != StockDocumentType.Transfer)
+            return $"toWarehouseId is only for a transfer; for a {type.ToName()} leave it out or pass null.";
+        return toWarehouseId is null
+            ? "toWarehouseId is required for a transfer: the id of the warehouse the goods go to."
+            : "toWarehouseId must differ from warehouseId: a transfer moves goods to another warehouse.";
+    }
+
+    /// <summary>The body of a reversal (spec 006, R12): a real calendar date and an optional note.</summary>
+    public static Result<StockReversalValues> Reverse(ReverseStockDocumentInput input)
+    {
+        var errors = new ValidationErrors();
+        var date = Date(errors, input.DocumentDate);
+        var note = Note(errors, input.Note);
+        if (errors.Any)
+            return errors.ToError();
+        return new StockReversalValues(date, note);
+    }
+
+    /// <summary>Spec 006, R12: a reversal is not dated before the document it reverses.</summary>
+    public static AppError? ReversalDate(DateOnly reversalDate, DateOnly originalDate) =>
+        reversalDate >= originalDate
+            ? null
+            : AppError.Validation("documentDate",
+                $"documentDate of a reversal must not be earlier than the date of the document it reverses, {originalDate.ToString(DateFormat, CultureInfo.InvariantCulture)}.");
+
+    // R2: exactly YYYY-MM-DD and a real calendar date; any date, past or future.
+    private static DateOnly Date(ValidationErrors errors, string? documentDate)
+    {
         if (!DateOnly.TryParseExact(documentDate, DateFormat, CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
             errors.Add("documentDate", string.IsNullOrEmpty(documentDate)
                 ? "documentDate is required, as YYYY-MM-DD."
                 : "documentDate must be a calendar date written as YYYY-MM-DD, for example 2026-10-09.");
+        return date;
+    }
 
+    private static string? Note(ValidationErrors errors, string? note)
+    {
+        if (!NoteRules.TryNormalize(note, StockDocument.NoteMaxLength, out var normalized))
+            errors.Add("note", $"note must be at most {StockDocument.NoteMaxLength} characters and contain no control characters other than line breaks and tabs.");
+        return normalized;
+    }
+
+    private static StockDocumentValues Values(
+        ValidationErrors errors, string? documentDate, string? warehouseId, string? toWarehouseId, string? reference, string? note,
+        IReadOnlyList<StockLineInput?>? lines)
+    {
+        var date = Date(errors, documentDate);
         var warehouse = RequiredId(errors, warehouseId, "warehouseId", "a warehouse");
+        // Only the form here: whether a destination is needed depends on the type (spec 006, R2, R3).
+        Guid? toWarehouse = null;
+        if (toWarehouseId is not null)
+        {
+            if (Guid.TryParse(toWarehouseId, out var parsed)) toWarehouse = parsed;
+            else errors.Add(ToWarehouseField, "toWarehouseId must be the id (UUID) of a warehouse, not its code.");
+        }
 
         if (!OptionalTextRules.TryNormalize(reference, StockDocument.ReferenceMaxLength, out var normalizedReference))
             errors.Add("reference", $"reference must be at most {StockDocument.ReferenceMaxLength} characters on a single line, without control characters.");
-        if (!NoteRules.TryNormalize(note, StockDocument.NoteMaxLength, out var normalizedNote))
-            errors.Add("note", $"note must be at most {StockDocument.NoteMaxLength} characters and contain no control characters other than line breaks and tabs.");
+        var normalizedNote = Note(errors, note);
 
         var lineValues = new List<StockLineValues>();
         if (lines is null || lines.Count == 0)
@@ -91,7 +152,7 @@ public static class StockDocumentValidation
                     lineValues.Add(new StockLineValues(article, quantity));
             }
         }
-        return new StockDocumentValues(date, warehouse, normalizedReference, normalizedNote, lineValues);
+        return new StockDocumentValues(date, warehouse, toWarehouse, normalizedReference, normalizedNote, lineValues);
     }
 
     public static Result<StockDocumentListQuery> List(ListStockDocumentsInput input)

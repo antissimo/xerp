@@ -101,17 +101,20 @@ public static class ToolCatalog
     ];
 
     private const string StockReferences =
-        "`REFERENCE_NOT_FOUND`: `warehouseId` or a line's `articleId` names no record of this tenant (`errors` says which; find ids with `warehouse_list`, `article_list`). "
+        "`REFERENCE_NOT_FOUND`: `warehouseId`, `toWarehouseId` or a line's `articleId` names no record of this tenant (`errors` says which; find ids with `warehouse_list`, `article_list`). "
         + "`REFERENCE_INACTIVE`: that warehouse or article is inactive and would be newly used. "
         + "`ARTICLE_NOT_STOCKED`: a line names a service article; only articles of type `stock` have stock. "
         + "Errors about a line are keyed by position, for example `lines[0].articleId`.";
 
-    private const string DocumentPosted = "`INVALID_STATE`: the document is already posted; a posted document is permanent and cannot be changed, deleted or posted again.";
+    private const string DocumentPosted = "`INVALID_STATE`: the document is already posted (or reversed); a posted document is permanent and cannot be changed, deleted or posted again. "
+        + "To correct one, use `stock_document_reverse` and create a new document.";
 
     private static (string, System.Text.Json.Nodes.JsonObject)[] StockDocumentFields(bool update) =>
     [
         ("documentDate", Text("The business date of the document as YYYY-MM-DD, for example 2026-10-09. Any date, past or future; it does not affect the stock check.")),
-        ("warehouseId", Uuid("The `id` of the warehouse the goods come into (receipt) or leave (issue); see `warehouse_list`. Not the code.")),
+        ("warehouseId", Uuid("The `id` of the warehouse the goods come into (receipt) or leave (issue); for a transfer the source, which the goods leave. See `warehouse_list`. Not the code.")),
+        ("toWarehouseId", NullableUuid("Only for a transfer, where it is required: the `id` of the destination warehouse the goods arrive in. "
+            + "It must differ from `warehouseId`, which is the source. For a receipt or an issue leave it out or pass null.")),
         ("reference", NullableText("Your own reference, for example a delivery-note number; one line, at most 100 characters."
             + (update ? " Required: pass null for no value." : " Optional."))),
         ("note", NullableText("Free text, may have several lines, at most 2000 characters." + (update ? " Required: pass null for no value." : " Optional."))),
@@ -282,13 +285,14 @@ public static class ToolCatalog
 
         // ---- stock documents, stock on hand, stock ledger
         XerpTool.For<ListStockDocumentsInput, PagedResult<StockDocumentSummaryDto>>("stock_document_list", ToolKind.Read,
-            "Lists the tenant's stock documents (receipts and issues), newest first, with paging; each item has `lineCount` instead of the lines. "
+            "Lists the tenant's stock documents (receipts, issues and transfers), newest first, with paging; each item has `lineCount` instead of the lines. "
+            + "A reversed document has status `reversed` and `reversedBy`; the document that reversed it has status `posted` and `reversalOf`. "
             + "Filters combine with AND. " + Validation,
             Input([],
             [
-                ("type", Text("Return only documents of this type.", "receipt", "issue")),
-                ("status", Text("Return only drafts or only posted documents.", "draft", "posted")),
-                ("warehouseId", Uuid("Return only documents of the warehouse with this `id`.")),
+                ("type", Text("Return only documents of this type.", "receipt", "issue", "transfer")),
+                ("status", Text("Return only documents in this status. `posted` includes reversing documents; `reversed` are the originals that were reversed.", "draft", "posted", "reversed")),
+                ("warehouseId", Uuid("Return only documents of the warehouse with this `id`: as the warehouse of the document or as the destination of a transfer.")),
                 Search("the document number or the reference"),
                 .. Paging,
             ]),
@@ -305,18 +309,20 @@ public static class ToolCatalog
             (services, input, ct) => services.GetRequiredService<StockDocumentOperations>().FindAsync(input, ct)),
 
         XerpTool.For<CreateStockDocumentInput, StockDocumentDto>("stock_document_create", ToolKind.Create,
-            "Creates a stock document as a draft and returns it with its `id`. A `receipt` brings goods into the warehouse, an `issue` takes them out. "
+            "Creates a stock document as a draft and returns it with its `id`. A `receipt` brings goods into the warehouse, an `issue` takes them out, "
+            + "a `transfer` moves them from `warehouseId` (source) to `toWarehouseId` (destination) in one posting. "
             + "A draft changes no stock and reserves nothing; it takes effect only when posted with `stock_document_post`. "
             + Validation + " " + StockReferences,
             Input(["type", "documentDate", "warehouseId", "lines"],
             [
-                ("type", Text("`receipt`: goods come into the warehouse. `issue`: goods leave it. Cannot be changed later.", "receipt", "issue")),
+                ("type", Text("`receipt`: goods come into the warehouse. `issue`: goods leave it. `transfer`: goods move from `warehouseId` to `toWarehouseId`. Cannot be changed later.", "receipt", "issue", "transfer")),
                 .. StockDocumentFields(update: false),
             ]),
             (services, input, ct) => services.GetRequiredService<StockDocumentOperations>().CreateAsync(input, ct)),
 
         XerpTool.WithId<ReplaceStockDocumentInput, StockDocumentDto>("stock_document_update", ToolKind.Update,
-            "Replaces the date, warehouse, reference, note and all lines of a draft; every argument is required (`reference` and `note` may be null). "
+            "Replaces the date, warehouse, reference, note and all lines of a draft; every argument is required (`reference` and `note` may be null), "
+            + "except `toWarehouseId`, which is required for a transfer only (the destination; `warehouseId` is the source). "
             + "The type cannot change. " + Validation + " `NOT_FOUND`: no such document in this tenant. " + DocumentPosted + " " + StockReferences,
             Input(["id", "documentDate", "warehouseId", "reference", "note", "lines"],
                 [IdOf("draft stock document to replace"), .. StockDocumentFields(update: true)]),
@@ -328,15 +334,34 @@ public static class ToolCatalog
             (services, input, ct) => services.GetRequiredService<StockDocumentOperations>().DeleteAsync(input.Id, ct)),
 
         XerpTool.For<RecordIdInput, StockDocumentDto>("stock_document_post", ToolKind.Post,
-            "Posts a draft stock document. Posting is permanent: the document gets its number (`SR-…` receipt, `SI-…` issue), can no longer be changed or deleted, "
-            + "and stock on hand changes by one ledger entry per line - a receipt adds its quantities to the warehouse, an issue subtracts them. "
+            "Posts a draft stock document. Posting is permanent: the document gets its number (`SR-…` receipt, `SI-…` issue, `ST-…` transfer), can no longer be changed or deleted, "
+            + "and stock on hand changes through ledger entries - a receipt adds its quantities to the warehouse, an issue subtracts them, "
+            + "a transfer subtracts them from the source and adds them to the destination together, so total stock does not change. "
             + "It either does all of this or nothing. `NOT_FOUND`: no such document in this tenant. " + DocumentPosted + " "
-            + "`REFERENCE_INACTIVE`: the warehouse or an article of the document is inactive (`errors` says which); reactivate it or change the draft. "
-            + "`INSUFFICIENT_STOCK`: an issue would take more than is on hand in its warehouse; `errors` names the short lines (`lines[0].quantity`). "
+            + "`REFERENCE_INACTIVE`: a warehouse or an article of the document is inactive (`errors` says which); reactivate it or change the draft. "
+            + "`INSUFFICIENT_STOCK`: an issue or a transfer would take more than is on hand in its (source) warehouse; `errors` names the short lines (`lines[0].quantity`). "
             + "Nothing was posted and the draft is unchanged: check `stock_on_hand_list`, then correct the draft with `stock_document_update` "
             + "or receive stock first, and post again.",
             Input(["id"], IdOf("draft stock document to post")),
             (services, input, ct) => services.GetRequiredService<StockDocumentOperations>().PostAsync(input.Id, ct)),
+
+        XerpTool.WithId<ReverseStockDocumentInput, StockDocumentDto>("stock_document_reverse", ToolKind.Reverse,
+            "Reverses a posted stock document (receipt, issue or transfer) and returns the new reversing document. This is the only way to correct a posted document. "
+            + "A reversal is permanent and cannot itself be reversed. It cancels the whole document: the reversing document has the same type, warehouses and lines, "
+            + "its own number from the same series, and ledger entries with the opposite sign, so stock is as if the original had never been posted; "
+            + "the original gets status `reversed`. To correct a mistake, reverse and then create a new document with `stock_document_create`. "
+            + "It either does all of this or nothing. Inactive warehouses or articles do not prevent a reversal. "
+            + Validation + " `documentDate` earlier than the original's is one of them. `NOT_FOUND`: no such document in this tenant. "
+            + "`INVALID_STATE`: the document is a draft, is already reversed, or is itself a reversing document. "
+            + "`INSUFFICIENT_STOCK`: the goods the original brought in have already left, so the reversal would make stock negative; `errors` names the original's lines (`lines[0].quantity`). "
+            + "Nothing was reversed: reverse the later documents that took the goods out first (see `stock_ledger_entry_list`), then reverse this one again.",
+            Input(["id", "documentDate"],
+            [
+                IdOf("posted stock document to reverse"),
+                ("documentDate", Text("The business date of the reversal as YYYY-MM-DD; not earlier than the `documentDate` of the document being reversed.")),
+                ("note", NullableText("Why the document is reversed; free text, may have several lines, at most 2000 characters. Optional.")),
+            ]),
+            (services, id, input, ct) => services.GetRequiredService<StockDocumentOperations>().ReverseAsync(id, input, ct)),
 
         XerpTool.For<ListStockOnHandInput, PagedResult<StockOnHandDto>>("stock_on_hand_list", ToolKind.Read,
             "Lists stock on hand: one item per article and warehouse with a quantity other than zero, in the article's base unit, "
@@ -351,7 +376,8 @@ public static class ToolCatalog
 
         XerpTool.For<ListStockLedgerEntriesInput, PagedResult<StockLedgerEntryDto>>("stock_ledger_entry_list", ToolKind.Read,
             "Lists stock ledger entries, oldest first: the permanent history of every posted movement (positive quantity in, negative out). "
-            + "Stock on hand is the sum of these entries; entries are never changed or deleted. Filters combine with AND. " + Validation,
+            + "Stock on hand is the sum of these entries; entries are never changed or deleted. A transfer has two entries per line, out of the source and into the destination. "
+            + "A reversal adds entries with the opposite sign, marked `document.isReversal`. Filters combine with AND. " + Validation,
             Input([],
             [
                 ("articleId", Uuid("Return only entries of the article with this `id`.")),

@@ -32,6 +32,7 @@ public static class DocumentNumber
     {
         StockDocumentType.Receipt => "SR",
         StockDocumentType.Issue => "SI",
+        StockDocumentType.Transfer => "ST",
         _ => throw new ArgumentOutOfRangeException(nameof(type)),
     };
 
@@ -61,4 +62,55 @@ public static class StockSufficiency
             .ToHashSet();
         return Enumerable.Range(0, lines.Count).Where(i => shortArticles.Contains(lines[i].ArticleId)).ToList();
     }
+}
+
+/// <summary>A signed quantity of an article in a warehouse: what one ledger entry adds to stock on hand.</summary>
+public readonly record struct StockMovement(Guid ArticleId, Guid WarehouseId, decimal Quantity);
+
+/// <summary>The destination of a transfer (spec 006, R1-R3).</summary>
+public static class TransferRules
+{
+    /// <summary>A transfer has a destination other than its source; a receipt or an issue has none.</summary>
+    public static bool IsValidDestination(StockDocumentType type, Guid warehouseId, Guid? toWarehouseId) =>
+        type == StockDocumentType.Transfer
+            ? toWarehouseId is { } destination && destination != warehouseId
+            : toWarehouseId is null;
+}
+
+/// <summary>
+/// The sign rules of the ledger (spec 005, R14; spec 006, R6, R14) and what they do to stock on hand.
+/// </summary>
+public static class StockMovements
+{
+    /// <summary>
+    /// What posting one line moves: <c>+quantity</c> for a receipt, <c>-quantity</c> for an issue, and for a
+    /// transfer <c>-quantity</c> in the source followed by <c>+quantity</c> in the destination - so a
+    /// transfer sums to zero per article (conservation, R8).
+    /// </summary>
+    public static IReadOnlyList<StockMovement> OfLine(StockDocumentType type, Guid warehouseId, Guid? toWarehouseId, StockLineValues line) =>
+        type switch
+        {
+            StockDocumentType.Receipt => [new(line.ArticleId, warehouseId, line.Quantity)],
+            StockDocumentType.Issue => [new(line.ArticleId, warehouseId, -line.Quantity)],
+            StockDocumentType.Transfer when toWarehouseId is { } destination && destination != warehouseId =>
+                [new(line.ArticleId, warehouseId, -line.Quantity), new(line.ArticleId, destination, line.Quantity)],
+            StockDocumentType.Transfer => throw new InvalidOperationException("A transfer needs a destination warehouse other than its source."),
+            _ => throw new ArgumentOutOfRangeException(nameof(type)),
+        };
+
+    /// <summary>What reversing a movement moves: the same article and warehouse, the opposite quantity (R14).</summary>
+    public static StockMovement Opposite(StockMovement movement) => movement with { Quantity = -movement.Quantity };
+
+    /// <summary>
+    /// No negative stock (ADR-0012, decision 4): the articles that some (article, warehouse) pair would go
+    /// below zero for if all <paramref name="movements"/> were applied together. A pair missing from
+    /// <paramref name="onHand"/> has zero stock. Only the net effect per pair counts, never the order.
+    /// </summary>
+    public static IReadOnlySet<Guid> ShortArticles(
+        IEnumerable<StockMovement> movements, IReadOnlyDictionary<(Guid ArticleId, Guid WarehouseId), decimal> onHand) =>
+        movements
+            .GroupBy(m => (m.ArticleId, m.WarehouseId))
+            .Where(g => onHand.GetValueOrDefault(g.Key) + g.Sum(m => m.Quantity) < 0)
+            .Select(g => g.Key.ArticleId)
+            .ToHashSet();
 }

@@ -165,6 +165,58 @@ public class StockCountReversalTests(XerpFixture app)
         Assert.Equal("reversed", (await Stock.GetAsync(s.Http, count.Id())).Str("status"));
     }
 
+    [Fact]
+    public async Task AC62_R17_A_count_without_differences_is_reversed_like_any_other_and_is_then_final()
+    {
+        // R17 (008-q T-Q5): no line had a difference, so the count wrote no entry — and is still reversible.
+        var s = await WithHundredAsync();
+        var count = await Counts.PostedAsync(s.Http, s.W1, (s.A, 100, null), (s.B, 0, null));
+        Assert.Equal("SC-000001", count.Number());
+        Assert.Empty(await Stock.EntriesAsync(s.Http, count.Id()));
+        // Stock moves on; a reversal is never judged outdated, and here it has nothing to take back anyway.
+        await Stock.ReceiveAsync(s.Http, s.W1, s.A, 10);
+        var open = await Counts.CountAsync(s.Http, s.W1, s.A, 110);
+        var stock = await Stock.StockMapAsync(s.Http);
+        var ledgerTotal = (await Stock.LedgerAsync(s.Http)).Total();
+
+        using var response = await Stock.SendReverseAsync(s.Http, count.Id(), Stock.NextDay, "counted the wrong shelf");
+        var reversing = await HttpAssert.JsonAsync(response, HttpStatusCode.Created);
+
+        Assert.Equal(("count", "posted", "SC-000002"), (reversing.Str("type"), reversing.Str("status"), reversing.Number()));
+        Assert.Equal(Stock.NextDay, reversing.Str("documentDate"));
+        Stock.AssertLink(reversing, "reversalOf", count);
+        McpAssert.JsonEqual(count.GetProperty("lines"), reversing.GetProperty("lines"), "The reversing count's lines are not copies");
+        McpAssert.JsonEqual(reversing, await Stock.GetAsync(s.Http, reversing.Id()), "GET differs from the reverse response");
+        // The original changed in status and reversedBy only (006/R13).
+        var original = await Stock.GetAsync(s.Http, count.Id());
+        Assert.Equal("reversed", original.Str("status"));
+        Stock.AssertLink(original, "reversedBy", reversing);
+        foreach (var property in count.EnumerateObject().Where(p => p.Name is not ("status" or "reversedBy")))
+            McpAssert.JsonEqual(property.Value, original.GetProperty(property.Name), $"The reversal changed '{property.Name}' of the original");
+        // No entries on either document; ledger and stock are what they were.
+        Assert.Empty(await Stock.EntriesAsync(s.Http, count.Id()));
+        Assert.Empty(await Stock.EntriesAsync(s.Http, reversing.Id()));
+        Assert.Equal(ledgerTotal, (await Stock.LedgerAsync(s.Http)).Total());
+        Assert.Equal(stock, await Stock.StockMapAsync(s.Http));
+
+        // Whole and final, like every reversal (006/R11, R18).
+        using var again = await Stock.SendReverseAsync(s.Http, count.Id(), Stock.NextDay);
+        using var reverseReversal = await Stock.SendReverseAsync(s.Http, reversing.Id(), Stock.NextDay);
+        using var deleteOriginal = await Stock.DeleteAsync(s.Http, count.Id());
+        using var postReversal = await Stock.SendPostAsync(s.Http, reversing.Id());
+        await Stock.ConflictAsync(again, "INVALID_STATE");
+        await Stock.ConflictAsync(reverseReversal, "INVALID_STATE");
+        await Stock.ConflictAsync(deleteOriginal, "INVALID_STATE");
+        await Stock.ConflictAsync(postReversal, "INVALID_STATE");
+
+        // The reversal moved nothing, so the open draft count is still current; the refusals burnt no number.
+        var next = await Stock.PostDocumentAsync(s.Http, open.Id());
+        Assert.Equal("SC-000003", next.Number());
+        Assert.Empty(await Stock.EntriesAsync(s.Http, next.Id()));
+        Assert.Equal(3, (await Stock.DocumentsAsync(s.Http, "?type=count")).Total());
+        Assert.Equal(110m, await Stock.QuantityAsync(s.Http, s.A, s.W1));
+    }
+
     // ---- AC-63 ----
 
     [Fact]

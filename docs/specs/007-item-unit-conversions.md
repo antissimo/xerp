@@ -115,7 +115,9 @@ Stock on hand and ledger entries are unchanged: `unit` there is the base unit, `
 | `article_unit_delete` | `{ articleId, unitId }` | `{ "deleted": true }` | Delete | `NOT_FOUND`, `IN_USE` |
 
 - `articleId` and `unitId` of these four tools are addressing arguments: 003/R15 applies to each under its own
-  name (`errors.articleId`, `errors.unitId`).
+  name (`errors.articleId`, `errors.unitId`): missing, `null`, empty or not a JSON string ->
+  `VALIDATION_FAILED` with that key; a string that is not a UUID -> `NOT_FOUND`, as the malformed path segment
+  over HTTP (AC-24). Neither is a reference argument, also not `unitId` of `article_unit_set` (`007-q.md`, B-D1).
 - Annotations: `_list`, `_get` read-only; `article_unit_set` as `*_update` (`destructiveHint: true`,
   `idempotentHint: true`); `article_unit_delete` as `*_delete` (003 §5.3).
 - The description of `article_unit_set` states the direction of the factor with an example (*1 box = 12 pcs ->
@@ -166,7 +168,9 @@ Lines
   with key `lines[i].unitId`. **The article's base unit is never checked for being active on a line**,
   whether it is given or omitted: it is the article's own unit (002/R9 lets an article keep a base unit
   deactivated since), and specs 005 and 006 as built do not check it. `REFERENCE_INACTIVE` on a line's unit
-  therefore concerns alternative units only.
+  therefore concerns every unit other than the article's base unit — whether or not it is an alternative
+  unit of the article: a newly assigned inactive unit that is not a unit of the article at all is
+  `REFERENCE_INACTIVE`, not `UNIT_NOT_ON_ARTICLE` (R16 orders the kinds; `007-q.md`, T-Q6).
 - R13. `quantity` is in the line's unit and obeys 005/R6 unchanged.
 - R14. **Conversion.** `baseQuantity` = `quantity` × `factor`, rounded to 6 decimal places, half away from
   zero. For the base unit, `factor` is 1 and `baseQuantity` equals `quantity`.
@@ -179,7 +183,10 @@ Lines
 - R17. **A draft follows the article's current factor; a posted line keeps its own.** `factor` and
   `baseQuantity` of a draft line are computed with the conversion as it is when the document is read. Posting
   computes them once more, with the factor at that moment, and stores them on the line; from then on they
-  never change, whatever happens to the conversion.
+  never change, whatever happens to the conversion. A change of factor writes nothing to a draft: its
+  `updatedAt` / `updatedBy` do not change. Reading never fails on R15: a draft line that no longer converts
+  shows the current `factor` and the `baseQuantity` R14 gives (`0`, or a value above the maximum); only
+  saving and posting refuse it (`007-q.md`, T-Q7).
 - R18. Posting (extends 005/R13 and 006/R5): … masters active -> conversion (`QUANTITY_NOT_CONVERTIBLE`, R15,
   with the current factors) -> stock. Units are not re-checked for being active.
 - R19. **The ledger is in base units.** Every ledger entry a posted line produces has `quantity` equal to
@@ -347,7 +354,7 @@ MCP
 - AC-82 Tool errors with the same `code` and `errors` keys as HTTP: `article_unit_set` with factor `0` ->
   `VALIDATION_FAILED` (`factor`); with the base unit -> `UNIT_IS_BASE_UNIT` (`unitId`); with a random unit ->
   `REFERENCE_NOT_FOUND` (`unitId`); with a random article -> `NOT_FOUND`; without `unitId` ->
-  `VALIDATION_FAILED` (`unitId`); `article_unit_delete` of a conversion used by a draft -> `IN_USE`;
+  `VALIDATION_FAILED` (`unitId`); with `unitId` = `"abc"` -> `NOT_FOUND`; `article_unit_delete` of a conversion used by a draft -> `IN_USE`;
   `stock_document_create` with a unit not on the article -> `UNIT_NOT_ON_ARTICLE` (`lines[0].unitId`);
   `uom_delete` of a unit with a conversion -> `IN_USE`.
 

@@ -6,19 +6,23 @@ using Xerp.Domain.Inventory;
 namespace Xerp.Application.Stock;
 
 /// <summary>
-/// The stock document operations of spec 005, section 4.1. One method = one HTTP endpoint = one MCP tool.
+/// The stock document operations of spec 005, section 4.1, and spec 006 (transfers, reversal). One method =
+/// one HTTP endpoint = one MCP tool.
 /// <see cref="IXerpDb"/> is already filtered to the current tenant.
 /// <para>
 /// Every write of a stock document runs inside <see cref="IXerpDb.SerializedPerTenantAsync{T}"/>: one
 /// transaction that holds the tenant's lock. That is what makes posting atomic and safe under concurrency
 /// (R12, R16, R17): the stock a posting checks cannot change before it writes, the counter cannot be advanced
-/// by anyone else, and a draft cannot be replaced or deleted while it is being posted. Each operation reads
-/// everything it decides on after it got the lock and saves once, so it changes everything or nothing.
+/// by anyone else, and a draft cannot be replaced or deleted while it is being posted. A reversal is a posting
+/// too and takes the same lock (spec 006, R19). Each operation reads everything it decides on after it got
+/// the lock and saves once, so it changes everything or nothing; one lock per tenant also means that two
+/// postings can never wait for each other (spec 006, E5).
 /// </para>
 /// </summary>
 public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, IClock clock)
 {
     private const string WarehouseField = "warehouseId";
+    private const string ToWarehouseField = StockDocumentValidation.ToWarehouseField;
 
     public async Task<Result<PagedResult<StockDocumentSummaryDto>>> ListAsync(ListStockDocumentsInput input, CancellationToken cancellationToken = default)
     {
@@ -33,7 +37,8 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
         if (query.Status is { } status)
             documents = documents.Where(d => d.Status == status);
         if (query.WarehouseId is { } warehouseId)
-            documents = documents.Where(d => d.WarehouseId == warehouseId);
+            // Spec 006, 4.1: the source or the destination.
+            documents = documents.Where(d => d.WarehouseId == warehouseId || d.ToWarehouseId == warehouseId);
         if (query.Search is { } search)
         {
             // Number or reference (R22); a draft has no number.
@@ -44,31 +49,26 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
         }
 
         var total = await documents.CountAsync(cancellationToken);
-        // Newest first (R22). The page is cut before the join; the join keeps no order, so it is ordered again.
-        var rows = await documents
+        // Newest first (R22).
+        var page = await documents
             .OrderByDescending(d => d.CreatedAt)
             .ThenByDescending(d => d.Id)
             .Skip(query.Offset)
             .Take(query.Limit)
-            .Join(db.Warehouses.AsNoTracking(), d => d.WarehouseId, w => w.Id, (d, w) => new
-            {
-                Document = d,
-                WarehouseCode = w.Code,
-                WarehouseName = w.Name,
-                LineCount = db.StockDocumentLines.Count(l => l.DocumentId == d.Id),
-            })
-            .OrderByDescending(r => r.Document.CreatedAt)
-            .ThenByDescending(r => r.Document.Id)
             .ToListAsync(cancellationToken);
+        var ids = page.Select(d => d.Id).ToList();
+        var lineCounts = await db.StockDocumentLines
+            .Where(l => ids.Contains(l.DocumentId))
+            .GroupBy(l => l.DocumentId)
+            .Select(g => new { DocumentId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.DocumentId, x => x.Count, cancellationToken);
+        var related = await RelatedAsync(page, cancellationToken);
 
-        var items = rows.Select(r =>
-        {
-            var d = r.Document;
-            return new StockDocumentSummaryDto(
-                d.Id, d.Type.ToName(), d.Status.ToName(), d.Number, d.DocumentDate,
-                new ReferenceSummary(d.WarehouseId, r.WarehouseCode, r.WarehouseName), d.Reference, d.Note, r.LineCount,
-                d.CreatedAt, d.UpdatedAt, d.CreatedBy, d.UpdatedBy, d.PostedAt, d.PostedBy);
-        }).ToList();
+        var items = page.Select(d => new StockDocumentSummaryDto(
+            d.Id, d.Type.ToName(), d.Status.ToName(), d.Number, d.DocumentDate,
+            related.Warehouse(d.WarehouseId), related.Warehouse(d.ToWarehouseId), related.Link(d.ReversalOfId), related.Link(d.ReversedById),
+            d.Reference, d.Note, lineCounts.GetValueOrDefault(d.Id),
+            d.CreatedAt, d.UpdatedAt, d.CreatedBy, d.UpdatedBy, d.PostedAt, d.PostedBy)).ToList();
         return new PagedResult<StockDocumentSummaryDto>(items, total, query.Limit, query.Offset);
     }
 
@@ -105,7 +105,7 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
 
                 // R9: a draft. It has no number and no effect on stock, and it reserves nothing.
                 var document = StockDocument.Create(
-                    type, values.DocumentDate, values.WarehouseId, values.Reference, values.Note, values.Lines,
+                    type, values.DocumentDate, values.WarehouseId, values.ToWarehouseId, values.Reference, values.Note, values.Lines,
                     clock.UtcNow, ActorKeyId());
                 db.StockDocuments.Add(document);
                 await db.SaveChangesAsync(ct);
@@ -130,17 +130,20 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
         {
             return await db.SerializedPerTenantAsync<Result<StockDocumentDto>>(async ct =>
             {
-                // R8: exists -> is a draft -> references.
+                // R8: exists -> is a draft -> references. Whether the destination is acceptable is a rule of
+                // form, but one only the stored type can decide, so it comes as early as it can (spec 006, 4.1).
                 var document = await db.StockDocuments.Include(d => d.Lines).SingleOrDefaultAsync(d => d.Id == id, ct);
                 if (document is null)
                     return NotFound();
+                if (StockDocumentValidation.Destination(document.Type, values.WarehouseId, values.ToWarehouseId) is { } destinationError)
+                    return destinationError;
                 if (!document.IsDraft)
-                    return Posted("replaced");
+                    return NotADraft(document, "replaced");
                 if (await CheckReferencesAsync(values, document, ct) is { } referenceError)
                     return referenceError;
 
                 var removed = document.Replace(
-                    values.DocumentDate, values.WarehouseId, values.Reference, values.Note, values.Lines,
+                    values.DocumentDate, values.WarehouseId, values.ToWarehouseId, values.Reference, values.Note, values.Lines,
                     clock.UtcNow, ActorKeyId());
                 db.StockDocumentLines.RemoveRange(removed);
                 await db.SaveChangesAsync(ct);
@@ -160,7 +163,7 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
             if (document is null)
                 return NotFound();
             if (!document.IsDraft)
-                return Posted("deleted");
+                return NotADraft(document, "deleted");
 
             // R10: the lines go with their draft, deleted here and not by a cascade.
             db.StockDocumentLines.RemoveRange(document.Lines);
@@ -170,9 +173,11 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
         }, cancellationToken);
 
     /// <summary>
-    /// Posts a draft (R12-R18): number, posting attribution and one ledger entry per line, in one transaction -
-    /// or nothing at all. Order of checks (R13): exists -> is a draft -> warehouse and articles active ->
-    /// stock sufficient. Only then is the counter advanced, so a refused posting consumes no number (R17).
+    /// Posts a draft (R12-R18; spec 006, R5-R9): number, posting attribution and the ledger entries, in one
+    /// transaction - or nothing at all. Order of checks (R13): exists -> is a draft -> warehouse(s) and
+    /// articles active -> stock sufficient. Only then is the counter advanced, so a refused posting consumes
+    /// no number (R17). A transfer writes both entries of every line in the same save: stock cannot leave the
+    /// source without arriving at the destination (spec 006, R8).
     /// </summary>
     public Task<Result<StockDocumentDto>> PostAsync(Guid id, CancellationToken cancellationToken = default) =>
         db.SerializedPerTenantAsync<Result<StockDocumentDto>>(async ct =>
@@ -181,43 +186,113 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
             if (document is null)
                 return NotFound();
             if (!document.IsDraft)
-                return Posted("posted again");
+                return NotADraft(document, "posted again");
 
-            var warehouseIsActive = await db.Warehouses.Where(w => w.Id == document.WarehouseId).Select(w => w.IsActive).SingleAsync(ct);
-            if (!warehouseIsActive)
-                return AppError.ReferenceInactive(WarehouseField, document.WarehouseId);
             var lines = document.Lines.Select(l => l.Values).ToList();
-            if (StockLineChecks.ActiveForPosting(lines, await ArticleFactsAsync(lines, ct)) is { } inactive)
+            if (StockLineChecks.ActiveForPosting(await InactiveWarehousesAsync(document, ct), lines, await ArticleFactsAsync(lines, ct)) is { } inactive)
                 return inactive;
 
-            // R15, R18: only what leaves the warehouse is checked; the document date plays no part.
-            if (document.Type == StockDocumentType.Issue
-                && StockLineChecks.Sufficiency(lines, await OnHandAsync(document.WarehouseId, lines, ct)) is { } insufficient)
-                return insufficient;
-
-            var typeName = document.Type.ToName();
-            var counter = await db.DocumentCounters.SingleOrDefaultAsync(c => c.DocumentType == typeName, ct);
-            if (counter is null)
+            // R15, R18; spec 006, R7: only what leaves the (source) warehouse is checked; stock in the
+            // destination and the document date play no part.
+            if (document.Type is StockDocumentType.Issue or StockDocumentType.Transfer)
             {
-                counter = DocumentCounter.Start(TenantId(), document.Type);
-                db.DocumentCounters.Add(counter);
+                var onHand = await OnHandAsync(lines.Select(l => l.ArticleId), [document.WarehouseId], ct);
+                var inSource = onHand.ToDictionary(p => p.Key.ArticleId, p => p.Value);
+                if (StockLineChecks.Sufficiency(lines, inSource) is { } insufficient)
+                    return insufficient;
             }
 
-            var entries = document.Post(DocumentNumber.Format(document.Type, counter.Next()), clock.UtcNow, ActorKeyId());
-            db.StockLedgerEntries.AddRange(entries);
+            var number = await NextNumberAsync(document.Type, ct);
+            db.StockLedgerEntries.AddRange(document.Post(number, clock.UtcNow, ActorKeyId()));
             await db.SaveChangesAsync(ct);
             return await ToDtoAsync(document, ct);
         }, cancellationToken);
 
-    /// <summary>Stock on hand of the lines' articles in one warehouse: the sum of the ledger (R19).</summary>
-    private async Task<Dictionary<Guid, decimal>> OnHandAsync(Guid warehouseId, List<StockLineValues> lines, CancellationToken cancellationToken)
+    /// <summary>
+    /// Reverses a posted document (ADR-0013; spec 006, R11-R19): in one transaction a reversing document is
+    /// created already posted, with the original's ledger entries in the opposite sign, and the original
+    /// becomes <c>reversed</c> - or nothing at all. Order of checks (R12): form -> exists -> can be reversed
+    /// -> date not earlier than the original's -> stock. Only then is the counter advanced, so a refused
+    /// reversal consumes no number. The masters need not be active (R17).
+    /// </summary>
+    public async Task<Result<StockDocumentDto>> ReverseAsync(Guid id, ReverseStockDocumentInput input, CancellationToken cancellationToken = default)
     {
-        var articleIds = lines.Select(l => l.ArticleId).Distinct().ToList();
-        return await db.StockLedgerEntries
-            .Where(e => e.WarehouseId == warehouseId && articleIds.Contains(e.ArticleId))
-            .GroupBy(e => e.ArticleId)
-            .Select(g => new { ArticleId = g.Key, Quantity = g.Sum(e => e.Quantity) })
-            .ToDictionaryAsync(x => x.ArticleId, x => x.Quantity, cancellationToken);
+        var validated = StockDocumentValidation.Reverse(input);
+        if (!validated.IsSuccess)
+            return validated.Error;
+        var values = validated.Value;
+
+        return await db.SerializedPerTenantAsync<Result<StockDocumentDto>>(async ct =>
+        {
+            var original = await db.StockDocuments.Include(d => d.Lines).SingleOrDefaultAsync(d => d.Id == id, ct);
+            if (original is null)
+                return NotFound();
+            if (!original.CanBeReversed)
+                return NotReversible(original);
+            if (StockDocumentValidation.ReversalDate(values.DocumentDate, original.DocumentDate) is { } dateError)
+                return dateError;
+
+            // R14, R15: the reversing entries are the original's own entries, negated.
+            var entries = await db.StockLedgerEntries.Where(e => e.DocumentId == original.Id).ToListAsync(ct);
+            var movements = entries
+                .Select(e => StockMovements.Opposite(new StockMovement(e.ArticleId, e.WarehouseId, e.Quantity)))
+                .ToList();
+            // R16: no pair may go below zero, whatever stock other warehouses hold.
+            var onHand = await OnHandAsync(movements.Select(m => m.ArticleId), movements.Select(m => m.WarehouseId), ct);
+            var lines = original.Lines.Select(l => l.Values).ToList();
+            if (StockLineChecks.ReversalSufficiency(lines, movements, onHand) is { } insufficient)
+                return insufficient;
+
+            var number = await NextNumberAsync(original.Type, ct);
+            var (reversal, reversing) = original.Reverse(entries, values.DocumentDate, values.Note, number, clock.UtcNow, ActorKeyId());
+            db.StockDocuments.Add(reversal);
+            db.StockLedgerEntries.AddRange(reversing);
+            await db.SaveChangesAsync(ct);
+            return await ToDtoAsync(reversal, ct);
+        }, cancellationToken);
+    }
+
+    /// <summary>The next number of the type's series (R17). Called last, when nothing can refuse the posting any more.</summary>
+    private async Task<string> NextNumberAsync(StockDocumentType type, CancellationToken cancellationToken)
+    {
+        var typeName = type.ToName();
+        var counter = await db.DocumentCounters.SingleOrDefaultAsync(c => c.DocumentType == typeName, cancellationToken);
+        if (counter is null)
+        {
+            counter = DocumentCounter.Start(TenantId(), type);
+            db.DocumentCounters.Add(counter);
+        }
+        return DocumentNumber.Format(type, counter.Next());
+    }
+
+    /// <summary>The inactive warehouses of a document with their error keys: source, then destination.</summary>
+    private async Task<List<(string Field, Guid Id)>> InactiveWarehousesAsync(StockDocument document, CancellationToken cancellationToken)
+    {
+        var ids = new[] { document.WarehouseId, document.ToWarehouseId ?? document.WarehouseId };
+        var inactive = await db.Warehouses.AsNoTracking()
+            .Where(w => ids.Contains(w.Id) && !w.IsActive)
+            .Select(w => w.Id)
+            .ToListAsync(cancellationToken);
+        var result = new List<(string, Guid)>();
+        if (inactive.Contains(document.WarehouseId))
+            result.Add((WarehouseField, document.WarehouseId));
+        if (document.ToWarehouseId is { } destination && inactive.Contains(destination))
+            result.Add((ToWarehouseField, destination));
+        return result;
+    }
+
+    /// <summary>Stock on hand of the given articles in the given warehouses: the sum of the ledger (R19). A pair without entries is absent.</summary>
+    private async Task<Dictionary<(Guid ArticleId, Guid WarehouseId), decimal>> OnHandAsync(
+        IEnumerable<Guid> articles, IEnumerable<Guid> warehouses, CancellationToken cancellationToken)
+    {
+        var articleIds = articles.Distinct().ToList();
+        var warehouseIds = warehouses.Distinct().ToList();
+        var sums = await db.StockLedgerEntries
+            .Where(e => warehouseIds.Contains(e.WarehouseId) && articleIds.Contains(e.ArticleId))
+            .GroupBy(e => new { e.ArticleId, e.WarehouseId })
+            .Select(g => new { g.Key.ArticleId, g.Key.WarehouseId, Quantity = g.Sum(e => e.Quantity) })
+            .ToListAsync(cancellationToken);
+        return sums.ToDictionary(x => (x.ArticleId, x.WarehouseId), x => x.Quantity);
     }
 
     private async Task<Dictionary<Guid, ArticleFacts>> ArticleFactsAsync(IReadOnlyList<StockLineValues> lines, CancellationToken cancellationToken)
@@ -229,7 +304,10 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
             .ToDictionaryAsync(a => a.Id, a => new ArticleFacts(a.IsActive, a.Type), cancellationToken);
     }
 
-    /// <summary>R8: the warehouse first, then the lines. A reference the stored draft already has may stay although inactive.</summary>
+    /// <summary>
+    /// R8; spec 006, R4: the warehouse first, then the destination of a transfer, then the lines. A reference
+    /// the stored draft already has in that place may stay although inactive.
+    /// </summary>
     private async Task<AppError?> CheckReferencesAsync(StockDocumentValues values, StockDocument? stored, CancellationToken cancellationToken)
     {
         var warehouseError = await ReferenceCheck.ValidateAsync(
@@ -238,17 +316,58 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
         if (warehouseError is not null)
             return warehouseError;
 
+        if (values.ToWarehouseId is { } destination)
+        {
+            var destinationError = await ReferenceCheck.ValidateAsync(
+                db.Warehouses.Where(w => w.Id == destination).Select(w => w.IsActive),
+                ToWarehouseField, destination, alreadyAssigned: stored?.ToWarehouseId == destination, cancellationToken);
+            if (destinationError is not null)
+                return destinationError;
+        }
+
         var alreadyOnDocument = stored?.Lines.Select(l => l.ArticleId).ToHashSet() ?? [];
         return StockLineChecks.References(values.Lines, await ArticleFactsAsync(values.Lines, cancellationToken), alreadyOnDocument);
+    }
+
+    /// <summary>What documents show of other records: the current code and name of their warehouses, the number of the documents they link to.</summary>
+    private sealed record Related(
+        IReadOnlyDictionary<Guid, ReferenceSummary> Warehouses, IReadOnlyDictionary<Guid, StockDocumentLinkDto> Documents)
+    {
+        public ReferenceSummary Warehouse(Guid id) => Warehouses[id];
+
+        public ReferenceSummary? Warehouse(Guid? id) => id is { } value ? Warehouses[value] : null;
+
+        public StockDocumentLinkDto? Link(Guid? id) => id is { } value ? Documents[value] : null;
+    }
+
+    private async Task<Related> RelatedAsync(IReadOnlyCollection<StockDocument> documents, CancellationToken cancellationToken)
+    {
+        var warehouseIds = documents.Select(d => d.WarehouseId)
+            .Concat(documents.Where(d => d.ToWarehouseId is not null).Select(d => d.ToWarehouseId!.Value))
+            .Distinct().ToList();
+        var warehouses = await db.Warehouses.AsNoTracking()
+            .Where(w => warehouseIds.Contains(w.Id))
+            .Select(w => new ReferenceSummary(w.Id, w.Code, w.Name))
+            .ToDictionaryAsync(w => w.Id, cancellationToken);
+
+        var linkedIds = documents.SelectMany(d => new[] { d.ReversalOfId, d.ReversedById })
+            .Where(id => id is not null).Select(id => id!.Value).Distinct().ToList();
+        var linked = new Dictionary<Guid, StockDocumentLinkDto>();
+        if (linkedIds.Count > 0)
+        {
+            // Both ends of a reversal are posted, so both have a number.
+            linked = await db.StockDocuments.AsNoTracking()
+                .Where(d => linkedIds.Contains(d.Id))
+                .Select(d => new StockDocumentLinkDto(d.Id, d.Number!))
+                .ToDictionaryAsync(d => d.Id, cancellationToken);
+        }
+        return new Related(warehouses, linked);
     }
 
     /// <summary>The representation with the masters' current codes and names (R23).</summary>
     private async Task<StockDocumentDto> ToDtoAsync(StockDocument document, CancellationToken cancellationToken)
     {
-        var warehouse = await db.Warehouses.AsNoTracking()
-            .Where(w => w.Id == document.WarehouseId)
-            .Select(w => new { w.Code, w.Name })
-            .SingleAsync(cancellationToken);
+        var related = await RelatedAsync([document], cancellationToken);
         var articleIds = document.Lines.Select(l => l.ArticleId).Distinct().ToList();
         var articles = await db.Articles.AsNoTracking()
             .Where(a => articleIds.Contains(a.Id))
@@ -265,7 +384,8 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
         }).ToList();
         return new StockDocumentDto(
             document.Id, document.Type.ToName(), document.Status.ToName(), document.Number, document.DocumentDate,
-            new ReferenceSummary(document.WarehouseId, warehouse.Code, warehouse.Name), document.Reference, document.Note, lines,
+            related.Warehouse(document.WarehouseId), related.Warehouse(document.ToWarehouseId),
+            related.Link(document.ReversalOfId), related.Link(document.ReversedById), document.Reference, document.Note, lines,
             document.CreatedAt, document.UpdatedAt, document.CreatedBy, document.UpdatedBy, document.PostedAt, document.PostedBy);
     }
 
@@ -307,11 +427,30 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
             ? Task.FromResult<Result<StockDocumentDto>>(error)
             : PostAsync(parsed, cancellationToken);
 
+    /// <summary>As the overload with a <see cref="Guid"/>; an id that is not a UUID names no record (spec 003, R15).</summary>
+    public Task<Result<StockDocumentDto>> ReverseAsync(string? id, ReverseStockDocumentInput input, CancellationToken cancellationToken = default) =>
+        RecordAddress.Id(id, NotFoundDetail, out var parsed) is { } error
+            ? Task.FromResult<Result<StockDocumentDto>>(error)
+            : ReverseAsync(parsed, input, cancellationToken);
+
     private const string NotFoundDetail = "Stock document not found.";
 
     private static AppError NotFound() => AppError.NotFound(NotFoundDetail);
 
-    /// <summary>R11: a posted document is immutable.</summary>
-    private static AppError Posted(string attempted) =>
-        AppError.InvalidState($"The stock document is posted and cannot be {attempted}; a posted document is permanent.");
+    /// <summary>R11; spec 006, R18: a posted document is immutable, reversed or not.</summary>
+    private static AppError NotADraft(StockDocument document, string attempted) =>
+        AppError.InvalidState(
+            $"The stock document is {document.Status.ToName()} and cannot be {attempted}; a posted document is permanent. "
+            + (document.CanBeReversed
+                ? "To correct it, reverse it and create a new document."
+                : "To redo the movement, create a new document."));
+
+    /// <summary>Spec 006, R11: what cannot be reversed, and why.</summary>
+    private static AppError NotReversible(StockDocument document) =>
+        AppError.InvalidState(document switch
+        {
+            { IsDraft: true } => "The stock document is a draft: it has not moved any stock, so there is nothing to reverse. Change or delete the draft instead.",
+            { IsReversal: true } => "The stock document is itself a reversal, and a reversal is final. To redo the movement, create a new document.",
+            _ => "The stock document is already reversed; a document can be reversed once. To redo the movement, create a new document.",
+        });
 }
