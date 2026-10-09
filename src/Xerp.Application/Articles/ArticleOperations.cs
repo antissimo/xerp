@@ -101,30 +101,67 @@ public sealed class ArticleOperations(IXerpDb db, ITenantContext context, IClock
             return validated.Error;
         var values = validated.Value;
 
-        var article = await db.Articles.SingleOrDefaultAsync(a => a.Id == id, cancellationToken);
-        if (article is null)
-            return NotFound();
-        // Keeping the current base unit is allowed even if that unit has been deactivated since (R9).
-        var keepsBaseUnit = article.BaseUnitId == values.BaseUnitId;
-        if (await CheckBaseUnitAsync(values.BaseUnitId, keepsBaseUnit, cancellationToken) is { } referenceError)
-            return referenceError;
-        if (await CodeIsUsedAsync(values.Code, exceptId: id, cancellationToken))
-            return CodeTaken(values.Code);
+        // Serialised with the writes of stock documents: whether the article is used cannot change between
+        // the check below and the save, so a used article never changes its type or base unit (spec 005, R26).
+        return await db.SerializedPerTenantAsync<Result<ArticleDto>>(async ct =>
+        {
+            var article = await db.Articles.SingleOrDefaultAsync(a => a.Id == id, ct);
+            if (article is null)
+                return NotFound();
+            // Frozen fields are compared with the stored values before any reference is looked up (005-q, T-Q3).
+            if (await CheckFrozenFieldsAsync(article, values, ct) is { } frozen)
+                return frozen;
+            // Keeping the current base unit is allowed even if that unit has been deactivated since (R9).
+            var keepsBaseUnit = article.BaseUnitId == values.BaseUnitId;
+            if (await CheckBaseUnitAsync(values.BaseUnitId, keepsBaseUnit, ct) is { } referenceError)
+                return referenceError;
+            if (await CodeIsUsedAsync(values.Code, exceptId: id, ct))
+                return CodeTaken(values.Code);
 
-        article.Replace(
-            values.Code, values.Name, values.Description, values.Type, values.BaseUnitId, values.IsActive, clock.UtcNow, ActorKeyId());
-        return await SaveAndReadAsync(article, values, cancellationToken);
+            article.Replace(
+                values.Code, values.Name, values.Description, values.Type, values.BaseUnitId, values.IsActive, clock.UtcNow, ActorKeyId());
+            return await SaveAndReadAsync(article, values, ct);
+        }, cancellationToken);
     }
+
+    /// <summary>
+    /// Spec 005, R24-R26: while a stock document line names the article - on a draft or a posted document -
+    /// its type and base unit are frozen, because the quantities on those lines are in that unit.
+    /// </summary>
+    private async Task<AppError?> CheckFrozenFieldsAsync(Article article, ArticleValues values, CancellationToken cancellationToken)
+    {
+        var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        if (article.Type != values.Type)
+            errors["type"] = ["The type cannot change while stock documents use the article."];
+        if (article.BaseUnitId != values.BaseUnitId)
+            errors[BaseUnitField] = ["The base unit cannot change while stock documents use the article: their quantities are in it."];
+        if (errors.Count == 0 || !await IsUsedAsync(article.Id, cancellationToken))
+            return null;
+        return AppError.InUse(
+            "The article is used by stock documents, so its type and base unit are fixed. Keep both values; "
+            + "name, code, description and isActive can still change.", errors);
+    }
+
+    private Task<bool> IsUsedAsync(Guid articleId, CancellationToken cancellationToken) =>
+        db.StockDocumentLines.AnyAsync(l => l.ArticleId == articleId, cancellationToken);
 
     public async Task<Result<ArticleDeleted>> DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var article = await db.Articles.SingleOrDefaultAsync(a => a.Id == id, cancellationToken);
         if (article is null)
             return NotFound();
+        // A draft counts like a posted document (spec 005, R24, R25).
+        if (await IsUsedAsync(id, cancellationToken))
+            return InUse();
         db.Articles.Remove(article);
         try
         {
             await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (ForeignKeyViolationException ex) when (ex.BlockedDelete)
+        {
+            // A document started to use the article after the check above: the foreign key is the authority.
+            return InUse();
         }
         catch (DbUpdateConcurrencyException)
         {
@@ -132,6 +169,9 @@ public sealed class ArticleOperations(IXerpDb db, ITenantContext context, IClock
         }
         return new ArticleDeleted();
     }
+
+    private static AppError InUse() =>
+        AppError.InUse("The article is used by stock documents and cannot be deleted. Deactivate it instead (isActive = false).");
 
     /// <summary>Saves the tracked article and returns its representation, translating what only the database can decide.</summary>
     private async Task<Result<ArticleDto>> SaveAndReadAsync(Article article, ArticleValues values, CancellationToken cancellationToken)

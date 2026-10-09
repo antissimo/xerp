@@ -90,7 +90,8 @@ public class StockReversalTests(XerpFixture app)
             Stock.ReverseBody().With("lines", Stock.Lines((s.A, 1))));
 
         await HttpAssert.ValidationAsync(query, "x");
-        await HttpAssert.ValidationAsync(property);
+        // The unknown property is reported under its own name (001/E4; 006-q T-Q5).
+        await HttpAssert.ValidationAsync(property, "lines");
         await Stock.AssertUnchangedAsync(s.Http, receipt);
         Assert.Equal(5m, await Stock.QuantityAsync(s.Http, s.A, s.W1));
     }

@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Xerp.Infrastructure.Persistence;
@@ -12,9 +13,11 @@ using Xerp.Infrastructure.Persistence;
 namespace Xerp.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(XerpDbContext))]
-    partial class XerpDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261009071500_StockLedger")]
+    partial class StockLedger
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
