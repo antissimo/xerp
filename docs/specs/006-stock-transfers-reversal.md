@@ -70,6 +70,7 @@ document, otherwise `null`. The list summary carries the same three properties.
 `POST /stock-documents/{id}/reverse` body `{ "documentDate": "YYYY-MM-DD", "note"?: string|null }`
 -> `201` with the **reversing** StockDocument and `Location: /api/v1/stock-documents/{its id}`.
 Errors: `400`, `404`, `409 INVALID_STATE`, `409 INSUFFICIENT_STOCK`.
+A request without a body is treated as `{}`: `400` with key `documentDate` (`006-q.md`, B-Q5).
 
 ### 4.3 Ledger entry
 
@@ -104,7 +105,10 @@ Transfer — the document
   `toWarehouseId`.
 - R3. For a receipt or issue a non-null `toWarehouseId` -> `400` with key `toWarehouseId`.
 - R4. Lines, quantities, dates, `reference`, `note`, the draft lifecycle and the order of checks are those of
-  spec 005; the destination reference is checked right after the source warehouse (005/R8).
+  spec 005; the destination reference is checked right after the source warehouse (005/R8). On create the
+  destination rule (R2, R3) is part of validation. On replace the body has no `type`, so the rule is applied
+  to the stored document: validation of form -> `404` -> destination rule (`400`, key `toWarehouseId`) ->
+  `INVALID_STATE` -> references (`006-q.md`, B-Q3).
 
 Transfer — posting
 - R5. Order of checks as 005/R13, with the destination warehouse among the masters that must be active

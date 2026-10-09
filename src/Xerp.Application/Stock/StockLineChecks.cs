@@ -150,7 +150,8 @@ public static class StockLineChecks
 
     /// <summary>
     /// Posting needs every master of the document active, also those assigned while they still were
-    /// (R13; spec 006, R5): the warehouse(s) and every article. All inactive ones are reported together.
+    /// (R13; spec 006, R5): the warehouse(s) and every article. Header before lines: the inactive warehouses are
+    /// reported together and alone; inactive articles only when the header is clean, all of them together.
     /// Units are not re-checked (spec 007, R18).
     /// </summary>
     /// <param name="inactiveWarehouses">The error key and id of each inactive warehouse of the document.</param>
@@ -161,7 +162,8 @@ public static class StockLineChecks
         var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
         foreach (var (field, id) in inactiveWarehouses)
             errors[field] = [$"The record with id '{id}' is inactive."];
-        for (var i = 0; i < lines.Count; i++)
+        var headerIsClean = errors.Count == 0;
+        for (var i = 0; headerIsClean && i < lines.Count; i++)
         {
             if (!articles.TryGetValue(lines[i].ArticleId, out var facts) || !facts.IsActive)
                 errors[StockDocumentValidation.LineKey(i, ArticleField)] = [$"The record with id '{lines[i].ArticleId}' is inactive."];

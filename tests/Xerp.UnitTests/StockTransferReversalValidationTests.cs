@@ -112,7 +112,7 @@ public class StockTransferReversalValidationTests
     // ---- transfer: posting
 
     [Fact]
-    public void R5_Posting_reports_every_inactive_master_together()
+    public void R5_Posting_reports_the_inactive_warehouses_of_the_header_together()
     {
         // Spec 007: the lines are in the base unit of their article, as every line was before that spec.
         var pcs = Guid.CreateVersion7();
@@ -128,8 +128,31 @@ public class StockTransferReversalValidationTests
             ErrorCodes.ReferenceInactive, "warehouseId", "toWarehouseId");
         AssertError(StockLineChecks.ActiveForPosting([("toWarehouseId", W2)], [new(A, pcs, 1m)], articles),
             ErrorCodes.ReferenceInactive, "toWarehouseId");
+    }
+
+    [Fact]
+    public void R5_Posting_reports_inactive_header_masters_alone_and_articles_only_when_the_header_is_clean()
+    {
+        var pcs = Guid.CreateVersion7();
+        var articles = new Dictionary<Guid, ArticleFacts>
+        {
+            [A] = new ArticleFacts(true, ArticleType.Stock, pcs),
+            [B] = new ArticleFacts(false, ArticleType.Stock, pcs),
+        };
+        var c = Guid.NewGuid();
+        List<StockLineEntry> lines = [new(B, pcs, 1m), new(A, pcs, 1m), new(c, pcs, 1m)];
+
+        // An inactive warehouse and an inactive article: the warehouse key only (005/R13, header before lines).
         AssertError(StockLineChecks.ActiveForPosting([("warehouseId", W1)], lines, articles),
-            ErrorCodes.ReferenceInactive, "warehouseId", "lines[1].articleId");
+            ErrorCodes.ReferenceInactive, "warehouseId");
+        AssertError(StockLineChecks.ActiveForPosting([("toWarehouseId", W2)], lines, articles),
+            ErrorCodes.ReferenceInactive, "toWarehouseId");
+        // Two inactive warehouses and an inactive article: the two warehouse keys only.
+        AssertError(StockLineChecks.ActiveForPosting([("warehouseId", W1), ("toWarehouseId", W2)], lines, articles),
+            ErrorCodes.ReferenceInactive, "warehouseId", "toWarehouseId");
+        // A clean header: every inactive article, all of them together.
+        AssertError(StockLineChecks.ActiveForPosting([], lines, articles),
+            ErrorCodes.ReferenceInactive, "lines[0].articleId", "lines[2].articleId");
     }
 
     // ---- reversal: input
