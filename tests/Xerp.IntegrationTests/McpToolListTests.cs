@@ -58,14 +58,14 @@ public class McpToolListTests(XerpFixture app)
         new("warehouse_delete", ["id"], ["id"], "delete"),
     ];
 
-    // Spec 005, section 5.
+    // Spec 005, section 5, with the arguments spec 006, section 5, adds (toWarehouseId).
     private static readonly Expected[] Spec005Tools =
     [
         new("stock_document_list", ["type", "status", "warehouseId", "search", "limit", "offset"], [], "read"),
         new("stock_document_get", ["id", "number"], [], "read"),
-        new("stock_document_create", ["type", "documentDate", "warehouseId", "lines", "reference", "note"],
+        new("stock_document_create", ["type", "documentDate", "warehouseId", "toWarehouseId", "lines", "reference", "note"],
             ["type", "documentDate", "warehouseId", "lines"], "create"),
-        new("stock_document_update", ["id", "documentDate", "warehouseId", "reference", "note", "lines"],
+        new("stock_document_update", ["id", "documentDate", "warehouseId", "toWarehouseId", "reference", "note", "lines"],
             ["id", "documentDate", "warehouseId", "reference", "note", "lines"], "update"),
         new("stock_document_delete", ["id"], ["id"], "delete"),
         new("stock_document_post", ["id"], ["id"], "post"),
@@ -73,8 +73,14 @@ public class McpToolListTests(XerpFixture app)
         new("stock_ledger_entry_list", ["articleId", "warehouseId", "documentId", "limit", "offset"], [], "read"),
     ];
 
-    // The complete list (spec 004, section 5.3; spec 005, section 5): a new tool must be added here by its spec.
-    private static readonly Expected[] Tools = [.. Spec003Tools, .. Spec004Tools, .. Spec005Tools];
+    // Spec 006, section 5.
+    private static readonly Expected[] Spec006Tools =
+    [
+        new("stock_document_reverse", ["id", "documentDate", "note"], ["id", "documentDate"], "post"),
+    ];
+
+    // The complete list (spec 004, section 5.3; spec 005 and 006, section 5): a new tool must be added here by its spec.
+    private static readonly Expected[] Tools = [.. Spec003Tools, .. Spec004Tools, .. Spec005Tools, .. Spec006Tools];
 
     private async Task<Dictionary<string, Tool>> ListToolsAsync(string? key = null)
     {
@@ -87,13 +93,15 @@ public class McpToolListTests(XerpFixture app)
     private static string[] Sorted(IEnumerable<string> values) => values.Order(StringComparer.Ordinal).ToArray();
 
     [Fact]
-    public async Task AC40_S004_AC90_S005_AC80_Tool_list_is_exactly_the_32_tools_of_the_specs()
+    public async Task AC40_S004_AC90_S005_AC80_S006_AC80_Tool_list_is_exactly_the_33_tools_of_the_specs()
     {
         var tools = await ListToolsAsync();
 
         Assert.Equal(14, Spec003Tools.Length);
         Assert.Equal(10, Spec004Tools.Length);
         Assert.Equal(8, Spec005Tools.Length);
+        Assert.Single(Spec006Tools);
+        Assert.Equal(33, Tools.Length);
         Assert.Equal(Sorted(Tools.Select(t => t.Name)), Sorted(tools.Keys));
         Assert.DoesNotContain("api_key_create", tools.Keys);
         Assert.DoesNotContain(tools.Keys, name => name.StartsWith("tenant", StringComparison.OrdinalIgnoreCase));
@@ -153,6 +161,40 @@ public class McpToolListTests(XerpFixture app)
         var post = tools["stock_document_post"].Annotations!;
         Assert.True(post.DestructiveHint);
         Assert.False(post.ReadOnlyHint);
+    }
+
+    [Fact]
+    public async Task S006_AC80_Stock_document_reverse_is_described_closed_and_destructive()
+    {
+        var tools = await ListToolsAsync();
+
+        AssertMetadata(tools, Spec006Tools);
+        AssertAnnotations(tools, Spec006Tools);
+        var reverse = tools["stock_document_reverse"];
+        Assert.Equal(["documentDate", "id"],
+            Sorted(reverse.InputSchema.GetProperty("required").EnumerateArray().Select(r => r.GetString()!)));
+        Assert.True(reverse.Annotations!.DestructiveHint);
+        Assert.False(reverse.Annotations.ReadOnlyHint);
+        Assert.False(reverse.Annotations.IdempotentHint);
+    }
+
+    [Theory]
+    [InlineData("stock_document_create")]
+    [InlineData("stock_document_update")]
+    public async Task S006_AC80_Stock_document_write_tools_have_a_described_optional_toWarehouseId(string toolName)
+    {
+        // Section 5: "new optional argument toWarehouseId (uuid or null)".
+        var tools = await ListToolsAsync();
+
+        Assert.True(tools.TryGetValue(toolName, out var tool), $"Tool '{toolName}' is not listed.");
+        var schema = tool!.InputSchema;
+        Assert.True(schema.GetProperty("properties").TryGetProperty("toWarehouseId", out var property),
+            $"{toolName} has no toWarehouseId property.");
+        Assert.True(property.TryGetProperty("description", out var description) && !string.IsNullOrWhiteSpace(description.GetString()),
+            $"{toolName}.toWarehouseId has no description.");
+        var types = SchemaTypes(property);
+        Assert.True(types.Contains("string") && types.Contains("null"), $"{toolName}.toWarehouseId must allow a string and null: {property}");
+        Assert.DoesNotContain("toWarehouseId", schema.GetProperty("required").EnumerateArray().Select(r => r.GetString()));
     }
 
     [Theory]
@@ -269,10 +311,10 @@ public class McpToolListTests(XerpFixture app)
     [InlineData("article_create", "type", "service,stock")]
     [InlineData("article_list", "type", "service,stock")]
     [InlineData("api_key_list", "actorType", "agent,human")]
-    [InlineData("stock_document_create", "type", "issue,receipt")]
-    [InlineData("stock_document_list", "type", "issue,receipt")]
-    [InlineData("stock_document_list", "status", "draft,posted")]
-    public async Task AC43_S005_AC80_Enumerated_arguments_are_enums_in_the_input_schema(string toolName, string property, string values)
+    [InlineData("stock_document_create", "type", "issue,receipt,transfer")]
+    [InlineData("stock_document_list", "type", "issue,receipt,transfer")]
+    [InlineData("stock_document_list", "status", "draft,posted,reversed")]
+    public async Task AC43_S005_AC80_S006_AC80_Enumerated_arguments_are_enums_in_the_input_schema(string toolName, string property, string values)
     {
         var tools = await ListToolsAsync();
 
