@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Xerp.Api.Endpoints;
 using Xerp.Api.Http;
+using Xerp.Application.Articles;
 using Xerp.Application.Identity;
 using Xerp.Application.Ports;
 using Xerp.Application.Tenants;
@@ -22,6 +23,7 @@ builder.Services.AddScoped<CredentialResolver>();
 builder.Services.AddScoped<WhoAmIOperation>();
 builder.Services.AddScoped<TenantProvisioning>();
 builder.Services.AddScoped<UnitOfMeasureOperations>();
+builder.Services.AddScoped<ArticleOperations>();
 
 var app = builder.Build();
 
@@ -41,9 +43,10 @@ app.MapGet("/health", async (XerpDbContext db, CancellationToken ct) =>
         ? Results.Ok(new { status = "ok", db = "ok" })
         : Results.Json(new { status = "degraded", db = "down" }, statusCode: StatusCodes.Status503ServiceUnavailable));
 
-var v1 = app.MapGroup("/api/v1");
+var v1 = app.MapGroup("/api/v1").RejectUndefinedQueryParameters();
 v1.MapTenantEndpoints();
 v1.MapUnitOfMeasureEndpoints();
+v1.MapArticleEndpoints();
 
 app.Run();
 

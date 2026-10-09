@@ -2,6 +2,7 @@ using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Xerp.Application.Ports;
+using Xerp.Domain.Catalog;
 using Xerp.Domain.Common;
 using Xerp.Domain.Inventory;
 using Xerp.Domain.Tenancy;
@@ -18,6 +19,7 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
     public DbSet<UnitOfMeasure> UnitsOfMeasure => Set<UnitOfMeasure>();
+    public DbSet<Article> Articles => Set<Article>();
 
     private Guid? CurrentTenantId => tenant.TenantId;
 
@@ -64,6 +66,33 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
+        modelBuilder.Entity<Article>(e =>
+        {
+            e.ToTable("Articles");
+            e.Property(a => a.Id).ValueGeneratedNever();
+            e.Property(a => a.Code).HasMaxLength(CodeRules.MaxLength);
+            e.Property(a => a.Name).HasMaxLength(NameRules.MaxLength);
+            e.Property(a => a.Description).HasMaxLength(ArticleRules.DescriptionMaxLength);
+            e.Property(a => a.Type).HasMaxLength(10).HasConversion(v => v.ToName(), v => ArticleTypeNames.Parse(v));
+            e.Property<string>(DbNames.CodeLower).HasComputedColumnSql("lower(\"Code\")", stored: true);
+            e.HasIndex(nameof(Article.TenantId), DbNames.CodeLower).IsUnique().HasDatabaseName(DbNames.ArticleCodeIndex);
+            // ADR-0008: the reference includes TenantId on both sides and restricts the delete of its target.
+            // Its index (TenantId, BaseUnitId) also serves "articles by base unit".
+            e.HasOne<UnitOfMeasure>().WithMany()
+                .HasForeignKey(a => new { a.TenantId, a.BaseUnitId })
+                .HasPrincipalKey(u => new { u.TenantId, u.Id })
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName(DbNames.ArticleBaseUnitForeignKey);
+            e.HasOne<ApiKey>().WithMany()
+                .HasForeignKey(a => new { a.TenantId, a.CreatedBy })
+                .HasPrincipalKey(k => new { k.TenantId, k.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<ApiKey>().WithMany()
+                .HasForeignKey(a => new { a.TenantId, a.UpdatedBy })
+                .HasPrincipalKey(k => new { k.TenantId, k.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
         // Applied by type, not by hand, so a new tenant-owned entity cannot be forgotten.
         var configure = typeof(XerpDbContext).GetMethod(nameof(ConfigureTenantOwned), BindingFlags.Instance | BindingFlags.NonPublic)!;
         foreach (var entityType in modelBuilder.Model.GetEntityTypes().Where(t => typeof(ITenantOwned).IsAssignableFrom(t.ClrType)).ToList())
@@ -84,9 +113,9 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
         {
             return base.SaveChanges(acceptAllChangesOnSuccess);
         }
-        catch (DbUpdateException ex) when (AsUniqueViolation(ex) is { } violation)
+        catch (DbUpdateException ex) when (Translate(ex) is { } translated)
         {
-            throw violation;
+            throw translated;
         }
     }
 
@@ -97,9 +126,9 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
         {
             return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
         }
-        catch (DbUpdateException ex) when (AsUniqueViolation(ex) is { } violation)
+        catch (DbUpdateException ex) when (Translate(ex) is { } translated)
         {
-            throw violation;
+            throw translated;
         }
     }
 
@@ -121,8 +150,24 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
         }
     }
 
-    private static UniqueConstraintViolationException? AsUniqueViolation(DbUpdateException exception) =>
-        exception.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation } postgres
-            ? new UniqueConstraintViolationException(postgres.ConstraintName, exception)
-            : null;
+    /// <summary>
+    /// Constraint violations that Application has an answer for (CODE_TAKEN, REFERENCE_NOT_FOUND, IN_USE),
+    /// as provider-independent exceptions; null for anything else.
+    /// </summary>
+    private static Exception? Translate(DbUpdateException exception) => exception.InnerException switch
+    {
+        PostgresException { SqlState: PostgresErrorCodes.UniqueViolation } postgres =>
+            new UniqueConstraintViolationException(postgres.ConstraintName, exception),
+        // ON DELETE RESTRICT has its own code: the row is still referenced.
+        PostgresException { SqlState: PostgresErrorCodes.RestrictViolation } postgres =>
+            new ForeignKeyViolationException(postgres.ConstraintName, blockedDelete: true, exception),
+        // A missing target, and (for NO ACTION keys) a still-referenced row, share this code and the
+        // constraint; which one it was follows from what was being saved: a delete can only be blocked.
+        PostgresException { SqlState: PostgresErrorCodes.ForeignKeyViolation } postgres =>
+            new ForeignKeyViolationException(
+                postgres.ConstraintName,
+                blockedDelete: exception.Entries.Count > 0 && exception.Entries.All(e => e.State == EntityState.Deleted),
+                exception),
+        _ => null,
+    };
 }

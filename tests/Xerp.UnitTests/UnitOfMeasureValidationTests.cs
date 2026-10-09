@@ -139,4 +139,22 @@ public class UnitOfMeasureValidationTests
         AssertInvalid(UnitOfMeasureValidation.List(new ListUnitsOfMeasureInput(Offset: -1)), "offset");
         AssertInvalid(UnitOfMeasureValidation.List(new ListUnitsOfMeasureInput(Limit: 0, Offset: -1)), "limit", "offset");
     }
+
+    [Theory]
+    [InlineData("a\u0000b")]
+    [InlineData("a\nb")]
+    [InlineData("a\u0007b")]
+    public void R9_List_search_with_a_control_character_is_rejected(string search)
+    {
+        AssertInvalid(UnitOfMeasureValidation.List(new ListUnitsOfMeasureInput(Search: search)), "search");
+    }
+
+    [Fact]
+    public void R9_List_search_surrounded_by_white_space_control_characters_is_trimmed()
+    {
+        var result = UnitOfMeasureValidation.List(new ListUnitsOfMeasureInput(Search: "\tkg\n"));
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("kg", result.Value!.Search);
+    }
 }
