@@ -72,6 +72,8 @@ New error code (registry: architecture §6):
 
 - `stock_document_create`, `stock_document_list`: `type` allows `"count"`. `stock_document_post` can return
   `COUNT_OUTDATED`. No new tool; `tools/list` still returns exactly the 37 tools of spec 007.
+- The description of the `quantity` property of a `lines` item no longer says only "greater than 0": it says
+  that on a count `0` is allowed. The schema itself is unchanged (a JSON number).
 - The description of `stock_document_create` explains a count: `quantity` is what was counted, in the line's
   unit; `0` means none found; each article once; articles not listed are not changed; use it for opening
   balances; for a known difference use a receipt or an issue.
@@ -179,7 +181,7 @@ Structure
 - AC-01 *(manual)* Build and tests exit 0; earlier tests pass unweakened. The only earlier tests changed are:
   tests asserting the exact property set of a stock document **line** (lines gain `bookQuantity`,
   `differenceQuantity`); tests pinning the exact enum values of `type` in a tool schema or expecting `type`
-  `"count"` to be invalid; tests pinning the table/column list. The literal tool list is **not** changed.
+  `"count"` to be invalid. (No table is added, so the table test does not change.) The literal tool list is **not** changed.
   One migration added.
 - AC-02 *(builder, unit)* The difference rule and the "current" rule (R7, R10, R11) are unit-tested without
   HTTP.
