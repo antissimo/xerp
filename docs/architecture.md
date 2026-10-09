@@ -140,7 +140,8 @@ Rules:
   - As built: orders have the full header (partner, warehouse, dates, reference, note) and priced lines;
     stock documents have warehouse, date, source order, reference, note and unpriced lines, and **no partner
     of their own** — a linked receipt or delivery reaches its partner only through the order, a manual one has
-    none (005 default 5). That is the one gap against this rule; it is roadmap row 011a.
+    none (005 default 5). That is the one gap against this rule; spec 011a closes it (optional `partnerId` on receipts
+    and issues, the order's partner on a linked document).
 - Warehouses on documents (ADR-0019): every document type has exactly one mandatory warehouse in its header
   (a transfer: source and destination) — the types that exist and every type added later. Each tenant has
   exactly one default warehouse (`isDefault`), created with the tenant and always active. On **create**,
@@ -190,9 +191,9 @@ Every non-2xx response under `/api/v1` is `application/problem+json` (RFC 9457) 
 | 409 | `UNIT_NOT_ON_ARTICLE` | A document line's unit is neither the base unit nor an alternative unit of its article. `errors` has `lines[i].unitId`. |
 | 409 | `QUANTITY_NOT_CONVERTIBLE` | A line's quantity converts to a base quantity of zero or above the maximum. `errors` has `lines[i].quantity`. |
 | 409 | `COUNT_OUTDATED` | Posting a stock count whose book quantity no longer equals stock on hand (spec 008). `errors` has `lines[i].quantity` for the outdated lines. |
-| 409 | `PARTNER_ROLE_MISSING` | The partner named on an order lacks the role the order needs (`isSupplier` / `isCustomer`). `errors` has `supplierId` / `customerId`. |
+| 409 | `PARTNER_ROLE_MISSING` | The partner named on an order, or on an unlinked receipt or issue (011a), lacks the role the document needs (`isSupplier` / `isCustomer`). `errors` has `supplierId` / `customerId` / `partnerId`. |
 | 409 | `ORDER_NOT_OPEN` | A stock document is saved or posted against an order that is not `confirmed`. `errors` has `purchaseOrderId` / `salesOrderId`. |
-| 409 | `ORDER_MISMATCH` | A stock document linked to an order names another warehouse, or a line's article is not its order line's. `errors` has `warehouseId` and/or `lines[i].articleId`. |
+| 409 | `ORDER_MISMATCH` | A stock document linked to an order names another warehouse or (011a) another partner, or a line's article is not its order line's. `errors` has `warehouseId`, `partnerId` and/or `lines[i].articleId`. |
 | 409 | `QUANTITY_EXCEEDS_ORDER` | Posting would take an order line above its ordered quantity. `errors` has `lines[i].quantity` for the lines linked to it. |
 | 413 | `PAYLOAD_TOO_LARGE` | The request body is larger than 1 048 576 bytes (1 MB), declared or counted while read. Refused before anything is parsed or applied; no `errors`. Checked after the credential and before routing, on `/api/v1` and on `/mcp` (review of open item 001/7). |
 | 500 | `INTERNAL_ERROR` | Unexpected. No stack trace or SQL in the body. |
