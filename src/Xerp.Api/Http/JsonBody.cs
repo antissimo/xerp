@@ -39,6 +39,17 @@ public static partial class JsonBody
         }
     }
 
+    /// <summary>
+    /// As <see cref="ReadAsync{T}"/>, for an operation whose body has nothing that the transport can require:
+    /// a request without a body is the empty object, and Application says which fields are missing.
+    /// </summary>
+    public static async Task<Result<T>> ReadOrEmptyAsync<T>(HttpRequest request, CancellationToken cancellationToken) where T : class
+    {
+        using var buffer = new MemoryStream();
+        await request.Body.CopyToAsync(buffer, cancellationToken);
+        return buffer.Length == 0 ? Read<T>("{}"u8) : Read<T>(buffer.GetBuffer().AsSpan(0, (int)buffer.Length));
+    }
+
     /// <summary>The same strict binding for a JSON object that is already in memory (MCP tool arguments).</summary>
     public static Result<T> Read<T>(ReadOnlySpan<byte> utf8Json) where T : class
     {

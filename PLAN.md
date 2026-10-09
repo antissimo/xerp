@@ -3,7 +3,7 @@
 Glavni pregled petlje arhitekt -> tester -> builder -> review -> merge. Redoslijed koraka dolazi iz
 `docs/roadmap.md` (piše ga arhitekt); ovaj dokument vodi orkestrator i ažurira ga nakon svakog koraka.
 
-Zadnje ažuriranje: 2026-10-09 16:30
+Zadnje ažuriranje: 2026-10-09 16:50
 
 ## Opseg MVP-a
 
@@ -31,7 +31,7 @@ Oznake: ✅ gotovo · 🔄 u tijeku · ⬜ nije započeto · — ne primjenjuje 
 | 003 | MCP server + upravljanje API ključevima | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 004 | Partneri i skladišta | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 005 | Skladišna knjiga, primke i izdatnice | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 006 | Međuskladišnice i storno | ✅ | ✅ | ✅ | 🔄 | ⬜ |
+| 006 | Međuskladišnice i storno | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 007 | Preračun jedinica mjere po artiklu | ✅ | ✅ | ✅ | 🔄 | ⬜ |
 | 008 | Inventura / korekcija zaliha | ✅ | ✅ | 🔄 | ⬜ | ⬜ |
 | 009 | Narudžbe dobavljačima -> primka robe | ✅ | ✅ | ⬜ | ⬜ | ⬜ |
@@ -52,7 +52,7 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 
 ## Što tko trenutno radi
 
-- **Arhitekt:** review speca 007.
+- **Arhitekt:** čeka ispravljen test za 007 (ponovni review) i kod za 008.
 - **Builder:** ispravak iz reviewa 006, prijenos u 007, zatim spec 008 (inventura).
 - **Tester:** usklađuje testove 006–008 s arhitektovim odgovorima (svi testovi MVP-a su napisani).
 
@@ -80,6 +80,8 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 - 2026-10-09 — review 006: tražen jedan mali ispravak (neaktivno skladište u zaglavlju mora se prijaviti samo, bez stavki); testovi prolaze (330 unit + 880 integracijskih).
 - 2026-10-09 — kod za 007 gotov (preračun jedinica mjere); otvorene stavke reviewa skupljene u `docs/reviews/open-items.md`.
 - 2026-10-09 — testovi za 009 i 010 napisani; time su napisani testovi za sve specove MVP-a.
+- 2026-10-09 — review 007: kod prihvaćen, jedan testerov test treba ispravak (testovi: 1391 od 1392).
+- 2026-10-09 — 006 prošao ponovni review (OK; 331 unit + 883 integracijska testa), spojen u `main` i pushan.
 
 ## Odluke vlasnika
 

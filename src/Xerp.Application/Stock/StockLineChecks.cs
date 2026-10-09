@@ -41,15 +41,27 @@ public static class StockLineChecks
         return null;
     }
 
-    /// <summary>Posting needs every article active, also those assigned while they still were (R13).</summary>
-    public static AppError? ActiveForPosting(IReadOnlyList<StockLineValues> lines, IReadOnlyDictionary<Guid, ArticleFacts> articles)
+    /// <summary>
+    /// Posting needs every master of the document active, also those assigned while they still were
+    /// (R13; spec 006, R5): the warehouse(s) and every article. Header before lines: the inactive warehouses are
+    /// reported together and alone; inactive articles only when the header is clean, all of them together.
+    /// </summary>
+    /// <param name="inactiveWarehouses">The error key and id of each inactive warehouse of the document.</param>
+    public static AppError? ActiveForPosting(
+        IReadOnlyList<(string Field, Guid Id)> inactiveWarehouses,
+        IReadOnlyList<StockLineValues> lines, IReadOnlyDictionary<Guid, ArticleFacts> articles)
     {
-        var inactive = Where(lines, l => !articles.TryGetValue(l.ArticleId, out var facts) || !facts.IsActive);
-        return inactive.Count == 0
+        var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        foreach (var (field, id) in inactiveWarehouses)
+            errors[field] = [$"The record with id '{id}' is inactive."];
+        if (errors.Count == 0)
+            foreach (var i in Where(lines, l => !articles.TryGetValue(l.ArticleId, out var facts) || !facts.IsActive))
+                errors[StockDocumentValidation.LineKey(i, "articleId")] = [$"The record with id '{lines[i].ArticleId}' is inactive."];
+        return errors.Count == 0
             ? null
-            : Error(ErrorCodes.ReferenceInactive,
-                "A line names an article that is inactive; reactivate it or remove the line, then post again. Nothing was posted.",
-                inactive, lines, id => $"The record with id '{id}' is inactive.");
+            : new AppError(ErrorCodes.ReferenceInactive,
+                "A warehouse or an article of the document is inactive; reactivate it or change the draft, then post again. Nothing was posted.",
+                errors);
     }
 
     /// <summary>
@@ -72,6 +84,37 @@ public static class StockLineChecks
         return new AppError(ErrorCodes.InsufficientStock,
             "Stock on hand does not cover the document; nothing was posted and the draft is unchanged. "
             + "Check stock on hand, then lower the quantities or receive stock first, and post again.",
+            errors);
+    }
+
+    /// <summary>
+    /// No negative stock, also by reversal (spec 006, R16): null when every (article, warehouse) pair stays at
+    /// or above zero after the reversing <paramref name="movements"/>, otherwise INSUFFICIENT_STOCK with the
+    /// quantity key of every line of the original that names a short article.
+    /// </summary>
+    public static AppError? ReversalSufficiency(
+        IReadOnlyList<StockLineValues> originalLines, IReadOnlyCollection<StockMovement> movements,
+        IReadOnlyDictionary<(Guid ArticleId, Guid WarehouseId), decimal> onHand)
+    {
+        var shortArticles = StockMovements.ShortArticles(movements, onHand);
+        if (shortArticles.Count == 0)
+            return null;
+        var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        foreach (var index in Where(originalLines, l => shortArticles.Contains(l.ArticleId)))
+        {
+            var article = originalLines[index].ArticleId;
+            var worst = movements
+                .Where(m => m.ArticleId == article)
+                .GroupBy(m => m.WarehouseId)
+                .Select(g => (Needed: -g.Sum(m => m.Quantity), OnHand: onHand.GetValueOrDefault((article, g.Key))))
+                .First(p => p.Needed > p.OnHand);
+            errors[StockDocumentValidation.LineKey(index, "quantity")] =
+                [$"The reversal takes {Text(worst.Needed)} of this article back out of the warehouse it was brought into; only {Text(worst.OnHand)} is still on hand there."];
+        }
+        return new AppError(ErrorCodes.InsufficientStock,
+            "The goods this document brought in have already left: reversing it would make stock negative. "
+            + "Nothing was reversed and the document is still posted. Reverse the later documents that took the goods out first, "
+            + "or receive stock, then reverse again.",
             errors);
     }
 

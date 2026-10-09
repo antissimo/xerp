@@ -6,6 +6,13 @@ namespace Xerp.Application.Stock;
 /// <summary>A line with the current code and name of its article and of the article's base unit (R23).</summary>
 public sealed record StockDocumentLineDto(int LineNo, ReferenceSummary Article, ReferenceSummary Unit, decimal Quantity);
 
+/// <summary>Another stock document, as a document links to it: the reversed original or the reversing document.</summary>
+public sealed record StockDocumentLinkDto(Guid Id, string Number);
+
+/// <summary>
+/// <c>ToWarehouse</c> is null unless the document is a transfer; <c>ReversalOf</c> is set on a reversing
+/// document and <c>ReversedBy</c> on a reversed one (spec 006, 4.1). All three are always present.
+/// </summary>
 public sealed record StockDocumentDto(
     Guid Id,
     string Type,
@@ -13,6 +20,9 @@ public sealed record StockDocumentDto(
     string? Number,
     DateOnly DocumentDate,
     ReferenceSummary Warehouse,
+    ReferenceSummary? ToWarehouse,
+    StockDocumentLinkDto? ReversalOf,
+    StockDocumentLinkDto? ReversedBy,
     string? Reference,
     string? Note,
     IReadOnlyList<StockDocumentLineDto> Lines,
@@ -31,6 +41,9 @@ public sealed record StockDocumentSummaryDto(
     string? Number,
     DateOnly DocumentDate,
     ReferenceSummary Warehouse,
+    ReferenceSummary? ToWarehouse,
+    StockDocumentLinkDto? ReversalOf,
+    StockDocumentLinkDto? ReversedBy,
     string? Reference,
     string? Note,
     int LineCount,
@@ -44,8 +57,8 @@ public sealed record StockDocumentSummaryDto(
 /// <summary>Stock on hand of one (article, warehouse) pair: the sum of its ledger entries (R19).</summary>
 public sealed record StockOnHandDto(ReferenceSummary Article, ReferenceSummary Warehouse, ReferenceSummary Unit, decimal Quantity);
 
-/// <summary>The posted document a ledger entry came from.</summary>
-public sealed record LedgerDocumentDto(Guid Id, string Number, string Type);
+/// <summary>The posted document a ledger entry came from; <c>IsReversal</c> when that is a reversing document.</summary>
+public sealed record LedgerDocumentDto(Guid Id, string Number, string Type, bool IsReversal);
 
 public sealed record StockLedgerEntryDto(
     Guid Id,
@@ -64,11 +77,12 @@ public sealed record StockLineInput(string? ArticleId = null, decimal? Quantity 
 
 public sealed record CreateStockDocumentInput(
     string? Type = null, string? DocumentDate = null, string? WarehouseId = null,
-    IReadOnlyList<StockLineInput?>? Lines = null, string? Reference = null, string? Note = null);
+    IReadOnlyList<StockLineInput?>? Lines = null, string? Reference = null, string? Note = null, string? ToWarehouseId = null);
 
 /// <summary>
 /// All five fields must be present (R7); <c>Reference</c> and <c>Note</c> may be null but must have been given.
-/// There is no <c>type</c>: it never changes (R1).
+/// There is no <c>type</c>: it never changes (R1). <c>ToWarehouseId</c> is needed for a transfer and must be
+/// absent or null for the other types (spec 006, 4.1), which only the stored document can tell.
 /// </summary>
 public sealed record ReplaceStockDocumentInput : TrackedInput
 {
@@ -77,10 +91,17 @@ public sealed record ReplaceStockDocumentInput : TrackedInput
 
     public string? DocumentDate { get; init; }
     public string? WarehouseId { get; init; }
+    public string? ToWarehouseId { get; init; }
     public string? Reference { get => _reference; init => _reference = Given(value); }
     public string? Note { get => _note; init => _note = Given(value); }
     public IReadOnlyList<StockLineInput?>? Lines { get; init; }
 }
+
+/// <summary>The body of a reversal (spec 006, 4.2): the reversal's own date and note.</summary>
+public sealed record ReverseStockDocumentInput(string? DocumentDate = null, string? Note = null);
+
+/// <summary>Validated input of a reversal; whether the date is early enough only the original can tell.</summary>
+public sealed record StockReversalValues(DateOnly DocumentDate, string? Note);
 
 public sealed record ListStockDocumentsInput(
     string? Type = null, string? Status = null, string? WarehouseId = null, string? Search = null,
@@ -96,7 +117,7 @@ public sealed record ListStockLedgerEntriesInput(
 
 /// <summary>Validated header and lines of a document. The references are well-formed, not yet known to exist.</summary>
 public sealed record StockDocumentValues(
-    DateOnly DocumentDate, Guid WarehouseId, string? Reference, string? Note, IReadOnlyList<StockLineValues> Lines);
+    DateOnly DocumentDate, Guid WarehouseId, Guid? ToWarehouseId, string? Reference, string? Note, IReadOnlyList<StockLineValues> Lines);
 
 /// <summary>Validated input of a create: the type and the values.</summary>
 public sealed record NewStockDocumentValues(StockDocumentType Type, StockDocumentValues Values);

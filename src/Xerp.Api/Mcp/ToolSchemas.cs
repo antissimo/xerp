@@ -33,6 +33,10 @@ public static class ToolSchemas
     public static JsonObject Uuid(string description) =>
         new() { ["type"] = "string", ["format"] = "uuid", ["description"] = description };
 
+    /// <summary>A UUID or null: an optional reference that a caller may also pass explicitly as "none".</summary>
+    public static JsonObject NullableUuid(string description) =>
+        new() { ["type"] = new JsonArray("string", "null"), ["format"] = "uuid", ["description"] = description };
+
     public static JsonObject Flag(string description) => new() { ["type"] = "boolean", ["description"] = description };
 
     public static JsonObject Integer(string description, int minimum, int? maximum = null)
