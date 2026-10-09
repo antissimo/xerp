@@ -53,6 +53,11 @@ count lines. `DocumentCounter` gets a fourth type, `count`. One migration.
 | Post | Additional error: `409 COUNT_OUTDATED`. A count never returns `INSUFFICIENT_STOCK`. |
 | Reverse | Works for a posted count (R17–R19). |
 
+A replace body has no `type`, so the rules that depend on it (R3, R4, the destination) are judged against the
+stored document, all together, after the existence check and before `INVALID_STATE` (006/R4). A replace that
+addresses no document is `400` for a quantity of `0` (005/AC-74 is unchanged) and otherwise `404`
+(`008-q.md`, B-Q1).
+
 A line in a representation gains two properties, always present, on every stock document:
 ```json
 { "…": "as spec 007 §4.3",
