@@ -76,7 +76,7 @@ public class StockDocumentRulesTests
     public void R17_A_counter_starts_at_one_and_grows_by_exactly_one()
     {
         var tenant = Guid.CreateVersion7();
-        var counter = DocumentCounter.Start(tenant, StockDocumentType.Issue);
+        var counter = DocumentCounter.Start(tenant, DocumentSeries.Of(StockDocumentType.Issue));
 
         Assert.Equal(0, counter.LastNumber);
         Assert.Equal((tenant, StockDocumentTypeNames.Issue), (counter.TenantId, counter.DocumentType));

@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Xerp.Application.Common;
 using Xerp.Application.Ports;
 using Xerp.Domain.Inventory;
+using Xerp.Domain.Orders;
 
 namespace Xerp.Application.Stock;
 
@@ -12,7 +13,12 @@ namespace Xerp.Application.Stock;
 /// </summary>
 public sealed class StockQueries(IXerpDb db)
 {
-    /// <summary>One item per (article, warehouse) pair whose ledger sum is not zero (R19, R20).</summary>
+    /// <summary>
+    /// One item per (article, warehouse) pair whose ledger sum or incoming quantity is not zero (R19, R20; spec
+    /// 009, R35). The incoming quantity is what the lines of confirmed purchase orders for the warehouse still
+    /// expect: ordered minus received, in base units. Both sums are made in one query, so total and paging count
+    /// every pair once.
+    /// </summary>
     public async Task<Result<PagedResult<StockOnHandDto>>> OnHandAsync(ListStockOnHandInput input, CancellationToken cancellationToken = default)
     {
         var validated = StockDocumentValidation.OnHand(input);
@@ -26,10 +32,22 @@ public sealed class StockQueries(IXerpDb db)
         if (query.WarehouseId is { } warehouseId)
             entries = entries.Where(e => e.WarehouseId == warehouseId);
 
+        var expected =
+            from l in db.PurchaseOrderLines.AsNoTracking()
+            join o in db.PurchaseOrders.AsNoTracking() on l.OrderId equals o.Id
+            where o.Status == OrderStatus.Confirmed
+            select new { l.ArticleId, o.WarehouseId, Incoming = l.BaseQuantity!.Value - l.FulfilledBaseQuantity };
+        if (query.ArticleId is { } expectedArticleId)
+            expected = expected.Where(x => x.ArticleId == expectedArticleId);
+        if (query.WarehouseId is { } expectedWarehouseId)
+            expected = expected.Where(x => x.WarehouseId == expectedWarehouseId);
+
         var pairs = entries
-            .GroupBy(e => new { e.ArticleId, e.WarehouseId })
-            .Select(g => new { g.Key.ArticleId, g.Key.WarehouseId, Quantity = g.Sum(e => e.Quantity) })
-            .Where(p => p.Quantity != 0);
+            .Select(e => new { e.ArticleId, e.WarehouseId, e.Quantity, Incoming = 0m })
+            .Concat(expected.Select(x => new { x.ArticleId, x.WarehouseId, Quantity = 0m, x.Incoming }))
+            .GroupBy(x => new { x.ArticleId, x.WarehouseId })
+            .Select(g => new { g.Key.ArticleId, g.Key.WarehouseId, Quantity = g.Sum(x => x.Quantity), Incoming = g.Sum(x => x.Incoming) })
+            .Where(p => p.Quantity != 0 || p.Incoming != 0);
 
         var total = await pairs.CountAsync(cancellationToken);
         var rows = await (
@@ -44,6 +62,7 @@ public sealed class StockQueries(IXerpDb db)
                 p.WarehouseId, WarehouseCode = w.Code, WarehouseName = w.Name,
                 UnitId = u.Id, UnitCode = u.Code, UnitName = u.Name,
                 p.Quantity,
+                p.Incoming,
             })
             .Skip(query.Offset)
             .Take(query.Limit)
@@ -53,7 +72,7 @@ public sealed class StockQueries(IXerpDb db)
             new ReferenceSummary(r.ArticleId, r.ArticleCode, r.ArticleName),
             new ReferenceSummary(r.WarehouseId, r.WarehouseCode, r.WarehouseName),
             new ReferenceSummary(r.UnitId, r.UnitCode, r.UnitName),
-            QuantityRules.Normalize(r.Quantity))).ToList();
+            QuantityRules.Normalize(r.Quantity), QuantityRules.Normalize(r.Incoming))).ToList();
         return new PagedResult<StockOnHandDto>(items, total, query.Limit, query.Offset);
     }
 

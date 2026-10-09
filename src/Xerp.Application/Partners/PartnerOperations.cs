@@ -106,10 +106,18 @@ public sealed class PartnerOperations(IXerpDb db, ITenantContext context, IClock
         var partner = await db.Partners.SingleOrDefaultAsync(p => p.Id == id, cancellationToken);
         if (partner is null)
             return NotFound();
+        // Spec 009, R37: an order of any status - draft, confirmed or closed - names its partner for good.
+        if (await db.PurchaseOrders.AnyAsync(o => o.PartnerId == id, cancellationToken))
+            return InUse();
         db.Partners.Remove(partner);
         try
         {
             await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (ForeignKeyViolationException ex) when (ex.BlockedDelete)
+        {
+            // An order started to name the partner after the check above: the foreign key is the authority.
+            return InUse();
         }
         catch (DbUpdateConcurrencyException)
         {
@@ -169,6 +177,9 @@ public sealed class PartnerOperations(IXerpDb db, ITenantContext context, IClock
     private const string NotFoundDetail = "Partner not found.";
 
     private static AppError NotFound() => AppError.NotFound(NotFoundDetail);
+
+    private static AppError InUse() =>
+        AppError.InUse("The partner is named by orders and cannot be deleted. Deactivate it instead (isActive = false).");
 
     private static AppError CodeTaken(string code) => AppError.CodeTaken($"A partner with code '{code}' already exists.");
 

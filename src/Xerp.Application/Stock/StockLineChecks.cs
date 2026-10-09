@@ -2,6 +2,7 @@ using System.Globalization;
 using Xerp.Application.Common;
 using Xerp.Domain.Catalog;
 using Xerp.Domain.Inventory;
+using Xerp.Domain.Orders;
 
 namespace Xerp.Application.Stock;
 
@@ -48,6 +49,7 @@ public static class StockLineChecks
     private const string ArticleField = "articleId";
     private const string UnitField = StockDocumentValidation.UnitField;
     private const string QuantityField = "quantity";
+    public const string OrderLineField = "orderLineNo";
 
     /// <summary>
     /// The line references of a draft being saved (R5; spec 007, R12, R16): the first failing kind is reported
@@ -61,10 +63,15 @@ public static class StockLineChecks
     /// </summary>
     /// <param name="articlesOnDocument">The articles the stored draft already has a line for: these may stay although inactive.</param>
     /// <param name="unitsOnDocument">The units the stored draft already has a line in: these may stay although inactive.</param>
-    /// <param name="type">The type of the document: on a count a counted quantity of zero converts (spec 008, R5).</param>
+    /// <param name="type">The type of the document: on a count a counted quantity of zero converts (spec 008, R5). The lines of an order are judged like those of a receipt.</param>
+    /// <param name="orderLines">
+    /// For a document linked to an order (spec 009, R21): the line numbers the order has. A line whose
+    /// <c>orderLineNo</c> is not among them names something that does not exist, like an unknown article. Null
+    /// for an unlinked document and for the lines of an order itself.
+    /// </param>
     public static Result<IReadOnlyList<StockLineEntry>> References(
         IReadOnlyList<StockLineRequest> lines, StockLineFacts facts, IReadOnlySet<Guid> articlesOnDocument, IReadOnlySet<Guid> unitsOnDocument,
-        StockDocumentType type = StockDocumentType.Receipt)
+        StockDocumentType type, IReadOnlyCollection<int>? orderLines = null)
     {
         var articles = facts.Articles;
 
@@ -75,9 +82,14 @@ public static class StockLineChecks
                 unknown.Add(i, ArticleField, $"No record with id '{lines[i].ArticleId}' exists.");
             if (lines[i].UnitId is { } unit && !facts.Units.ContainsKey(unit))
                 unknown.Add(i, UnitField, $"No record with id '{unit}' exists.");
+            if (orderLines is not null && lines[i].OrderLineNo is { } orderLineNo && !orderLines.Contains(orderLineNo))
+                unknown.Add(i, OrderLineField, $"The order has no line {orderLineNo}; its lines are numbered 1 to {orderLines.Count}.");
         }
         if (unknown.Any)
-            return unknown.ToError(ErrorCodes.ReferenceNotFound, "A line names an article or a unit of measure that does not exist.");
+            return unknown.ToError(ErrorCodes.ReferenceNotFound,
+                orderLines is null
+                    ? "A line names an article or a unit of measure that does not exist."
+                    : "A line names an article, a unit of measure or an order line that does not exist.");
 
         var inactive = new LineErrors();
         for (var i = 0; i < lines.Count; i++)
@@ -99,7 +111,7 @@ public static class StockLineChecks
         }
         if (notStocked.Any)
             return notStocked.ToError(ErrorCodes.ArticleNotStocked,
-                "Only articles of type \"stock\" can be on a stock document; a service has no stock.");
+                "Only articles of type \"stock\" can be on a stock document or an order; a service has no stock.");
 
         var notOnArticle = new LineErrors();
         for (var i = 0; i < lines.Count; i++)
@@ -113,7 +125,7 @@ public static class StockLineChecks
                 + "alternative units, or first give the article a conversion for that unit.");
 
         var entries = lines
-            .Select(l => new StockLineEntry(l.ArticleId, l.UnitId ?? articles[l.ArticleId].BaseUnitId, l.Quantity))
+            .Select(l => new StockLineEntry(l.ArticleId, l.UnitId ?? articles[l.ArticleId].BaseUnitId, l.Quantity, l.OrderLineNo))
             .ToList();
         var converted = Convert(entries, facts, type);
         if (!converted.IsSuccess)
@@ -129,7 +141,7 @@ public static class StockLineChecks
     /// </summary>
     /// <exception cref="InvalidOperationException">A line is in a unit that is not a unit of its article; saving never allows that.</exception>
     public static Result<IReadOnlyList<ConvertedLine>> Convert(
-        IReadOnlyList<StockLineEntry> lines, StockLineFacts facts, StockDocumentType type = StockDocumentType.Receipt)
+        IReadOnlyList<StockLineEntry> lines, StockLineFacts facts, StockDocumentType type)
     {
         var converted = new List<ConvertedLine>(lines.Count);
         var notConvertible = new LineErrors();
@@ -161,10 +173,21 @@ public static class StockLineChecks
     /// <param name="inactiveWarehouses">The error key and id of each inactive warehouse of the document.</param>
     public static AppError? ActiveForPosting(
         IReadOnlyList<(string Field, Guid Id)> inactiveWarehouses,
-        IReadOnlyList<StockLineEntry> lines, IReadOnlyDictionary<Guid, ArticleFacts> articles)
+        IReadOnlyList<StockLineEntry> lines, IReadOnlyDictionary<Guid, ArticleFacts> articles) =>
+        ActiveMasters(inactiveWarehouses, lines, articles,
+            "A warehouse or an article of the document is inactive; reactivate it or change the draft, then post again. Nothing was posted.");
+
+    /// <summary>
+    /// The rule behind <see cref="ActiveForPosting"/>, for any step that needs every master active (spec 005,
+    /// R13; spec 009, R12): the inactive header masters together and alone, then every inactive article.
+    /// </summary>
+    /// <param name="inactiveHeader">The error key and id of each inactive master the header names, in the order of the keys.</param>
+    public static AppError? ActiveMasters(
+        IReadOnlyList<(string Field, Guid Id)> inactiveHeader,
+        IReadOnlyList<StockLineEntry> lines, IReadOnlyDictionary<Guid, ArticleFacts> articles, string detail)
     {
         var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
-        foreach (var (field, id) in inactiveWarehouses)
+        foreach (var (field, id) in inactiveHeader)
             errors[field] = [$"The record with id '{id}' is inactive."];
         var headerIsClean = errors.Count == 0;
         for (var i = 0; headerIsClean && i < lines.Count; i++)
@@ -174,9 +197,7 @@ public static class StockLineChecks
         }
         return errors.Count == 0
             ? null
-            : new AppError(ErrorCodes.ReferenceInactive,
-                "A warehouse or an article of the document is inactive; reactivate it or change the draft, then post again. Nothing was posted.",
-                errors);
+            : new AppError(ErrorCodes.ReferenceInactive, detail, errors);
     }
 
     /// <summary>

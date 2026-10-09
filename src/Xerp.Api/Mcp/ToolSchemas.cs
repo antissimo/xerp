@@ -47,6 +47,10 @@ public static class ToolSchemas
         return schema;
     }
 
+    /// <summary>An integer or null: an optional number that a caller may also pass explicitly as "none".</summary>
+    public static JsonObject NullableInteger(string description, int minimum) =>
+        new() { ["type"] = new JsonArray("integer", "null"), ["description"] = description, ["minimum"] = minimum };
+
     /// <summary>A JSON number; a quoted number is a wrong type.</summary>
     public static JsonObject Number(string description) => new() { ["type"] = "number", ["description"] = description };
 

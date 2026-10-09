@@ -1,4 +1,5 @@
 using Xerp.Domain.Common;
+using Xerp.Domain.Orders;
 
 namespace Xerp.Domain.Inventory;
 
@@ -164,6 +165,12 @@ public sealed class StockDocument : ITenantOwned
     /// <summary>On a reversed document: the document that reversed it. Null until then.</summary>
     public Guid? ReversedById { get; private set; }
 
+    /// <summary>
+    /// The purchase order a receipt fulfils (ADR-0016; spec 009, R18, R19): set at creation, never changed,
+    /// only on a receipt. Null on an unlinked document, which behaves as if orders did not exist.
+    /// </summary>
+    public Guid? PurchaseOrderId { get; private set; }
+
     public string? Reference { get; private set; }
     public string? Note { get; private set; }
     public DateTime? PostedAt { get; private set; }
@@ -192,15 +199,30 @@ public sealed class StockDocument : ITenantOwned
     /// <summary>Spec 006, R11: only a posted document that is not itself a reversing document.</summary>
     public bool CanBeReversed => Status == StockDocumentStatus.Posted && !IsReversal;
 
+    /// <summary>Whether the document fulfils an order: then every line names an order line (spec 009, R20).</summary>
+    public bool IsLinked => PurchaseOrderId is not null;
+
+    /// <summary>
+    /// What the posted lines of a linked document mean for the order (spec 009, R25): per line, the order line
+    /// it names and its base quantity. Empty on an unlinked document.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The document is linked and not posted.</exception>
+    public IReadOnlyList<LineFulfilment> Fulfilment =>
+        IsLinked ? Lines.Select(l => new LineFulfilment(l.OrderLineNo!.Value, l.BaseValues.Quantity)).ToList() : [];
+
     public static StockDocument Create(
         StockDocumentType type, DateOnly documentDate, Guid warehouseId, Guid? toWarehouseId, string? reference, string? note,
-        IReadOnlyList<StockLineEntry> lines, DateTime now, Guid actorKeyId, IReadOnlyList<decimal>? bookQuantities = null)
+        IReadOnlyList<StockLineEntry> lines, DateTime now, Guid actorKeyId, IReadOnlyList<decimal>? bookQuantities = null,
+        Guid? purchaseOrderId = null)
     {
+        if (purchaseOrderId is not null && type != StockDocumentType.Receipt)
+            throw new ArgumentException("Only a receipt can be linked to a purchase order.", nameof(purchaseOrderId));
         var document = new StockDocument
         {
             Id = Guid.CreateVersion7(),
             Type = type,
             Status = StockDocumentStatus.Draft,
+            PurchaseOrderId = purchaseOrderId,
             CreatedAt = now,
             CreatedBy = actorKeyId,
         };
@@ -216,6 +238,10 @@ public sealed class StockDocument : ITenantOwned
     /// records with every save the book quantity of every line anew: <paramref name="bookQuantities"/>, the
     /// stock on hand of each line's article in <paramref name="warehouseId"/> at this moment, in line order.
     /// The other types take none.
+    /// </para>
+    /// <para>
+    /// The link to an order is not replaced (spec 009, R19, R20): on a linked document every line names an
+    /// order line, on an unlinked one none does.
     /// </para>
     /// </summary>
     /// <exception cref="InvalidOperationException">The document is posted (R11).</exception>
@@ -244,6 +270,8 @@ public sealed class StockDocument : ITenantOwned
         }
         else if (bookQuantities is not null)
             throw new ArgumentException("Only a count records book quantities.", nameof(bookQuantities));
+        if (lines.Any(l => IsLinked ? l.OrderLineNo is not >= 1 : l.OrderLineNo is not null))
+            throw new ArgumentException("Every line of a linked document names an order line; a line of an unlinked document names none.", nameof(lines));
 
         DocumentDate = documentDate;
         WarehouseId = warehouseId;
@@ -257,9 +285,9 @@ public sealed class StockDocument : ITenantOwned
         for (var i = 0; i < lines.Count; i++)
         {
             if (i < current.Count)
-                current[i].Set(lines[i], bookQuantities?[i]);
+                current[i].Set(lines[i], bookQuantities?[i], PurchaseOrderId);
             else
-                _lines.Add(new StockDocumentLine(Id, i + 1, lines[i], bookQuantities?[i]));
+                _lines.Add(new StockDocumentLine(Id, i + 1, lines[i], bookQuantities?[i], PurchaseOrderId));
         }
         var removed = _lines.Skip(lines.Count).ToList();
         _lines.RemoveRange(lines.Count, removed.Count);
@@ -322,7 +350,7 @@ public sealed class StockDocument : ITenantOwned
     /// entries, which are <paramref name="entries"/> with the opposite sign. The lines are copies of this
     /// document's posted lines - unit, quantity, factor and base quantity as posted - whatever the article's
     /// conversions are now (spec 007, R20), and on a count with the book quantity it was posted against (spec
-    /// 008, R17). A count that wrote no entries is reversed like any other: the reversing document then has
+    /// 008, R17), and on a linked receipt with the same order and order lines (spec 009, R32). A count that wrote no entries is reversed like any other: the reversing document then has
     /// none either. This document becomes
     /// <see cref="StockDocumentStatus.Reversed"/> and points to the reversing document; nothing else on it
     /// changes. Whether stock allows it and which number is next is decided by the caller, inside the same
@@ -356,6 +384,7 @@ public sealed class StockDocument : ITenantOwned
             WarehouseId = WarehouseId,
             ToWarehouseId = ToWarehouseId,
             ReversalOfId = Id,
+            PurchaseOrderId = PurchaseOrderId,
             Reference = Reference,
             Note = reversalNote,
             PostedAt = now,
@@ -395,12 +424,12 @@ public sealed class StockDocumentLine : ITenantOwned
 {
     private StockDocumentLine() { }
 
-    internal StockDocumentLine(Guid documentId, int lineNo, StockLineEntry entry, decimal? bookQuantity = null)
+    internal StockDocumentLine(Guid documentId, int lineNo, StockLineEntry entry, decimal? bookQuantity = null, Guid? purchaseOrderId = null)
     {
         Id = Guid.CreateVersion7();
         DocumentId = documentId;
         LineNo = lineNo;
-        Set(entry, bookQuantity);
+        Set(entry, bookQuantity, purchaseOrderId);
     }
 
     /// <summary>A line of a reversing document: the posted line as it is, factor and base quantity included (spec 007, R20).</summary>
@@ -408,7 +437,7 @@ public sealed class StockDocumentLine : ITenantOwned
     {
         if (posted.Factor is not { } factor || posted.BaseQuantity is not { } baseQuantity)
             throw new InvalidOperationException("Only a posted line has a factor and a base quantity to copy.");
-        var copy = new StockDocumentLine(documentId, posted.LineNo, posted.Entry, posted.BookQuantity);
+        var copy = new StockDocumentLine(documentId, posted.LineNo, posted.Entry, posted.BookQuantity, posted.PurchaseOrderId);
         copy.Freeze(factor, baseQuantity);
         return copy;
     }
@@ -452,12 +481,25 @@ public sealed class StockDocumentLine : ITenantOwned
     public decimal? DifferenceQuantity =>
         BaseQuantity is { } counted && BookQuantity is { } book ? CountRules.Difference(counted, book) : null;
 
-    internal void Set(StockLineEntry entry, decimal? bookQuantity = null)
+    /// <summary>
+    /// On a line of a linked document (spec 009, R20): the document's order, repeated here so that the line
+    /// can reference its order line by a foreign key. Null on an unlinked document.
+    /// </summary>
+    public Guid? PurchaseOrderId { get; private set; }
+
+    /// <summary>The number of the order line this line fulfils; null on an unlinked document.</summary>
+    public int? OrderLineNo { get; private set; }
+
+    internal void Set(StockLineEntry entry, decimal? bookQuantity = null, Guid? purchaseOrderId = null)
     {
+        if (purchaseOrderId is null != entry.OrderLineNo is null)
+            throw new ArgumentException("A line names an order line exactly when its document is linked to an order.", nameof(entry));
         ArticleId = entry.ArticleId;
         UnitId = entry.UnitId;
         Quantity = entry.Quantity;
         BookQuantity = bookQuantity;
+        PurchaseOrderId = purchaseOrderId;
+        OrderLineNo = entry.OrderLineNo;
     }
 
     internal void Freeze(decimal factor, decimal baseQuantity)
@@ -469,7 +511,7 @@ public sealed class StockDocumentLine : ITenantOwned
     }
 
     /// <summary>What was entered.</summary>
-    public StockLineEntry Entry => new(ArticleId, UnitId, Quantity);
+    public StockLineEntry Entry => new(ArticleId, UnitId, Quantity, OrderLineNo);
 
     /// <summary>What the posted line means for stock: the article and its base quantity (R19).</summary>
     /// <exception cref="InvalidOperationException">The line is not posted.</exception>
@@ -521,8 +563,9 @@ public sealed class StockLedgerEntry : ITenantOwned
 }
 
 /// <summary>
-/// The last document number a tenant has used for one document type (ADR-0012, decision 6). It is read and
-/// advanced only inside the posting transaction, so numbers are gapless and in posting order.
+/// The last document number a tenant has used in one number series (ADR-0012, decision 6): one per stock
+/// document type and one per kind of order. It is read and advanced only inside the transaction that posts or
+/// confirms, so numbers are gapless and in that order.
 /// </summary>
 public sealed class DocumentCounter : ITenantOwned
 {
@@ -530,13 +573,13 @@ public sealed class DocumentCounter : ITenantOwned
 
     public Guid TenantId { get; private set; }
 
-    /// <summary>The contract name of the document type (<c>receipt</c>, <c>issue</c>, <c>transfer</c>, <c>count</c>).</summary>
+    /// <summary>The key of the series: <c>receipt</c>, <c>issue</c>, <c>transfer</c>, <c>count</c>, <c>purchaseOrder</c>.</summary>
     public string DocumentType { get; private set; } = "";
 
     public long LastNumber { get; private set; }
 
-    public static DocumentCounter Start(Guid tenantId, StockDocumentType type) =>
-        new() { TenantId = tenantId, DocumentType = type.ToName(), LastNumber = 0 };
+    public static DocumentCounter Start(Guid tenantId, DocumentSeries series) =>
+        new() { TenantId = tenantId, DocumentType = series.Key, LastNumber = 0 };
 
     /// <summary>Advances the counter by exactly one and returns the new value.</summary>
     public long Next() => ++LastNumber;

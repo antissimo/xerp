@@ -22,6 +22,8 @@ public static class StockDocumentValidation
 
     public const string ToWarehouseField = "toWarehouseId";
     public const string UnitField = "unitId";
+    public const string PurchaseOrderField = OrderLinkChecks.PurchaseOrderField;
+    private const string OrderLineField = StockLineChecks.OrderLineField;
 
     public static string LineKey(int index, string field) => $"lines[{index}].{field}";
 
@@ -30,15 +32,29 @@ public static class StockDocumentValidation
         var errors = new ValidationErrors();
         if (!StockDocumentTypeNames.TryParse(input.Type, out var type))
             errors.Add("type", string.IsNullOrEmpty(input.Type) ? "type is required. " + TypeMessage : TypeMessage);
+        // Spec 009, R18: the type decides about purchaseOrderId only. A document that sends one is judged as
+        // linked, whatever its type, so a valid orderLineNo on its lines is not reported with it.
+        var linked = input.PurchaseOrderId is not null;
+        Guid? purchaseOrderId = null;
+        if (linked)
+        {
+            if (!errors.Has("type") && type != StockDocumentType.Receipt)
+                errors.Add(PurchaseOrderField,
+                    $"purchaseOrderId is only for a receipt: goods of a purchase order are received with a receipt. For {(type == StockDocumentType.Issue ? "an" : "a")} {type.ToName()} leave it out or pass null.");
+            else if (Guid.TryParse(input.PurchaseOrderId, out var parsed))
+                purchaseOrderId = parsed;
+            else
+                errors.Add(PurchaseOrderField, "purchaseOrderId must be the id (UUID) of a purchase order, not its number.");
+        }
         // An unknown type is judged like a receipt: a quantity greater than 0, repeats allowed.
-        var values = Values(errors, type, input.DocumentDate, input.WarehouseId, input.ToWarehouseId, input.Reference, input.Note, input.Lines);
+        var values = Values(errors, type, linked, input.DocumentDate, input.WarehouseId, input.ToWarehouseId, input.Reference, input.Note, input.Lines);
         // Only for a known type can the destination be judged (spec 006, R2, R3).
         if (!errors.Has("type") && !errors.Has(ToWarehouseField)
             && DestinationMessage(type, values.WarehouseId, values.ToWarehouseId) is { } message)
             errors.Add(ToWarehouseField, message);
         if (errors.Any)
             return errors.ToError();
-        return new NewStockDocumentValues(type, values);
+        return new NewStockDocumentValues(type, values, purchaseOrderId);
     }
 
     public static Result<StockDocumentValues> Replace(ReplaceStockDocumentInput input)
@@ -52,8 +68,9 @@ public static class StockDocumentValidation
                 errors.Add(field, $"{field} is required (it may be null).");
             }
         }
-        // The body has no type, so what depends on it (spec 008, R3, R4) waits for the stored document: OfType.
-        var values = Values(errors, type: null, input.DocumentDate, input.WarehouseId, input.ToWarehouseId, input.Reference, input.Note, input.Lines);
+        // The body has neither a type nor a link, so what depends on them (spec 008, R3, R4; spec 009, R20)
+        // waits for the stored document: OfType.
+        var values = Values(errors, type: null, linked: null, input.DocumentDate, input.WarehouseId, input.ToWarehouseId, input.Reference, input.Note, input.Lines);
         if (errors.Any)
             return errors.ToError();
         return values;
@@ -64,8 +81,11 @@ public static class StockDocumentValidation
     /// R3, R4, E10): null when the validated values suit a document of <paramref name="type"/>, otherwise
     /// <c>VALIDATION_FAILED</c> with every such key together - <c>toWarehouseId</c>, <c>lines[i].quantity</c>
     /// for a zero on a document that is not a count, <c>lines[i].articleId</c> for a repeated article on a count.
+    /// The link to an order is decided by the stored document too (spec 009, R19, R20): <c>lines[i].orderLineNo</c>
+    /// for a line without one on a linked document and for a line with one on an unlinked document.
     /// </summary>
-    public static AppError? OfType(StockDocumentType type, StockDocumentValues values)
+    /// <param name="linked">Whether the stored document is linked to an order.</param>
+    public static AppError? OfType(StockDocumentType type, StockDocumentValues values, bool linked = false)
     {
         var errors = new ValidationErrors();
         if (DestinationMessage(type, values.WarehouseId, values.ToWarehouseId) is { } message)
@@ -74,6 +94,8 @@ public static class StockDocumentValidation
         {
             if (!QuantityRules.IsValidOn(type, values.Lines[i].Quantity))
                 errors.Add(LineKey(i, "quantity"), QuantityMessage(type));
+            if (OrderLineMessage(linked, values.Lines[i].OrderLineNo) is { } orderLineMessage)
+                errors.Add(LineKey(i, OrderLineField), orderLineMessage);
         }
         Repeats(errors, type, values.Lines.Select(l => (Guid?)l.ArticleId).ToList());
         return errors.Any ? errors.ToError() : null;
@@ -105,6 +127,19 @@ public static class StockDocumentValidation
             errors.Add(LineKey(i, "articleId"),
                 "A count names each article at most once: this article is on more than one line. Add the quantities up, in one unit, on a single line.");
     }
+
+    /// <summary>
+    /// Spec 009, R20: on a linked document every line names an order line, a JSON integer of 1 or more; on an
+    /// unlinked document none does. <paramref name="linked"/> null: the request does not say (a replace) - then
+    /// only the value itself is judged.
+    /// </summary>
+    private static string? OrderLineMessage(bool? linked, int? orderLineNo) => (linked, orderLineNo) switch
+    {
+        (true, null) => "orderLineNo is required on a document linked to an order: the number (1…n) of the order line this line fulfils.",
+        (false, not null) => "orderLineNo is only for a document linked to an order; leave it out or pass null.",
+        (_, < 1) => "orderLineNo must be an integer of 1 or more: the number of the order line this line fulfils.",
+        _ => null,
+    };
 
     private static string QuantityMessage(StockDocumentType? type) =>
         (type == StockDocumentType.Count
@@ -169,8 +204,9 @@ public static class StockDocumentValidation
     }
 
     /// <param name="type">The type of the document; null when the request does not say (a replace): then a quantity of 0 passes here and <see cref="OfType"/> decides.</param>
+    /// <param name="linked">Whether the request links the document to an order; null when it does not say (a replace).</param>
     private static StockDocumentValues Values(
-        ValidationErrors errors, StockDocumentType? type, string? documentDate, string? warehouseId, string? toWarehouseId, string? reference, string? note,
+        ValidationErrors errors, StockDocumentType? type, bool? linked, string? documentDate, string? warehouseId, string? toWarehouseId, string? reference, string? note,
         IReadOnlyList<StockLineInput?>? lines)
     {
         var date = Date(errors, documentDate);
@@ -213,12 +249,14 @@ public static class StockDocumentValidation
                     else errors.Add(LineKey(i, UnitField),
                         "unitId must be the id (UUID) of a unit of measure, not its code; leave it out or pass null for the article's base unit.");
                 }
+                if (OrderLineMessage(linked, line.OrderLineNo) is { } orderLineMessage)
+                    errors.Add(LineKey(i, OrderLineField), orderLineMessage);
                 if (line.Quantity is not { } quantity)
                     errors.Add(LineKey(i, "quantity"), "quantity is required.");
                 else if (!QuantityRules.IsValidOn(type ?? StockDocumentType.Count, quantity))
                     errors.Add(LineKey(i, "quantity"), QuantityMessage(type));
                 else
-                    lineValues.Add(new StockLineRequest(article, quantity, unit));
+                    lineValues.Add(new StockLineRequest(article, quantity, unit, line.OrderLineNo));
             }
             if (type is { } known)
                 Repeats(errors, known, articleIds);
@@ -242,12 +280,13 @@ public static class StockDocumentValidation
             else errors.Add("status", StatusMessage);
         }
         var warehouseId = OptionalId(errors, input.WarehouseId, "warehouseId");
+        var purchaseOrderId = OptionalId(errors, input.PurchaseOrderId, PurchaseOrderField);
         var search = ListRules.Search(errors, input.Search);
         var limit = ListRules.Limit(errors, input.Limit);
         var offset = ListRules.Offset(errors, input.Offset);
         if (errors.Any)
             return errors.ToError();
-        return new StockDocumentListQuery(type, status, warehouseId, search, limit, offset);
+        return new StockDocumentListQuery(type, status, warehouseId, search, limit, offset, purchaseOrderId);
     }
 
     public static Result<StockOnHandQuery> OnHand(ListStockOnHandInput input)

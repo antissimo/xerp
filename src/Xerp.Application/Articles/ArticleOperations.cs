@@ -148,24 +148,26 @@ public sealed class ArticleOperations(IXerpDb db, ITenantContext context, IClock
         var hasConversions = baseUnitChanges && await db.ArticleUnits.AnyAsync(c => c.ArticleId == article.Id, cancellationToken);
         var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
         if (typeChanges && used)
-            errors["type"] = ["The type cannot change while stock documents use the article."];
+            errors["type"] = ["The type cannot change while stock documents or orders use the article."];
         if (baseUnitChanges && used)
-            errors[BaseUnitField] = ["The base unit cannot change while stock documents use the article: their quantities are in it."];
+            errors[BaseUnitField] = ["The base unit cannot change while stock documents or orders use the article: their quantities are in it."];
         else if (hasConversions)
             errors[BaseUnitField] = ["The base unit cannot change while the article has unit conversions: their factors are to this base unit."];
         if (errors.Count == 0)
             return null;
         return AppError.InUse(
             used
-                ? "The article is used by stock documents, so its type and base unit are fixed. Keep both values; "
+                ? "The article is used by stock documents or orders, so its type and base unit are fixed. Keep both values; "
                   + "name, code, description and isActive can still change."
                 : "The article has unit conversions, so its base unit is fixed. Keep the base unit, or delete the article's "
                   + "conversions first, change the base unit and set the conversions again with factors to the new base unit.",
             errors);
     }
 
-    private Task<bool> IsUsedAsync(Guid articleId, CancellationToken cancellationToken) =>
-        db.StockDocumentLines.AnyAsync(l => l.ArticleId == articleId, cancellationToken);
+    /// <summary>Spec 005, R24-R26; spec 009, R37, R38: a line of a stock document or of an order, whatever its status, names the article.</summary>
+    private async Task<bool> IsUsedAsync(Guid articleId, CancellationToken cancellationToken) =>
+        await db.StockDocumentLines.AnyAsync(l => l.ArticleId == articleId, cancellationToken)
+        || await db.PurchaseOrderLines.AnyAsync(l => l.ArticleId == articleId, cancellationToken);
 
     /// <summary>
     /// Deletes an article no stock document uses, together with its conversions (spec 007, R11): they are the
@@ -202,7 +204,7 @@ public sealed class ArticleOperations(IXerpDb db, ITenantContext context, IClock
     }
 
     private static AppError InUse() =>
-        AppError.InUse("The article is used by stock documents and cannot be deleted. Deactivate it instead (isActive = false).");
+        AppError.InUse("The article is used by stock documents or orders and cannot be deleted. Deactivate it instead (isActive = false).");
 
     /// <summary>Saves the tracked article and returns its representation, translating what only the database can decide.</summary>
     private async Task<Result<ArticleDto>> SaveAndReadAsync(Article article, ArticleValues values, CancellationToken cancellationToken)

@@ -204,7 +204,7 @@ public class StockDocumentValidationTests
     private static List<StockLineEntry> Entries(params Guid[] articles) => articles.Select(a => new StockLineEntry(a, Pcs, 1m)).ToList();
 
     private static Result<IReadOnlyList<StockLineEntry>> References(List<StockLineRequest> lines, params Guid[] alreadyOnDocument) =>
-        StockLineChecks.References(lines, Facts, alreadyOnDocument.ToHashSet(), new HashSet<Guid>());
+        StockLineChecks.References(lines, Facts, alreadyOnDocument.ToHashSet(), new HashSet<Guid>(), StockDocumentType.Receipt);
 
     [Fact]
     public void R5_Stock_articles_that_are_active_or_already_on_the_draft_are_accepted()

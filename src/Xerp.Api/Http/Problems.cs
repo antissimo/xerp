@@ -29,7 +29,8 @@ public static class Problems
             or ErrorCodes.ReferenceNotFound or ErrorCodes.ReferenceInactive
             or ErrorCodes.InsufficientStock or ErrorCodes.ArticleNotStocked
             or ErrorCodes.UnitIsBaseUnit or ErrorCodes.UnitNotOnArticle or ErrorCodes.QuantityNotConvertible
-            or ErrorCodes.CountOutdated => StatusCodes.Status409Conflict,
+            or ErrorCodes.CountOutdated or ErrorCodes.PartnerRoleMissing or ErrorCodes.OrderNotOpen
+            or ErrorCodes.OrderMismatch or ErrorCodes.QuantityExceedsOrder => StatusCodes.Status409Conflict,
         _ => StatusCodes.Status500InternalServerError,
     };
 
