@@ -42,15 +42,15 @@ Oznake: ✅ gotovo · 🔄 u tijeku · ⬜ nije započeto · — ne primjenjuje 
 | | **— granica MVP-a (dovršen) — 011 je prva značajka nakon MVP-a, na zahtjev vlasnika; ostalo ispod čeka —** | | | | | |
 | 011 | Zadano (centralno) skladište, lager lista po skladištu, spremljeni saldo zaliha | ✅ | 🔄 | ⬜ | ⬜ | ⬜ |
 | 012 | Vrednovanje zaliha | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 012 | Kontni plan + temeljnice | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 013 | Brojčane serije dokumenata | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 014 | Porezi + izlazni/ulazni računi | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 015 | Plaćanja i otvorene stavke | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 016 | Audit log *(platforma)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 017 | Dozvole po API ključu *(platforma)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 018 | OpenAPI dokument *(platforma)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 019 | Row-level security *(platforma)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 020 | Rate limiting *(platforma)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 013 | Kontni plan + temeljnice | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 014 | Brojčane serije dokumenata | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 015 | Porezi + izlazni/ulazni računi | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 016 | Plaćanja i otvorene stavke | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 017 | Audit log *(platforma)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 018 | Dozvole po API ključu *(platforma)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 019 | OpenAPI dokument *(platforma)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 020 | Row-level security *(platforma)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 021 | Rate limiting *(platforma)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 
 Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 
