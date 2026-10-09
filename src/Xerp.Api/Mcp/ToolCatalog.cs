@@ -2,7 +2,9 @@ using Xerp.Application.ApiKeys;
 using Xerp.Application.Articles;
 using Xerp.Application.Common;
 using Xerp.Application.Identity;
+using Xerp.Application.Partners;
 using Xerp.Application.UnitsOfMeasure;
+using Xerp.Application.Warehouses;
 using static Xerp.Api.Mcp.ToolSchemas;
 
 namespace Xerp.Api.Mcp;
@@ -11,7 +13,7 @@ namespace Xerp.Api.Mcp;
 public sealed record NoArguments;
 
 /// <summary>
-/// The complete list of MCP tools (spec 003, 5.3). Adding an operation means adding its tool here; the
+/// The complete list of MCP tools (spec 003, 5.3; spec 004, 5.1). Adding an operation means adding its tool here; the
 /// tool-list test holds the expected names literally.
 /// </summary>
 public static class ToolCatalog
@@ -53,6 +55,51 @@ public static class ToolCatalog
             ? "Whether the article can be newly used on records. Required: an update never changes it silently."
             : "Whether the article can be newly used on records; default true.")),
     ];
+
+    /// <summary>The six address arguments; on an update each is required but may be null (spec 004, R7).</summary>
+    private static (string, System.Text.Json.Nodes.JsonObject)[] AddressFields(bool update)
+    {
+        var rule = update ? " Required: pass null for no value." : " Optional; null or empty means no value.";
+        return
+        [
+            ("addressLine1", NullableText("First line of the postal address (street and number), at most 200 characters." + rule)),
+            ("addressLine2", NullableText("Second line of the postal address, at most 200 characters." + rule)),
+            ("postalCode", NullableText("Postal code, at most 20 characters; kept as entered." + rule)),
+            ("city", NullableText("City or town, at most 100 characters." + rule)),
+            ("region", NullableText("Region, county or state, at most 100 characters." + rule)),
+            ("countryCode", NullableText("Country as exactly two upper-case letters (ISO 3166-1 alpha-2), for example \"HR\" or \"DE\"; not a country name, not lower case." + rule)),
+        ];
+    }
+
+    private static (string, System.Text.Json.Nodes.JsonObject)[] PartnerFields(bool update) =>
+    [
+        ("code", Text("Unique code of the partner within the tenant, 1-50 characters: letters, digits, '.', '_' or '-'.")),
+        ("name", Text("Name of the company or person, 1-200 characters.")),
+        ("isCustomer", Flag(update
+            ? "Whether the tenant sells to this partner. Required. At least one of `isCustomer`, `isSupplier` must be true."
+            : "Whether the tenant sells to this partner; default false. At least one of `isCustomer`, `isSupplier` must be true.")),
+        ("isSupplier", Flag(update
+            ? "Whether the tenant buys from this partner. Required. At least one of `isCustomer`, `isSupplier` must be true."
+            : "Whether the tenant buys from this partner; default false. At least one of `isCustomer`, `isSupplier` must be true.")),
+        ("taxId", NullableText("Tax or VAT number as free text, at most 50 characters; no format is checked and it is not unique."
+            + (update ? " Required: pass null for no value." : " Optional; null or empty means no value."))),
+        .. AddressFields(update),
+        ("isActive", Flag(update
+            ? "Whether the partner can be newly used on documents. Required: an update never changes it silently."
+            : "Whether the partner can be newly used on documents; default true.")),
+    ];
+
+    private static (string, System.Text.Json.Nodes.JsonObject)[] WarehouseFields(bool update) =>
+    [
+        ("code", Text("Unique code of the warehouse within the tenant, 1-50 characters: letters, digits, '.', '_' or '-'.")),
+        ("name", Text("Name of the warehouse, 1-200 characters.")),
+        .. AddressFields(update),
+        ("isActive", Flag(update
+            ? "Whether the warehouse can be newly used on documents. Required: an update never changes it silently."
+            : "Whether the warehouse can be newly used on documents; default true.")),
+    ];
+
+    private static readonly string[] AddressNames = ["addressLine1", "addressLine2", "postalCode", "city", "region", "countryCode"];
 
     private static readonly (string, System.Text.Json.Nodes.JsonObject)[] IdOrCode =
     [
@@ -136,6 +183,75 @@ public static class ToolCatalog
             "Deletes an article; returns `{ \"deleted\": true }`. `NOT_FOUND`: no such article in this tenant.",
             Input(["id"], IdOf("article to delete")),
             (services, input, ct) => services.GetRequiredService<ArticleOperations>().DeleteAsync(input.Id, ct)),
+
+        // ---- partners
+        XerpTool.For<ListPartnersInput, PagedResult<PartnerDto>>("partner_list", ToolKind.Read,
+            "Lists the tenant's partners (customers and suppliers) ordered by code, with paging; `total` counts all matches. "
+            + "Filters combine with AND; a partner that is both customer and supplier matches either role filter. " + Validation,
+            Input([],
+            [
+                Search("the code, the name or the tax id"),
+                ("isCustomer", Flag("Return only partners that are (true) or are not (false) customers; omit for both.")),
+                ("isSupplier", Flag("Return only partners that are (true) or are not (false) suppliers; omit for both.")),
+                IsActiveFilter("partners"),
+                .. Paging,
+            ]),
+            (services, input, ct) => services.GetRequiredService<PartnerOperations>().ListAsync(input, ct)),
+
+        XerpTool.For<RecordAddressInput, PartnerDto>("partner_get", ToolKind.Read,
+            "Returns one partner, addressed by `id` or by `code` (exactly one of the two). "
+            + "`VALIDATION_FAILED`: both or neither were given. `NOT_FOUND`: no such partner in this tenant.",
+            Input([], IdOrCode),
+            (services, input, ct) => services.GetRequiredService<PartnerOperations>().FindAsync(input, ct)),
+
+        XerpTool.For<PartnerInput, PartnerDto>("partner_create", ToolKind.Create,
+            "Creates a partner (a company or person the tenant sells to, buys from, or both) and returns it with its `id`. "
+            + "At least one of `isCustomer`, `isSupplier` must be true. `taxId` is not unique: two partners may have the same one, "
+            + "so search with `partner_list` first (by name or tax id) to avoid creating a duplicate partner. "
+            + Validation + " " + CodeTaken,
+            Input(["code", "name"], PartnerFields(update: false)),
+            (services, input, ct) => services.GetRequiredService<PartnerOperations>().CreateAsync(input, ct)),
+
+        XerpTool.WithId<PartnerInput, PartnerDto>("partner_update", ToolKind.Update,
+            "Replaces all fields of a partner; every argument is required (`taxId` and the address arguments may be null, which clears them). "
+            + "At least one of `isCustomer`, `isSupplier` must stay true. Set `isActive` to false to retire a partner. "
+            + Validation + " `NOT_FOUND`: no such partner in this tenant. " + CodeTaken,
+            Input(["id", "code", "name", "isCustomer", "isSupplier", "taxId", .. AddressNames, "isActive"],
+                [IdOf("partner to replace"), .. PartnerFields(update: true)]),
+            (services, id, input, ct) => services.GetRequiredService<PartnerOperations>().ReplaceAsync(id, input, ct)),
+
+        XerpTool.For<RecordIdInput, PartnerDeleted>("partner_delete", ToolKind.Delete,
+            "Deletes a partner; returns `{ \"deleted\": true }`. `NOT_FOUND`: no such partner in this tenant.",
+            Input(["id"], IdOf("partner to delete")),
+            (services, input, ct) => services.GetRequiredService<PartnerOperations>().DeleteAsync(input.Id, ct)),
+
+        // ---- warehouses
+        XerpTool.For<ListWarehousesInput, PagedResult<WarehouseDto>>("warehouse_list", ToolKind.Read,
+            "Lists the tenant's warehouses ordered by code, with paging; `total` counts all matches. " + Validation,
+            Input([], [Search("the code or the name"), IsActiveFilter("warehouses"), .. Paging]),
+            (services, input, ct) => services.GetRequiredService<WarehouseOperations>().ListAsync(input, ct)),
+
+        XerpTool.For<RecordAddressInput, WarehouseDto>("warehouse_get", ToolKind.Read,
+            "Returns one warehouse, addressed by `id` or by `code` (exactly one of the two). "
+            + "`VALIDATION_FAILED`: both or neither were given. `NOT_FOUND`: no such warehouse in this tenant.",
+            Input([], IdOrCode),
+            (services, input, ct) => services.GetRequiredService<WarehouseOperations>().FindAsync(input, ct)),
+
+        XerpTool.For<WarehouseInput, WarehouseDto>("warehouse_create", ToolKind.Create,
+            "Creates a warehouse (a place where stock is kept) and returns it with its `id`. " + Validation + " " + CodeTaken,
+            Input(["code", "name"], WarehouseFields(update: false)),
+            (services, input, ct) => services.GetRequiredService<WarehouseOperations>().CreateAsync(input, ct)),
+
+        XerpTool.WithId<WarehouseInput, WarehouseDto>("warehouse_update", ToolKind.Update,
+            "Replaces all fields of a warehouse; every argument is required (the address arguments may be null, which clears them). "
+            + "Set `isActive` to false to retire a warehouse. " + Validation + " `NOT_FOUND`: no such warehouse in this tenant. " + CodeTaken,
+            Input(["id", "code", "name", .. AddressNames, "isActive"], [IdOf("warehouse to replace"), .. WarehouseFields(update: true)]),
+            (services, id, input, ct) => services.GetRequiredService<WarehouseOperations>().ReplaceAsync(id, input, ct)),
+
+        XerpTool.For<RecordIdInput, WarehouseDeleted>("warehouse_delete", ToolKind.Delete,
+            "Deletes a warehouse; returns `{ \"deleted\": true }`. `NOT_FOUND`: no such warehouse in this tenant.",
+            Input(["id"], IdOf("warehouse to delete")),
+            (services, input, ct) => services.GetRequiredService<WarehouseOperations>().DeleteAsync(input.Id, ct)),
 
         // ---- API keys (creating a key is HTTP only: a secret never travels through a tool result, ADR-0010)
         XerpTool.For<ListApiKeysInput, PagedResult<ApiKeyDto>>("api_key_list", ToolKind.Read,
