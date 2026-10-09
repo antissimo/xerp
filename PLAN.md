@@ -3,7 +3,7 @@
 Glavni pregled petlje arhitekt -> tester -> builder -> review -> merge. Redoslijed koraka dolazi iz
 `docs/roadmap.md` (piše ga arhitekt); ovaj dokument vodi orkestrator i ažurira ga nakon svakog koraka.
 
-Zadnje ažuriranje: 2026-10-09 09:15
+Zadnje ažuriranje: 2026-10-09 09:20
 
 ## Koraci po specifikaciji
 
@@ -22,12 +22,12 @@ Oznake: ✅ gotovo · 🔄 u tijeku · ⬜ nije započeto · — ne primjenjuje 
 | 001 | Temelj + jedinice mjere (slojevi, tenanti, API ključevi, model grešaka) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 002 | Artikli (matični podaci artikala) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 003 | MCP server + upravljanje API ključevima | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 004 | Partneri i skladišta | ✅ | ✅ | ✅ | 🔄 | ⬜ |
+| 004 | Partneri i skladišta | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 005 | Skladišna knjiga, primke i izdatnice | ✅ | ✅ | 🔄 | ⬜ | ⬜ |
 | 006 | Međuskladišnice i storno | ✅ | 🔄 | ⬜ | ⬜ | ⬜ |
 | 007 | Preračun jedinica mjere po artiklu | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 008 | Inventura / korekcija zaliha | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 009 | Narudžbe dobavljačima -> primka robe | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 009 | Narudžbe dobavljačima -> primka robe | 🔄 | ⬜ | ⬜ | ⬜ | ⬜ |
 | 010 | Prodajne narudžbe -> isporuka | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 011 | Vrednovanje zaliha | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 012 | Kontni plan + temeljnice | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -44,7 +44,7 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 
 ## Što tko trenutno radi
 
-- **Arhitekt:** review speca 004.
+- **Arhitekt:** piše spec 009 (nabava).
 - **Builder:** implementacija speca 005 (grana `feat/005-stock-ledger-receipts-issues`).
 - **Tester:** usklađivanje testova 004 s odgovorima arhitekta, zatim testovi za spec 006.
 
@@ -59,6 +59,7 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
   (172 unit + 376 integracijskih testova prolazi, provjerio orkestrator).
 - 2026-10-09 — kod za 004 gotov (builder javlja 234 unit + 632 integracijska testa, sve prolazi); čeka review.
 - 2026-10-09 — 003 prošao review (OK), spojen u `main` i pushan.
+- 2026-10-09 — 004 prošao review (OK; arhitekt sam pokrenuo 234 unit + 632 integracijska testa), spojen u `main` i pushan.
 
 ## Odluke vlasnika
 
