@@ -171,6 +171,12 @@ public sealed class StockDocument : ITenantOwned
     /// </summary>
     public Guid? PurchaseOrderId { get; private set; }
 
+    /// <summary>
+    /// The sales order an issue delivers (ADR-0017; spec 010, R5, R6): set at creation, never changed, only on
+    /// an issue. A document has at most one order link.
+    /// </summary>
+    public Guid? SalesOrderId { get; private set; }
+
     public string? Reference { get; private set; }
     public string? Note { get; private set; }
     public DateTime? PostedAt { get; private set; }
@@ -200,7 +206,13 @@ public sealed class StockDocument : ITenantOwned
     public bool CanBeReversed => Status == StockDocumentStatus.Posted && !IsReversal;
 
     /// <summary>Whether the document fulfils an order: then every line names an order line (spec 009, R20).</summary>
-    public bool IsLinked => PurchaseOrderId is not null;
+    public bool IsLinked => Link is not null;
+
+    /// <summary>The order the document fulfils, of either kind; null on an unlinked document (spec 010, R6).</summary>
+    public OrderLink? Link =>
+        PurchaseOrderId is { } purchaseOrderId ? new OrderLink(OrderSide.Purchase, purchaseOrderId)
+        : SalesOrderId is { } salesOrderId ? new OrderLink(OrderSide.Sales, salesOrderId)
+        : null;
 
     /// <summary>
     /// What the posted lines of a linked document mean for the order (spec 009, R25): per line, the order line
@@ -213,16 +225,19 @@ public sealed class StockDocument : ITenantOwned
     public static StockDocument Create(
         StockDocumentType type, DateOnly documentDate, Guid warehouseId, Guid? toWarehouseId, string? reference, string? note,
         IReadOnlyList<StockLineEntry> lines, DateTime now, Guid actorKeyId, IReadOnlyList<decimal>? bookQuantities = null,
-        Guid? purchaseOrderId = null)
+        Guid? purchaseOrderId = null, Guid? salesOrderId = null)
     {
-        if (purchaseOrderId is not null && type != StockDocumentType.Receipt)
+        if (purchaseOrderId is not null && type != OrderSide.Purchase.FulfilledBy())
             throw new ArgumentException("Only a receipt can be linked to a purchase order.", nameof(purchaseOrderId));
+        if (salesOrderId is not null && type != OrderSide.Sales.FulfilledBy())
+            throw new ArgumentException("Only an issue can be linked to a sales order.", nameof(salesOrderId));
         var document = new StockDocument
         {
             Id = Guid.CreateVersion7(),
             Type = type,
             Status = StockDocumentStatus.Draft,
             PurchaseOrderId = purchaseOrderId,
+            SalesOrderId = salesOrderId,
             CreatedAt = now,
             CreatedBy = actorKeyId,
         };
@@ -285,9 +300,9 @@ public sealed class StockDocument : ITenantOwned
         for (var i = 0; i < lines.Count; i++)
         {
             if (i < current.Count)
-                current[i].Set(lines[i], bookQuantities?[i], PurchaseOrderId);
+                current[i].Set(lines[i], bookQuantities?[i], Link);
             else
-                _lines.Add(new StockDocumentLine(Id, i + 1, lines[i], bookQuantities?[i], PurchaseOrderId));
+                _lines.Add(new StockDocumentLine(Id, i + 1, lines[i], bookQuantities?[i], Link));
         }
         var removed = _lines.Skip(lines.Count).ToList();
         _lines.RemoveRange(lines.Count, removed.Count);
@@ -385,6 +400,7 @@ public sealed class StockDocument : ITenantOwned
             ToWarehouseId = ToWarehouseId,
             ReversalOfId = Id,
             PurchaseOrderId = PurchaseOrderId,
+            SalesOrderId = SalesOrderId,
             Reference = Reference,
             Note = reversalNote,
             PostedAt = now,
@@ -424,12 +440,12 @@ public sealed class StockDocumentLine : ITenantOwned
 {
     private StockDocumentLine() { }
 
-    internal StockDocumentLine(Guid documentId, int lineNo, StockLineEntry entry, decimal? bookQuantity = null, Guid? purchaseOrderId = null)
+    internal StockDocumentLine(Guid documentId, int lineNo, StockLineEntry entry, decimal? bookQuantity = null, OrderLink? link = null)
     {
         Id = Guid.CreateVersion7();
         DocumentId = documentId;
         LineNo = lineNo;
-        Set(entry, bookQuantity, purchaseOrderId);
+        Set(entry, bookQuantity, link);
     }
 
     /// <summary>A line of a reversing document: the posted line as it is, factor and base quantity included (spec 007, R20).</summary>
@@ -437,7 +453,7 @@ public sealed class StockDocumentLine : ITenantOwned
     {
         if (posted.Factor is not { } factor || posted.BaseQuantity is not { } baseQuantity)
             throw new InvalidOperationException("Only a posted line has a factor and a base quantity to copy.");
-        var copy = new StockDocumentLine(documentId, posted.LineNo, posted.Entry, posted.BookQuantity, posted.PurchaseOrderId);
+        var copy = new StockDocumentLine(documentId, posted.LineNo, posted.Entry, posted.BookQuantity, posted.Link);
         copy.Freeze(factor, baseQuantity);
         return copy;
     }
@@ -487,18 +503,27 @@ public sealed class StockDocumentLine : ITenantOwned
     /// </summary>
     public Guid? PurchaseOrderId { get; private set; }
 
-    /// <summary>The number of the order line this line fulfils; null on an unlinked document.</summary>
+    /// <summary>As <see cref="PurchaseOrderId"/>, on a line of a delivery (spec 010): the document's sales order.</summary>
+    public Guid? SalesOrderId { get; private set; }
+
+    /// <summary>The number of the order line this line fulfils - of whichever order the document is linked to; null on an unlinked document.</summary>
     public int? OrderLineNo { get; private set; }
 
-    internal void Set(StockLineEntry entry, decimal? bookQuantity = null, Guid? purchaseOrderId = null)
+    private OrderLink? Link =>
+        PurchaseOrderId is { } purchaseOrderId ? new OrderLink(OrderSide.Purchase, purchaseOrderId)
+        : SalesOrderId is { } salesOrderId ? new OrderLink(OrderSide.Sales, salesOrderId)
+        : null;
+
+    internal void Set(StockLineEntry entry, decimal? bookQuantity = null, OrderLink? link = null)
     {
-        if (purchaseOrderId is null != entry.OrderLineNo is null)
+        if (link is null != entry.OrderLineNo is null)
             throw new ArgumentException("A line names an order line exactly when its document is linked to an order.", nameof(entry));
         ArticleId = entry.ArticleId;
         UnitId = entry.UnitId;
         Quantity = entry.Quantity;
         BookQuantity = bookQuantity;
-        PurchaseOrderId = purchaseOrderId;
+        PurchaseOrderId = link is { Side: OrderSide.Purchase } ? link.Value.OrderId : null;
+        SalesOrderId = link is { Side: OrderSide.Sales } ? link.Value.OrderId : null;
         OrderLineNo = entry.OrderLineNo;
     }
 

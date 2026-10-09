@@ -7,15 +7,15 @@ using Xerp.IntegrationTests.Support;
 namespace Xerp.IntegrationTests;
 
 /// <summary>
-/// Spec 009, AC-02 (builder) / S3: through the DbContext a confirmed or closed purchase order and its lines
-/// accept no modification other than <c>confirmed &lt;-&gt; closed</c> with <c>closedAt</c> / <c>closedBy</c> -
-/// whatever code asks for it, and nothing is changed. The received quantity of a line is progress, not part of
-/// what was ordered, and is the one column of a line that may move.
+/// Spec 009, AC-02 (builder) / S3, and spec 010, AC-02 (mirrored): through the DbContext a confirmed or closed
+/// order of either kind and its lines accept no modification other than <c>confirmed &lt;-&gt; closed</c> with
+/// <c>closedAt</c> / <c>closedBy</c> - whatever code asks for it, and nothing is changed. The fulfilled quantity
+/// of a line is progress, not part of what was ordered, and is the one column of a line that may move.
 /// </summary>
-[Collection(XerpCollection.Name)]
-public class PurchaseOrderImmutabilityTests(XerpFixture app)
+public abstract class OrderImmutabilityTests<TOrder, TLine>(XerpFixture app, OrderApi o)
+    where TOrder : Order<TLine>
+    where TLine : OrderLine
 {
-    private static readonly OrderApi o = OrderApi.Purchase;
     private static readonly DateTime Now = new(2026, 10, 9, 15, 0, 0, DateTimeKind.Utc);
 
     private sealed record FixedTenant(Guid? TenantId, Guid? ApiKeyId) : ITenantContext;
@@ -24,12 +24,12 @@ public class PurchaseOrderImmutabilityTests(XerpFixture app)
         new(new DbContextOptionsBuilder<XerpDbContext>().UseNpgsql(app.ConnectionString).Options,
             new FixedTenant(tenant.Id, tenant.ApiKeyId));
 
-    private async Task AssertRefusedAsync(OrderSetup s, Guid orderId, Action<XerpDbContext, PurchaseOrder> change)
+    private async Task AssertRefusedAsync(OrderSetup s, Guid orderId, Action<XerpDbContext, TOrder> change)
     {
         var before = await o.GetAsync(s.Http, orderId);
         await using (var db = NewDbContext(s.Tenant))
         {
-            var order = await db.PurchaseOrders.Include(x => x.Lines).SingleAsync(x => x.Id == orderId);
+            var order = await db.Set<TOrder>().Include(x => x.Lines).SingleAsync(x => x.Id == orderId);
             change(db, order);
             await Assert.ThrowsAsync<InvalidOperationException>(() => db.SaveChangesAsync());
             Assert.Throws<InvalidOperationException>(() => db.SaveChanges());
@@ -45,19 +45,19 @@ public class PurchaseOrderImmutabilityTests(XerpFixture app)
 
         await using (var db = NewDbContext(s.Tenant))
         {
-            var order = await db.PurchaseOrders.Include(x => x.Lines).SingleAsync(x => x.Id == confirmed.Id());
+            var order = await db.Set<TOrder>().Include(x => x.Lines).SingleAsync(x => x.Id == confirmed.Id());
             order.Close(Now, s.Tenant.ApiKeyId);
             await db.SaveChangesAsync();
         }
         var closed = await o.GetAsync(s.Http, confirmed.Id());
         Assert.Equal("closed", closed.Str("status"));
         Assert.Equal(s.Tenant.ApiKeyId, closed.GetProperty("closedBy").GetGuid());
-        foreach (var property in new[] { "number", "orderDate", "supplier", "warehouse", "confirmedAt", "confirmedBy", "updatedAt", "updatedBy", "totalAmount" })
+        foreach (var property in new[] { "number", "orderDate", o.Partner, "warehouse", "confirmedAt", "confirmedBy", "updatedAt", "updatedBy", "totalAmount" })
             McpAssert.JsonEqual(confirmed.GetProperty(property), closed.GetProperty(property), $"Close changed '{property}'");
 
         await using (var db = NewDbContext(s.Tenant))
         {
-            var order = await db.PurchaseOrders.Include(x => x.Lines).SingleAsync(x => x.Id == confirmed.Id());
+            var order = await db.Set<TOrder>().Include(x => x.Lines).SingleAsync(x => x.Id == confirmed.Id());
             order.Reopen();
             await db.SaveChangesAsync();
         }
@@ -72,7 +72,7 @@ public class PurchaseOrderImmutabilityTests(XerpFixture app)
         var id = confirmed.Id();
 
         await AssertRefusedAsync(s, id, (db, order) => db.Entry(order).Property(x => x.Note).CurrentValue = "changed");
-        await AssertRefusedAsync(s, id, (db, order) => db.Entry(order).Property(x => x.Number).CurrentValue = "PO-999999");
+        await AssertRefusedAsync(s, id, (db, order) => db.Entry(order).Property(x => x.Number).CurrentValue = o.Number(999999));
         await AssertRefusedAsync(s, id, (db, order) => db.Entry(order).Property(x => x.WarehouseId).CurrentValue = s.W2);
         // Back to a draft, and the status of a close without its attribution.
         await AssertRefusedAsync(s, id, (db, order) => db.Entry(order).Property(x => x.Status).CurrentValue = OrderStatus.Draft);
@@ -88,7 +88,7 @@ public class PurchaseOrderImmutabilityTests(XerpFixture app)
         // A delete; the lines are not loaded, so that it is this guard and not the model that refuses.
         await using (var db = NewDbContext(s.Tenant))
         {
-            db.PurchaseOrders.Remove(await db.PurchaseOrders.SingleAsync(x => x.Id == id));
+            db.Set<TOrder>().Remove(await db.Set<TOrder>().SingleAsync(x => x.Id == id));
             await Assert.ThrowsAsync<InvalidOperationException>(() => db.SaveChangesAsync());
             Assert.Throws<InvalidOperationException>(() => db.SaveChanges());
         }
@@ -109,14 +109,14 @@ public class PurchaseOrderImmutabilityTests(XerpFixture app)
             await AssertRefusedAsync(s, id, (db, order) => db.Entry(order.Lines[0]).Property(l => l.BaseQuantity).CurrentValue = 99m);
             await AssertRefusedAsync(s, id, (db, order) => db.Entry(order.Lines[0]).Property(l => l.Factor).CurrentValue = 2m);
             await AssertRefusedAsync(s, id, (db, order) => db.Entry(order.Lines[0]).Property(l => l.ArticleId).CurrentValue = s.B);
-            await AssertRefusedAsync(s, id, (db, order) => db.PurchaseOrderLines.Remove(order.Lines[0]));
+            await AssertRefusedAsync(s, id, (db, order) => db.Set<TLine>().Remove(order.Lines[0]));
         }
 
         // The same when the order itself is not tracked: the line is looked up against its order.
         var before = await o.GetAsync(s.Http, confirmed.Id());
         await using (var db = NewDbContext(s.Tenant))
         {
-            var line = await db.PurchaseOrderLines.FirstAsync(l => l.OrderId == confirmed.Id());
+            var line = await db.Set<TLine>().FirstAsync(l => l.OrderId == confirmed.Id());
             db.Entry(line).Property(l => l.Quantity).CurrentValue = 99m;
             await Assert.ThrowsAsync<InvalidOperationException>(() => db.SaveChangesAsync());
             Assert.Throws<InvalidOperationException>(() => db.SaveChanges());
@@ -125,13 +125,13 @@ public class PurchaseOrderImmutabilityTests(XerpFixture app)
     }
 
     [Fact]
-    public async Task AC02_A_draft_is_freely_changed_and_the_received_quantity_is_progress()
+    public async Task AC02_A_draft_is_freely_changed_and_the_fulfilled_quantity_is_progress()
     {
         var s = await Orders.SetupAsync(app);
         var draft = await o.DraftAsync(s, (s.A, 10m, null, 1m));
         await using (var db = NewDbContext(s.Tenant))
         {
-            var order = await db.PurchaseOrders.Include(x => x.Lines).SingleAsync(x => x.Id == draft.Id());
+            var order = await db.Set<TOrder>().Include(x => x.Lines).SingleAsync(x => x.Id == draft.Id());
             db.Entry(order).Property(x => x.Note).CurrentValue = "a draft may change";
             db.Entry(order.Lines[0]).Property(l => l.Quantity).CurrentValue = 7m;
             await db.SaveChangesAsync();
@@ -140,13 +140,22 @@ public class PurchaseOrderImmutabilityTests(XerpFixture app)
         Assert.Equal("a draft may change", changed.Str("note"));
         Assert.Equal(7m, changed.OrderLines()[0].Dec("quantity"));
 
-        // Posting a receipt moves the received quantity of a confirmed line, and nothing else of the order.
+        // Posting a linked document moves the fulfilled quantity of a confirmed line, and nothing else of the order.
+        await o.PrepareStockAsync(s);
         var confirmed = await o.ConfirmAsync(s.Http, draft.Id());
         await o.FulfilAsync(s.Http, confirmed, 1, 4m);
         var received = await o.GetAsync(s.Http, draft.Id());
-        Assert.Equal(4m, received.OrderLines()[0].Dec("receivedBaseQuantity"));
+        Assert.Equal(4m, received.OrderLines()[0].Dec(o.Done));
         Assert.Equal(3m, received.OrderLines()[0].Outstanding());
         foreach (var property in new[] { "status", "number", "updatedAt", "updatedBy", "confirmedAt", "totalAmount" })
-            McpAssert.JsonEqual(confirmed.GetProperty(property), received.GetProperty(property), $"A receipt changed '{property}' of the order");
+            McpAssert.JsonEqual(confirmed.GetProperty(property), received.GetProperty(property), $"A {o.DocumentType} changed '{property}' of the order");
     }
 }
+
+/// <summary>Spec 009, AC-02.</summary>
+[Collection(XerpCollection.Name)]
+public class PurchaseOrderImmutabilityTests(XerpFixture app) : OrderImmutabilityTests<PurchaseOrder, PurchaseOrderLine>(app, OrderApi.Purchase);
+
+/// <summary>Spec 010, AC-02 (009/AC-02 mirrored).</summary>
+[Collection(XerpCollection.Name)]
+public class SalesOrderImmutabilityTests(XerpFixture app) : OrderImmutabilityTests<SalesOrder, SalesOrderLine>(app, OrderApi.Sales);

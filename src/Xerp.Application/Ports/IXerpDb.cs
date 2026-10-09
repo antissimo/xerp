@@ -29,6 +29,8 @@ public interface IXerpDb
     DbSet<DocumentCounter> DocumentCounters { get; }
     DbSet<PurchaseOrder> PurchaseOrders { get; }
     DbSet<PurchaseOrderLine> PurchaseOrderLines { get; }
+    DbSet<SalesOrder> SalesOrders { get; }
+    DbSet<SalesOrderLine> SalesOrderLines { get; }
 
     /// <exception cref="UniqueConstraintViolationException">A unique index rejected the change.</exception>
     /// <exception cref="ForeignKeyViolationException">A foreign key rejected the change.</exception>

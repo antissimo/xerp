@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Xerp.Application.Common;
+using Xerp.Application.Orders;
 using Xerp.Application.Ports;
 using Xerp.Domain.Common;
 using Xerp.Domain.Partners;
@@ -107,7 +108,7 @@ public sealed class PartnerOperations(IXerpDb db, ITenantContext context, IClock
         if (partner is null)
             return NotFound();
         // Spec 009, R37: an order of any status - draft, confirmed or closed - names its partner for good.
-        if (await db.PurchaseOrders.AnyAsync(o => o.PartnerId == id, cancellationToken))
+        if (await OrderReads.AnyForPartnerAsync(db, id, cancellationToken))
             return InUse();
         db.Partners.Remove(partner);
         try

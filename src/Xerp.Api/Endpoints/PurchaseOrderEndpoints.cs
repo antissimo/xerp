@@ -3,7 +3,7 @@ using Xerp.Application.Orders;
 
 namespace Xerp.Api.Endpoints;
 
-/// <summary>Purchase orders (spec 009, section 4.1). Thin: bind, call, map.</summary>
+/// <summary>Purchase orders (spec 009, section 4.1). Thin: bind, call, map. What needs no purchase-order name is in <see cref="OrderEndpoints"/>.</summary>
 public static class PurchaseOrderEndpoints
 {
     public const string Route = "/purchase-orders";
@@ -23,19 +23,6 @@ public static class PurchaseOrderEndpoints
             var result = await operations.ListAsync(input, ct);
             return result.IsSuccess ? Results.Ok(result.Value) : Problems.From(result.Error);
         }).AcceptsQuery("status", "receiptStatus", "supplierId", "warehouseId", "search", "limit", "offset");
-
-        // A malformed id does not match the route and ends as NOT_FOUND like any unknown path.
-        orders.MapGet("/{id:guid}", async (Guid id, PurchaseOrderOperations operations, CancellationToken ct) =>
-        {
-            var result = await operations.GetAsync(id, ct);
-            return result.IsSuccess ? Results.Ok(result.Value) : Problems.From(result.Error);
-        });
-
-        orders.MapGet("/by-number/{number}", async (string number, PurchaseOrderOperations operations, CancellationToken ct) =>
-        {
-            var result = await operations.GetByNumberAsync(number, ct);
-            return result.IsSuccess ? Results.Ok(result.Value) : Problems.From(result.Error);
-        });
 
         orders.MapPost("", async (HttpRequest request, PurchaseOrderOperations operations, CancellationToken ct) =>
         {
@@ -57,29 +44,6 @@ public static class PurchaseOrderEndpoints
             return result.IsSuccess ? Results.Ok(result.Value) : Problems.From(result.Error);
         });
 
-        orders.MapDelete("/{id:guid}", async (Guid id, PurchaseOrderOperations operations, CancellationToken ct) =>
-        {
-            var result = await operations.DeleteAsync(id, ct);
-            return result.IsSuccess ? Results.NoContent() : Problems.From(result.Error);
-        });
-
-        // No body: everything a transition needs is the order itself.
-        orders.MapPost("/{id:guid}/confirm", async (Guid id, PurchaseOrderOperations operations, CancellationToken ct) =>
-        {
-            var result = await operations.ConfirmAsync(id, ct);
-            return result.IsSuccess ? Results.Ok(result.Value) : Problems.From(result.Error);
-        });
-
-        orders.MapPost("/{id:guid}/close", async (Guid id, PurchaseOrderOperations operations, CancellationToken ct) =>
-        {
-            var result = await operations.CloseAsync(id, ct);
-            return result.IsSuccess ? Results.Ok(result.Value) : Problems.From(result.Error);
-        });
-
-        orders.MapPost("/{id:guid}/reopen", async (Guid id, PurchaseOrderOperations operations, CancellationToken ct) =>
-        {
-            var result = await operations.ReopenAsync(id, ct);
-            return result.IsSuccess ? Results.Ok(result.Value) : Problems.From(result.Error);
-        });
+        OrderEndpoints.MapShared<PurchaseOrderOperations, Xerp.Domain.Orders.PurchaseOrder, Xerp.Domain.Orders.PurchaseOrderLine, PurchaseOrderDto, PurchaseOrderSummaryDto>(orders);
     }
 }

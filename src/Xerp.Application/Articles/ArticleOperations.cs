@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Xerp.Application.Common;
+using Xerp.Application.Orders;
 using Xerp.Application.Ports;
 using Xerp.Domain.Catalog;
 using Xerp.Domain.Common;
@@ -167,7 +168,7 @@ public sealed class ArticleOperations(IXerpDb db, ITenantContext context, IClock
     /// <summary>Spec 005, R24-R26; spec 009, R37, R38: a line of a stock document or of an order, whatever its status, names the article.</summary>
     private async Task<bool> IsUsedAsync(Guid articleId, CancellationToken cancellationToken) =>
         await db.StockDocumentLines.AnyAsync(l => l.ArticleId == articleId, cancellationToken)
-        || await db.PurchaseOrderLines.AnyAsync(l => l.ArticleId == articleId, cancellationToken);
+        || await OrderReads.AnyLineForArticleAsync(db, articleId, cancellationToken);
 
     /// <summary>
     /// Deletes an article no stock document uses, together with its conversions (spec 007, R11): they are the

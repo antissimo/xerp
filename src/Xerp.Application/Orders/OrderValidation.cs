@@ -12,16 +12,33 @@ namespace Xerp.Application.Orders;
 /// which role the partner needs, how the progress is called and which number series the order is in. The
 /// rules themselves are the same for every kind.
 /// </summary>
+/// <param name="Side">Which side the order is on; it decides the stock document that fulfils it.</param>
 /// <param name="Name">How messages call the order: <c>purchase order</c>.</param>
+/// <param name="PartnerWord">How messages call the partner: <c>supplier</c>.</param>
 /// <param name="PartnerField">The request field of the partner: <c>supplierId</c>.</param>
 /// <param name="PartnerRole">The partner's flag the order needs: <c>isSupplier</c>.</param>
 /// <param name="DueDateField">The request field of the due date: <c>expectedDate</c>.</param>
 /// <param name="FulfilmentField">The list filter by progress: <c>receiptStatus</c>.</param>
+/// <param name="LinkField">The field of a stock document that links it to an order of this kind: <c>purchaseOrderId</c>.</param>
 public sealed record OrderKind(
-    string Name, string PartnerField, string PartnerRole, string DueDateField, string FulfilmentField, DocumentSeries Series)
+    OrderSide Side, string Name, string PartnerWord, string PartnerField, string PartnerRole, string DueDateField,
+    string FulfilmentField, string LinkField, DocumentSeries Series)
 {
-    public static readonly OrderKind Purchase =
-        new("purchase order", "supplierId", "isSupplier", "expectedDate", "receiptStatus", DocumentSeries.PurchaseOrder);
+    public static readonly OrderKind Purchase = new(
+        OrderSide.Purchase, "purchase order", "supplier", "supplierId", "isSupplier", "expectedDate", "receiptStatus",
+        "purchaseOrderId", DocumentSeries.PurchaseOrder);
+
+    /// <summary>Spec 010: the mirror of <see cref="Purchase"/>.</summary>
+    public static readonly OrderKind Sales = new(
+        OrderSide.Sales, "sales order", "customer", "customerId", "isCustomer", "requestedDate", "deliveryStatus",
+        "salesOrderId", DocumentSeries.SalesOrder);
+
+    public static readonly IReadOnlyList<OrderKind> All = [Purchase, Sales];
+
+    public static OrderKind Of(OrderSide side) => side == OrderSide.Sales ? Sales : Purchase;
+
+    /// <summary>The one type of stock document that can carry <see cref="LinkField"/>.</summary>
+    public StockDocumentType FulfilledBy => Side.FulfilledBy();
 }
 
 /// <summary>

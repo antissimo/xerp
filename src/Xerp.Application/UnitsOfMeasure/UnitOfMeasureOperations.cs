@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Xerp.Application.Common;
+using Xerp.Application.Orders;
 using Xerp.Application.Ports;
 using Xerp.Domain.Common;
 using Xerp.Domain.Inventory;
@@ -131,7 +132,7 @@ public sealed class UnitOfMeasureOperations(IXerpDb db, ITenantContext context, 
         if (await db.StockDocumentLines.AnyAsync(l => l.UnitId == id, cancellationToken))
             return InUse("Lines of stock documents are entered in this unit of measure.");
         // Spec 009, R37: a line of an order of any status; a confirmed line keeps its unit although the conversion is gone.
-        if (await db.PurchaseOrderLines.AnyAsync(l => l.UnitId == id, cancellationToken))
+        if (await OrderReads.AnyLineInUnitAsync(db, id, cancellationToken))
             return InUse("Lines of orders are entered in this unit of measure.");
 
         db.UnitsOfMeasure.Remove(unit);

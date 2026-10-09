@@ -1,3 +1,5 @@
+using Xerp.Domain.Inventory;
+
 namespace Xerp.Domain.Orders;
 
 /// <summary>
@@ -120,4 +122,59 @@ public static class OrderProgress
             .ToHashSet();
         return Enumerable.Range(0, documentLines.Count).Where(i => exceeded.Contains(documentLines[i].OrderLineNo)).ToList();
     }
+}
+
+/// <summary>The two sides an order can be on: goods coming in from a supplier, goods going out to a customer.</summary>
+public enum OrderSide
+{
+    Purchase,
+    Sales,
+}
+
+public static class OrderSides
+{
+    /// <summary>
+    /// The one type of stock document that fulfils an order of this side (spec 009, R18; spec 010, R5): a
+    /// purchase order is received with a receipt, a sales order delivered with an issue.
+    /// </summary>
+    public static StockDocumentType FulfilledBy(this OrderSide side) => side switch
+    {
+        OrderSide.Purchase => StockDocumentType.Receipt,
+        OrderSide.Sales => StockDocumentType.Issue,
+        _ => throw new ArgumentOutOfRangeException(nameof(side)),
+    };
+}
+
+/// <summary>The order a stock document fulfils. A document has at most one (spec 010, R6).</summary>
+public readonly record struct OrderLink(OrderSide Side, Guid OrderId);
+
+/// <summary>An order of any kind as the posting and the reversal of a linked stock document see it.</summary>
+public interface IFulfilledOrder
+{
+    OrderStatus Status { get; }
+
+    /// <summary>Per line number, what can still be fulfilled.</summary>
+    IReadOnlyDictionary<int, decimal> Outstanding { get; }
+
+    void Fulfil(IReadOnlyList<LineFulfilment> documentLines);
+
+    void TakeBack(IReadOnlyList<LineFulfilment> documentLines);
+}
+
+/// <summary>
+/// What stock on hand says about promises (ADR-0017; spec 010, R15, R16). Both figures are derived: nothing
+/// stores them, and neither blocks any movement.
+/// </summary>
+public static class StockAvailability
+{
+    /// <summary>
+    /// R15: the reserved quantity of an (article, warehouse) pair, from the sales order lines with that article
+    /// shipping from that warehouse - the sum of what is outstanding on them, which is zero for the lines of
+    /// drafts and of closed orders.
+    /// </summary>
+    public static decimal Reserved(IEnumerable<(OrderStatus Status, decimal? BaseQuantity, decimal Delivered)> lines) =>
+        lines.Sum(l => OrderProgress.Outstanding(l.Status, l.BaseQuantity, l.Delivered));
+
+    /// <summary>R16: on hand minus reserved. It may be negative - more is promised than is there. What is incoming is not part of it.</summary>
+    public static decimal Available(decimal onHand, decimal reserved) => onHand - reserved;
 }

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Xerp.Application.Common;
+using Xerp.Application.Orders;
 using Xerp.Application.Ports;
 using Xerp.Domain.Inventory;
 using Xerp.Domain.Orders;
@@ -29,7 +30,6 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
 {
     private const string WarehouseField = "warehouseId";
     private const string ToWarehouseField = StockDocumentValidation.ToWarehouseField;
-    private const string PurchaseOrderField = OrderLinkChecks.PurchaseOrderField;
 
     public async Task<Result<PagedResult<StockDocumentSummaryDto>>> ListAsync(ListStockDocumentsInput input, CancellationToken cancellationToken = default)
     {
@@ -48,6 +48,8 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
             documents = documents.Where(d => d.WarehouseId == warehouseId || d.ToWarehouseId == warehouseId);
         if (query.PurchaseOrderId is { } purchaseOrderId)
             documents = documents.Where(d => d.PurchaseOrderId == purchaseOrderId);
+        if (query.SalesOrderId is { } salesOrderId)
+            documents = documents.Where(d => d.SalesOrderId == salesOrderId);
         if (query.Search is { } search)
         {
             // Number or reference (R22); a draft has no number.
@@ -76,7 +78,7 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
         var items = page.Select(d => new StockDocumentSummaryDto(
             d.Id, d.Type.ToName(), d.Status.ToName(), d.Number, d.DocumentDate,
             related.Warehouse(d.WarehouseId), related.Warehouse(d.ToWarehouseId), related.Link(d.ReversalOfId), related.Link(d.ReversedById),
-            related.Order(d.PurchaseOrderId), d.Reference, d.Note, lineCounts.GetValueOrDefault(d.Id),
+            related.Order(d.PurchaseOrderId), related.Order(d.SalesOrderId), d.Reference, d.Note, lineCounts.GetValueOrDefault(d.Id),
             d.CreatedAt, d.UpdatedAt, d.CreatedBy, d.UpdatedBy, d.PostedAt, d.PostedBy)).ToList();
         return new PagedResult<StockDocumentSummaryDto>(items, total, query.Limit, query.Offset);
     }
@@ -103,13 +105,13 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
         var validated = StockDocumentValidation.Create(input);
         if (!validated.IsSuccess)
             return validated.Error;
-        var (type, values, purchaseOrderId) = (validated.Value.Type, validated.Value.Values, validated.Value.PurchaseOrderId);
+        var (type, values, link) = (validated.Value.Type, validated.Value.Values, validated.Value.Link);
 
         try
         {
             return await db.SerializedPerTenantAsync<Result<StockDocumentDto>>(async ct =>
             {
-                var lines = await CheckReferencesAsync(type, values, stored: null, purchaseOrderId, ct);
+                var lines = await CheckReferencesAsync(type, values, stored: null, link, ct);
                 if (!lines.IsSuccess)
                     return lines.Error;
 
@@ -117,7 +119,9 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
                 // of the order it is linked to (spec 009, R23).
                 var document = StockDocument.Create(
                     type, values.DocumentDate, values.WarehouseId, values.ToWarehouseId, values.Reference, values.Note, lines.Value,
-                    clock.UtcNow, ActorKeyId(), await BookQuantitiesAsync(type, values.WarehouseId, lines.Value, ct), purchaseOrderId);
+                    clock.UtcNow, ActorKeyId(), await BookQuantitiesAsync(type, values.WarehouseId, lines.Value, ct),
+                    purchaseOrderId: link is { Side: OrderSide.Purchase } ? link.Value.OrderId : null,
+                    salesOrderId: link is { Side: OrderSide.Sales } ? link.Value.OrderId : null);
                 db.StockDocuments.Add(document);
                 await db.SaveChangesAsync(ct);
                 return await ToDtoAsync(document, ct);
@@ -126,7 +130,7 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
         catch (ForeignKeyViolationException ex) when (!ex.BlockedDelete)
         {
             // A master was deleted between the check and the write: the foreign key is the authority.
-            return (await CheckReferencesAsync(type, values, stored: null, purchaseOrderId, cancellationToken)).Error ?? throw new InvalidOperationException("A reference was rejected by the database but is present.", ex);
+            return (await CheckReferencesAsync(type, values, stored: null, link, cancellationToken)).Error ?? throw new InvalidOperationException("A reference was rejected by the database but is present.", ex);
         }
     }
 
@@ -138,7 +142,7 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
         var values = validated.Value;
         // What the foreign key handler below checks the references as; set once the document is read.
         var storedType = StockDocumentType.Receipt;
-        Guid? storedOrderId = null;
+        OrderLink? storedLink = null;
 
         try
         {
@@ -150,13 +154,13 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
                 var document = await db.StockDocuments.Include(d => d.Lines).SingleOrDefaultAsync(d => d.Id == id, ct);
                 if (document is null)
                     return StockDocumentValidation.WithoutDocument(values) ?? NotFound();
-                (storedType, storedOrderId) = (document.Type, document.PurchaseOrderId);
+                (storedType, storedLink) = (document.Type, document.Link);
                 if (StockDocumentValidation.OfType(document.Type, values, document.IsLinked) is { } typeError)
                     return typeError;
                 if (!document.IsDraft)
                     return NotADraft(document, "replaced");
                 // Spec 009, R19: the link is the stored one; the order must still be open (R31).
-                var lines = await CheckReferencesAsync(document.Type, values, document, document.PurchaseOrderId, ct);
+                var lines = await CheckReferencesAsync(document.Type, values, document, document.Link, ct);
                 if (!lines.IsSuccess)
                     return lines.Error;
 
@@ -171,7 +175,7 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
         }
         catch (ForeignKeyViolationException ex) when (!ex.BlockedDelete)
         {
-            return (await CheckReferencesAsync(storedType, values, stored: null, storedOrderId, cancellationToken)).Error ?? throw new InvalidOperationException("A reference was rejected by the database but is present.", ex);
+            return (await CheckReferencesAsync(storedType, values, stored: null, storedLink, cancellationToken)).Error ?? throw new InvalidOperationException("A reference was rejected by the database but is present.", ex);
         }
     }
 
@@ -200,10 +204,10 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
     /// of every line in the same save: stock cannot leave the source without arriving at the destination
     /// (spec 006, R8). A count (spec 008, R9-R12) has no sufficiency check; instead the stock of every counted
     /// article must still equal the book quantity of its line, read here under the tenant's lock, and then the
-    /// differences are written - so afterwards stock equals what was counted. A receipt linked to a purchase
-    /// order (spec 009, R24-R26) is checked last against that order: it must be confirmed, and no order line
-    /// may be taken above what is outstanding; then the received quantities of the order lines rise in the
-    /// same save.
+    /// differences are written - so afterwards stock equals what was counted. A document linked to an order
+    /// (spec 009, R24-R26; spec 010, R7) is checked against that order after conversion and before stock: it
+    /// must be confirmed, and no order line may be taken above what is outstanding; then the fulfilled
+    /// quantities of the order lines rise in the same save.
     /// </summary>
     public Task<Result<StockDocumentDto>> PostAsync(Guid id, CancellationToken cancellationToken = default) =>
         db.SerializedPerTenantAsync<Result<StockDocumentDto>>(async ct =>
@@ -236,26 +240,28 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
                     return outdated;
             }
 
+            // Spec 009, R24, R26; spec 010, R7: the order is read here, under the tenant's lock that confirm,
+            // close, reopen and every other posting take too, so what is outstanding now is what this posting
+            // is held to. The order is asked before stock: a delivery above both is above the order (E3).
+            IFulfilledOrder? order = null;
+            if (document.Link is { } link)
+            {
+                order = await OrderReads.ForFulfilmentAsync(db, link, ct);
+                if (OrderLinkChecks.Open(OrderKind.Of(link.Side).LinkField, order.Status) is { } notOpen)
+                    return notOpen;
+                var fulfilment = converted.Value.Select((c, i) => new LineFulfilment(lines[i].OrderLineNo!.Value, c.BaseQuantity)).ToList();
+                if (OrderLinkChecks.WithinOrder(fulfilment, order.Outstanding) is { } exceeds)
+                    return exceeds;
+            }
+
             // R15, R18; spec 006, R7; spec 007, R19: only what leaves the (source) warehouse is checked, in
-            // base quantities; stock in the destination and the document date play no part.
+            // base quantities; stock in the destination and the document date play no part. Nor does what is
+            // reserved for sales orders - this one's or another's (spec 010, R9, R17): stock on hand decides.
             if (document.Type is StockDocumentType.Issue or StockDocumentType.Transfer)
             {
                 var inSource = await OnHandInAsync(document.WarehouseId, lines.Select(l => l.ArticleId), ct);
                 if (StockLineChecks.Sufficiency(converted.Value.Select(c => c.BaseValues).ToList(), inSource) is { } insufficient)
                     return insufficient;
-            }
-
-            // Spec 009, R24, R26: the order is read here, under the tenant's lock that confirm, close, reopen
-            // and every other posting take too, so what is outstanding now is what this posting is held to.
-            PurchaseOrder? order = null;
-            if (document.PurchaseOrderId is { } orderId)
-            {
-                order = await db.PurchaseOrders.Include(o => o.Lines).SingleAsync(o => o.Id == orderId, ct);
-                if (OrderLinkChecks.Open(PurchaseOrderField, order.Status) is { } notOpen)
-                    return notOpen;
-                var fulfilment = converted.Value.Select((c, i) => new LineFulfilment(lines[i].OrderLineNo!.Value, c.BaseQuantity)).ToList();
-                if (OrderLinkChecks.WithinOrder(fulfilment, order.Outstanding) is { } exceeds)
-                    return exceeds;
             }
 
             var number = await StockReads.NextNumberAsync(db, TenantId(), DocumentSeries.Of(document.Type), ct);
@@ -272,9 +278,9 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
     /// created already posted, with the original's ledger entries in the opposite sign, and the original
     /// becomes <c>reversed</c> - or nothing at all. Order of checks (R12): form -> exists -> can be reversed
     /// -> date not earlier than the original's -> stock. Only then is the counter advanced, so a refused
-    /// reversal consumes no number. The masters need not be active (R17). Reversing a receipt linked to a
-    /// purchase order gives the quantity back to the order's lines in the same save, whatever the order's
-    /// status, and does not change that status (spec 009, R32-R34).
+    /// reversal consumes no number. The masters need not be active (R17). Reversing a document linked to an
+    /// order gives the quantity back to the order's lines in the same save, whatever the order's status, and
+    /// does not change that status (spec 009, R32-R34; spec 010, R14).
     /// </summary>
     public async Task<Result<StockDocumentDto>> ReverseAsync(Guid id, ReverseStockDocumentInput input, CancellationToken cancellationToken = default)
     {
@@ -304,11 +310,8 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
             if (StockLineChecks.ReversalSufficiency(lines, movements, onHand) is { } insufficient)
                 return insufficient;
 
-            if (original.PurchaseOrderId is { } orderId)
-            {
-                var order = await db.PurchaseOrders.Include(o => o.Lines).SingleAsync(o => o.Id == orderId, ct);
-                order.TakeBack(original.Fulfilment);
-            }
+            if (original.Link is { } link)
+                (await OrderReads.ForFulfilmentAsync(db, link, ct)).TakeBack(original.Fulfilment);
 
             var number = await StockReads.NextNumberAsync(db, TenantId(), DocumentSeries.Of(original.Type), ct);
             var (reversal, reversing) = original.Reverse(entries, values.DocumentDate, values.Note, number, clock.UtcNow, ActorKeyId());
@@ -378,7 +381,7 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
     /// </para>
     /// </summary>
     private async Task<Result<IReadOnlyList<StockLineEntry>>> CheckReferencesAsync(
-        StockDocumentType type, StockDocumentValues values, StockDocument? stored, Guid? purchaseOrderId, CancellationToken cancellationToken)
+        StockDocumentType type, StockDocumentValues values, StockDocument? stored, OrderLink? link, CancellationToken cancellationToken)
     {
         var warehouseError = await ReferenceCheck.ValidateAsync(
             db.Warehouses.Where(w => w.Id == values.WarehouseId).Select(w => w.IsActive),
@@ -396,10 +399,10 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
         }
 
         LinkedOrderFacts? order = null;
-        if (purchaseOrderId is { } orderId)
+        if (link is { } orderLink)
         {
-            order = await OrderFactsAsync(orderId, cancellationToken);
-            if (OrderLinkChecks.Open(PurchaseOrderField, orderId, order) is { } notOpen)
+            order = await OrderReads.FactsAsync(db, orderLink, cancellationToken);
+            if (OrderLinkChecks.Open(OrderKind.Of(orderLink.Side).LinkField, orderLink.OrderId, order) is { } notOpen)
                 return notOpen;
         }
 
@@ -411,21 +414,6 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
         if (lines.IsSuccess && order is not null && OrderLinkChecks.Agreement(values.WarehouseId, lines.Value, order) is { } mismatch)
             return mismatch;
         return lines;
-    }
-
-    /// <summary>The purchase order of the current tenant with this id as a linked document sees it; null when there is none.</summary>
-    private async Task<LinkedOrderFacts?> OrderFactsAsync(Guid orderId, CancellationToken cancellationToken)
-    {
-        var order = await db.PurchaseOrders.AsNoTracking()
-            .Where(o => o.Id == orderId)
-            .Select(o => new { o.Status, o.WarehouseId })
-            .SingleOrDefaultAsync(cancellationToken);
-        if (order is null)
-            return null;
-        var lineArticles = await db.PurchaseOrderLines.AsNoTracking()
-            .Where(l => l.OrderId == orderId)
-            .ToDictionaryAsync(l => l.LineNo, l => l.ArticleId, cancellationToken);
-        return new LinkedOrderFacts(orderId, order.Status, order.WarehouseId, lineArticles);
     }
 
     /// <summary>What documents show of other records: the current code and name of their warehouses, the number of the documents and orders they link to.</summary>
@@ -464,16 +452,8 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
                 .ToDictionaryAsync(d => d.Id, cancellationToken);
         }
 
-        var orderIds = documents.Where(d => d.PurchaseOrderId is not null).Select(d => d.PurchaseOrderId!.Value).Distinct().ToList();
-        var orders = new Dictionary<Guid, OrderLinkDto>();
-        if (orderIds.Count > 0)
-        {
-            // A document is linked to a confirmed order only, and an order never loses its number.
-            orders = await db.PurchaseOrders.AsNoTracking()
-                .Where(o => orderIds.Contains(o.Id))
-                .Select(o => new OrderLinkDto(o.Id, o.Number!))
-                .ToDictionaryAsync(o => o.Id, cancellationToken);
-        }
+        var orders = await OrderReads.NumbersAsync(
+            db, documents.Where(d => d.Link is not null).Select(d => d.Link!.Value).Distinct().ToList(), cancellationToken);
         return new Related(warehouses, linked, orders);
     }
 
@@ -526,7 +506,7 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
         return new StockDocumentDto(
             document.Id, document.Type.ToName(), document.Status.ToName(), document.Number, document.DocumentDate,
             related.Warehouse(document.WarehouseId), related.Warehouse(document.ToWarehouseId),
-            related.Link(document.ReversalOfId), related.Link(document.ReversedById), related.Order(document.PurchaseOrderId),
+            related.Link(document.ReversalOfId), related.Link(document.ReversedById), related.Order(document.PurchaseOrderId), related.Order(document.SalesOrderId),
             document.Reference, document.Note, lines,
             document.CreatedAt, document.UpdatedAt, document.CreatedBy, document.UpdatedBy, document.PostedAt, document.PostedBy);
     }

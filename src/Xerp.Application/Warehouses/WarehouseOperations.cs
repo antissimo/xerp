@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Xerp.Application.Common;
+using Xerp.Application.Orders;
 using Xerp.Application.Ports;
 using Xerp.Domain.Common;
 using Xerp.Domain.Inventory;
@@ -99,7 +100,7 @@ public sealed class WarehouseOperations(IXerpDb db, ITenantContext context, IClo
         if (await db.StockDocuments.AnyAsync(d => d.WarehouseId == id || d.ToWarehouseId == id, cancellationToken))
             return InUse();
         // Spec 009, R37: so does an order of any status.
-        if (await db.PurchaseOrders.AnyAsync(o => o.WarehouseId == id, cancellationToken))
+        if (await OrderReads.AnyForWarehouseAsync(db, id, cancellationToken))
             return InUse();
         db.Warehouses.Remove(warehouse);
         try

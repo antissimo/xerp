@@ -44,6 +44,7 @@ public static class QuantityRules
 public readonly record struct DocumentSeries(string Key, string Prefix)
 {
     public static readonly DocumentSeries PurchaseOrder = new("purchaseOrder", "PO");
+    public static readonly DocumentSeries SalesOrder = new("salesOrder", "SO");
 
     public static DocumentSeries Of(StockDocumentType type) => new(type.ToName(), DocumentNumber.Prefix(type));
 }

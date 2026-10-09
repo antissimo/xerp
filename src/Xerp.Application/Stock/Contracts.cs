@@ -1,5 +1,6 @@
 using Xerp.Application.Common;
 using Xerp.Domain.Inventory;
+using Xerp.Domain.Orders;
 
 namespace Xerp.Application.Stock;
 
@@ -25,7 +26,8 @@ public sealed record OrderLinkDto(Guid Id, string Number);
 /// <summary>
 /// <c>ToWarehouse</c> is null unless the document is a transfer; <c>ReversalOf</c> is set on a reversing
 /// document and <c>ReversedBy</c> on a reversed one (spec 006, 4.1); <c>PurchaseOrder</c> is set on a receipt
-/// linked to a purchase order (spec 009, 4.2). All four are always present.
+/// linked to a purchase order (spec 009, 4.2) and <c>SalesOrder</c> on an issue linked to a sales order (spec
+/// 010, 4.2). All five are always present.
 /// </summary>
 public sealed record StockDocumentDto(
     Guid Id,
@@ -38,6 +40,7 @@ public sealed record StockDocumentDto(
     StockDocumentLinkDto? ReversalOf,
     StockDocumentLinkDto? ReversedBy,
     OrderLinkDto? PurchaseOrder,
+    OrderLinkDto? SalesOrder,
     string? Reference,
     string? Note,
     IReadOnlyList<StockDocumentLineDto> Lines,
@@ -60,6 +63,7 @@ public sealed record StockDocumentSummaryDto(
     StockDocumentLinkDto? ReversalOf,
     StockDocumentLinkDto? ReversedBy,
     OrderLinkDto? PurchaseOrder,
+    OrderLinkDto? SalesOrder,
     string? Reference,
     string? Note,
     int LineCount,
@@ -73,10 +77,13 @@ public sealed record StockDocumentSummaryDto(
 /// <summary>
 /// Stock on hand of one (article, warehouse) pair: <c>Quantity</c> is the sum of its ledger entries (R19);
 /// <c>IncomingQuantity</c> is what confirmed purchase orders still expect into the warehouse, in base units
-/// (spec 009, R35). An order never changes <c>Quantity</c>.
+/// (spec 009, R35); <c>ReservedQuantity</c> what confirmed sales orders shipping from it still owe, and
+/// <c>AvailableQuantity</c> is <c>Quantity</c> minus that, possibly negative (spec 010, R15, R16). An order
+/// never changes <c>Quantity</c>, and a reservation blocks nothing.
 /// </summary>
 public sealed record StockOnHandDto(
-    ReferenceSummary Article, ReferenceSummary Warehouse, ReferenceSummary Unit, decimal Quantity, decimal IncomingQuantity);
+    ReferenceSummary Article, ReferenceSummary Warehouse, ReferenceSummary Unit, decimal Quantity, decimal IncomingQuantity,
+    decimal ReservedQuantity, decimal AvailableQuantity);
 
 /// <summary>The posted document a ledger entry came from; <c>IsReversal</c> when that is a reversing document.</summary>
 public sealed record LedgerDocumentDto(Guid Id, string Number, string Type, bool IsReversal);
@@ -104,16 +111,17 @@ public sealed record StockLineInput(string? ArticleId = null, decimal? Quantity 
 public readonly record struct StockLineRequest(Guid ArticleId, decimal Quantity, Guid? UnitId = null, int? OrderLineNo = null);
 
 /// <param name="PurchaseOrderId">The purchase order a receipt fulfils; omitted or null for an unlinked document (spec 009, R18).</param>
+/// <param name="SalesOrderId">The sales order an issue delivers; omitted or null for an unlinked document (spec 010, R5, R6).</param>
 public sealed record CreateStockDocumentInput(
     string? Type = null, string? DocumentDate = null, string? WarehouseId = null,
     IReadOnlyList<StockLineInput?>? Lines = null, string? Reference = null, string? Note = null, string? ToWarehouseId = null,
-    string? PurchaseOrderId = null);
+    string? PurchaseOrderId = null, string? SalesOrderId = null);
 
 /// <summary>
 /// All five fields must be present (R7); <c>Reference</c> and <c>Note</c> may be null but must have been given.
 /// There is no <c>type</c>: it never changes (R1). <c>ToWarehouseId</c> is needed for a transfer and must be
 /// absent or null for the other types (spec 006, 4.1), which only the stored document can tell. There is no
-/// <c>purchaseOrderId</c> either: the link is set at creation and never changes (spec 009, R19).
+/// <c>purchaseOrderId</c> or <c>salesOrderId</c> either: the link is set at creation and never changes (spec 009, R19).
 /// </summary>
 public sealed record ReplaceStockDocumentInput : TrackedInput
 {
@@ -136,7 +144,7 @@ public sealed record StockReversalValues(DateOnly DocumentDate, string? Note);
 
 public sealed record ListStockDocumentsInput(
     string? Type = null, string? Status = null, string? WarehouseId = null, string? Search = null,
-    int? Limit = null, int? Offset = null, string? PurchaseOrderId = null);
+    int? Limit = null, int? Offset = null, string? PurchaseOrderId = null, string? SalesOrderId = null);
 
 /// <summary>How a client without a URL path names one document: by <c>id</c> or by <c>number</c>.</summary>
 public sealed record StockDocumentAddressInput(string? Id = null, string? Number = null);
@@ -151,10 +159,10 @@ public sealed record StockDocumentValues(
     DateOnly DocumentDate, Guid WarehouseId, Guid? ToWarehouseId, string? Reference, string? Note, IReadOnlyList<StockLineRequest> Lines);
 
 /// <summary>Validated input of a create: the type, the values and the order the document is linked to, if any.</summary>
-public sealed record NewStockDocumentValues(StockDocumentType Type, StockDocumentValues Values, Guid? PurchaseOrderId = null);
+public sealed record NewStockDocumentValues(StockDocumentType Type, StockDocumentValues Values, OrderLink? Link = null);
 
 public sealed record StockDocumentListQuery(
-    StockDocumentType? Type, StockDocumentStatus? Status, Guid? WarehouseId, string? Search, int Limit, int Offset, Guid? PurchaseOrderId = null);
+    StockDocumentType? Type, StockDocumentStatus? Status, Guid? WarehouseId, string? Search, int Limit, int Offset, Guid? PurchaseOrderId = null, Guid? SalesOrderId = null);
 
 public sealed record StockOnHandQuery(Guid? ArticleId, Guid? WarehouseId, int Limit, int Offset);
 

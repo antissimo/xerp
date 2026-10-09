@@ -112,8 +112,8 @@ public class OrderValidationTests
     public void R18_Only_a_receipt_carries_the_link_and_the_type_decides_about_that_key_only()
     {
         var order = Guid.CreateVersion7();
-        Assert.Equal(order, StockDocumentValidation.Create(Document("receipt", order.ToString(), 1)).Value!.PurchaseOrderId);
-        Assert.Null(StockDocumentValidation.Create(Document("receipt", null, null)).Value!.PurchaseOrderId);
+        Assert.Equal(new OrderLink(OrderSide.Purchase, order), StockDocumentValidation.Create(Document("receipt", order.ToString(), 1)).Value!.Link);
+        Assert.Null(StockDocumentValidation.Create(Document("receipt", null, null)).Value!.Link);
         // A document that sends the link is judged as linked: its valid orderLineNo is not reported with it.
         foreach (var type in new[] { "issue", "transfer", "count" })
             AssertKeys(StockDocumentValidation.Create(Document(type, order.ToString(), 1)), ErrorCodes.ValidationFailed, "purchaseOrderId");
@@ -143,7 +143,7 @@ public class OrderValidationTests
     [Fact]
     public void R21_A_document_is_saved_only_against_an_existing_confirmed_order()
     {
-        const string field = OrderLinkChecks.PurchaseOrderField;
+        var field = OrderKind.Purchase.LinkField;
         Assert.Null(OrderLinkChecks.Open(field, Order.Id, Order));
         AssertKeys(OrderLinkChecks.Open(field, Order.Id, null), ErrorCodes.ReferenceNotFound, field);
         AssertKeys(OrderLinkChecks.Open(field, Order.Id, Order with { Status = OrderStatus.Draft }), ErrorCodes.OrderNotOpen, field);
