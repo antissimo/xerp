@@ -2,6 +2,9 @@
 
 Status: accepted (2026-10-09) — applies ADR-0007 to inventory; first applied by spec 005, continued by 006.
 Points 4, 5, 6 and 8 are the architect's defaults and are listed for the owner in the hand-over of spec 005.
+Amended 2026-10-10 by ADR-0018: the stored balance is now required (it supersedes the second consequence
+below), and rebuild joins the writes of condition 1 of the amendment. Spec numbers past 010 in this ADR are
+those of 2026-10-09 (`docs/roadmap.md`, renumbering of 2026-10-10).
 
 ## Context
 ADR-0007 fixed the principle: editable documents post into an append-only ledger, and corrections are

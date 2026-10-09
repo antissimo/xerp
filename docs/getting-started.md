@@ -333,7 +333,7 @@ What to know about the API:
 - **Masters** in use cannot be deleted (`409 IN_USE`); deactivate them with `"isActive": false`.
 - Resources of the MVP: `/units-of-measure`, `/articles`, `/articles/{id}/units`, `/partners`, `/warehouses`,
   `/stock-documents`, `/stock-on-hand`, `/stock-ledger-entries`, `/purchase-orders`, `/sales-orders`,
-  `/api-keys`, `/whoami`. Their fields and rules are in `docs/specs/001…010`. There is no OpenAPI document yet (roadmap, 018).
+  `/api-keys`, `/whoami`. Their fields and rules are in `docs/specs/001…010`. There is no OpenAPI document yet (roadmap, 019).
 
 ## 9. Connect an MCP client
 
@@ -382,8 +382,8 @@ of BOLT-M8 from SUP-1 to WH-1, confirm the order and receive 4 of them."*
 ## 10. Limits of this setup
 
 - Local only: bound to `127.0.0.1`, plain HTTP. Do not expose it as it is.
-- Every tenant key can do everything in its tenant, including posting; there are no permissions yet (017),
-  no audit log of master-data changes (016), no rate limiting (020).
+- Every tenant key can do everything in its tenant, including posting; there are no permissions yet (018),
+  no audit log of master-data changes (017), no rate limiting (021).
 - The admin key and every API key are bearer secrets: keep `.env` out of version control and revoke a key
   that leaked.
 - **No money side.** Prices on orders are recorded and totalled, nothing else: no invoices, no tax, no

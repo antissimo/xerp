@@ -118,12 +118,18 @@ Rules:
   while `draft`, and changes state through action routes (`POST /<resource>/{id}/post`). A posted document is
   immutable and has a `number`, `postedAt`, `postedBy`; lookup by number is `GET /<resource>/by-number/{number}`.
   An error about a line is keyed `lines[i].<field>` with a zero-based index into the request's array.
+- Warehouses on documents (ADR-0019): every document type has exactly one mandatory warehouse in its header
+  (a transfer: source and destination) — the types that exist and every type added later. Each tenant has
+  exactly one default warehouse (`isDefault`), created with the tenant and always active. On **create**,
+  `warehouseId` omitted or `null` means the default warehouse at that moment (on a stock document linked to
+  an order: the order's warehouse); the resolved warehouse is stored and returned. On replace, and for both
+  warehouses of a transfer, the caller names it.
 - Orders (ADR-0016): a purchase or sales order is a document that moves no stock. It is edited while `draft`,
   gets its `number` when confirmed (`POST /<resource>/{id}/confirm`) and is then immutable; `close` and
   `reopen` switch it between `confirmed` and `closed`. Goods are received or delivered by a stock document
   linked to the order (`purchaseOrderId` / `salesOrderId` on the header, `orderLineNo` on each line); progress
   per order line is kept in base units and never exceeds the ordered quantity.
-  Stock on hand shows, per (article, warehouse), `quantity` (the ledger sum), `incomingQuantity` (outstanding
+  Stock on hand shows, per (article, warehouse), `quantity` (the stored balance, equal to the ledger sum), `incomingQuantity` (outstanding
   on confirmed purchase orders), `reservedQuantity` (outstanding on confirmed sales orders) and
   `availableQuantity` (`quantity − reservedQuantity`, may be negative). Reservation informs and blocks nothing
   (ADR-0017).
@@ -153,6 +159,7 @@ Every non-2xx response under `/api/v1` is `application/problem+json` (RFC 9457) 
 | 409 | `REFERENCE_NOT_FOUND` | A `<role>Id` in the body is well-formed but no such record exists in this tenant (also: other tenant's record). `errors` has the field's key. |
 | 409 | `REFERENCE_INACTIVE` | A `<role>Id` in the body points at an inactive record that is being newly assigned. `errors` has the field's key. |
 | 409 | `CANNOT_REVOKE_SELF` | An API key tried to revoke itself. |
+| 409 | `DEFAULT_WAREHOUSE` | The operation would leave the tenant without an active default warehouse: delete or deactivation of the default warehouse, or making an inactive warehouse the default (spec 011). `errors` has `isActive` except on delete. |
 | 409 | `INVALID_STATE` | Operation not allowed in the document's current status (e.g. replace, delete or post of a posted document; reversal of a draft, of a reversed or of a reversing document; replace of a confirmed order; close of a draft order). |
 | 409 | `INSUFFICIENT_STOCK` | Posting would make stock on hand negative. `errors` has `lines[i].quantity` for the short lines. |
 | 409 | `ARTICLE_NOT_STOCKED` | A stock document line names a `service` article. `errors` has `lines[i].articleId`. |
@@ -200,7 +207,7 @@ and are answered as HTTP problem documents, not as tool errors (ADR-0009).
 - The CLI and the web UI are not built in this repository. They are ordinary HTTP API clients with their own
   API keys; nothing in the backend is specific to them. Because they are developed separately, the HTTP API must
   not change incompatibly within `/api/v1`, and the OpenAPI document is the description they build against.
-  It does not exist yet: spec 018 delivers it (served in every environment to any authenticated tenant key,
+  It does not exist yet: spec 019 delivers it (served in every environment to any authenticated tenant key,
   and committed to the repository so that a contract change is visible in a diff).
 - Every spec defines both the HTTP and the MCP signature of each operation. Specs 001 and 002 carry their MCP
   signatures as contract only; spec 003 implements them. From spec 004 on, a spec's tools are implemented with it,
@@ -211,13 +218,20 @@ and are answered as HTTP problem documents, not as tool errors (ADR-0009).
 - EF Core + Npgsql, code-first migrations in `Xerp.Infrastructure`. Migrations are applied at API startup
   (acceptable while there is one instance; revisit before production).
 - Money and quantities are `decimal` / `numeric`, never floating point.
-- Audit columns on every tenant-owned row: `CreatedAt`, `UpdatedAt`, `CreatedBy`, `UpdatedBy`.
+- Audit columns on every tenant-owned row that records an act (ledger entries carry `PostedAt` / `PostedBy`
+  instead; stored projections carry none): `CreatedAt`, `UpdatedAt`, `CreatedBy`, `UpdatedBy`.
   Columns that hold an actor (`CreatedBy`, `UpdatedBy`, `RevokedBy`, …) are real foreign keys
   `(TenantId, <column>)` -> `ApiKeys (TenantId, Id)` with `ON DELETE RESTRICT`: an actor can never belong to
   another tenant, and an API key that has written anything can be revoked but never deleted (ADR-0010).
 - Ledger tables (stock ledger from spec 005; journal lines later) are append-only: no `UPDATE`, no `DELETE`;
   corrections are reversing entries (ADR-0007). Stock on hand is the sum of the stock ledger and is never
-  negative (ADR-0012). Document numbers are gapless per tenant and document type and are assigned at posting
+  negative (ADR-0012).
+- Stored projections (ADR-0018): `StockBalance` holds the quantity per (tenant, warehouse, article). The
+  ledger is the truth and the balance its copy: written only together with ledger entries, in the same
+  transaction and under the same per-tenant lock, and by the rebuild operation; read by everything that
+  shows or decides on stock. Invariant, tested also under parallel postings: stored == sum of the ledger.
+  A projection has no audit columns; it must come with an operation that verifies it against its ledger and
+  one that rebuilds it. Later projections (value of stock, account balances) follow the same pattern. Document numbers are gapless per tenant and document type and are assigned at posting
   (stock documents) or at confirmation (orders).
 
 ## 9. Testing (ADR-0006)
