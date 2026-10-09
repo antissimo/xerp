@@ -11,6 +11,9 @@ public enum ToolKind
     Create,
     Update,
     Delete,
+
+    /// <summary>Posting a document (spec 005, section 5): permanent, and a second call is refused, so not idempotent.</summary>
+    Post,
 }
 
 /// <summary>Runs a tool: binds the arguments, calls one Application operation, maps its result.</summary>
@@ -79,7 +82,7 @@ public sealed record XerpTool(
                 ToolKind.Read => new ToolAnnotations { ReadOnlyHint = true, OpenWorldHint = false },
                 ToolKind.Create => new ToolAnnotations { ReadOnlyHint = false, DestructiveHint = false, IdempotentHint = false, OpenWorldHint = false },
                 ToolKind.Update => new ToolAnnotations { ReadOnlyHint = false, DestructiveHint = true, IdempotentHint = true, OpenWorldHint = false },
-                ToolKind.Delete => new ToolAnnotations { ReadOnlyHint = false, DestructiveHint = true, IdempotentHint = false, OpenWorldHint = false },
+                ToolKind.Delete or ToolKind.Post => new ToolAnnotations { ReadOnlyHint = false, DestructiveHint = true, IdempotentHint = false, OpenWorldHint = false },
                 _ => throw new ArgumentOutOfRangeException(nameof(Kind)),
             },
         };

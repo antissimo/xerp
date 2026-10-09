@@ -9,6 +9,7 @@ namespace Xerp.IntegrationTests;
 /// <summary>
 /// Spec 003, AC-40 to AC-45 (tool list and metadata) and AC-03 (MCP tools hold no data access).
 /// Spec 004, AC-90 to AC-93: the list grows to 24 tools; the ten new ones have the same metadata rules.
+/// Spec 005, AC-80: the list grows to 32 tools; the eight stock tools have the same metadata rules.
 /// </summary>
 [Collection(XerpCollection.Name)]
 public class McpToolListTests(XerpFixture app)
@@ -57,8 +58,23 @@ public class McpToolListTests(XerpFixture app)
         new("warehouse_delete", ["id"], ["id"], "delete"),
     ];
 
-    // The complete list (spec 004, section 5.3): a new tool must be added here by its spec.
-    private static readonly Expected[] Tools = [.. Spec003Tools, .. Spec004Tools];
+    // Spec 005, section 5.
+    private static readonly Expected[] Spec005Tools =
+    [
+        new("stock_document_list", ["type", "status", "warehouseId", "search", "limit", "offset"], [], "read"),
+        new("stock_document_get", ["id", "number"], [], "read"),
+        new("stock_document_create", ["type", "documentDate", "warehouseId", "lines", "reference", "note"],
+            ["type", "documentDate", "warehouseId", "lines"], "create"),
+        new("stock_document_update", ["id", "documentDate", "warehouseId", "reference", "note", "lines"],
+            ["id", "documentDate", "warehouseId", "reference", "note", "lines"], "update"),
+        new("stock_document_delete", ["id"], ["id"], "delete"),
+        new("stock_document_post", ["id"], ["id"], "post"),
+        new("stock_on_hand_list", ["articleId", "warehouseId", "limit", "offset"], [], "read"),
+        new("stock_ledger_entry_list", ["articleId", "warehouseId", "documentId", "limit", "offset"], [], "read"),
+    ];
+
+    // The complete list (spec 004, section 5.3; spec 005, section 5): a new tool must be added here by its spec.
+    private static readonly Expected[] Tools = [.. Spec003Tools, .. Spec004Tools, .. Spec005Tools];
 
     private async Task<Dictionary<string, Tool>> ListToolsAsync(string? key = null)
     {
@@ -71,12 +87,13 @@ public class McpToolListTests(XerpFixture app)
     private static string[] Sorted(IEnumerable<string> values) => values.Order(StringComparer.Ordinal).ToArray();
 
     [Fact]
-    public async Task AC40_S004_AC90_Tool_list_is_exactly_the_24_tools_of_the_specs()
+    public async Task AC40_S004_AC90_S005_AC80_Tool_list_is_exactly_the_32_tools_of_the_specs()
     {
         var tools = await ListToolsAsync();
 
         Assert.Equal(14, Spec003Tools.Length);
         Assert.Equal(10, Spec004Tools.Length);
+        Assert.Equal(8, Spec005Tools.Length);
         Assert.Equal(Sorted(Tools.Select(t => t.Name)), Sorted(tools.Keys));
         Assert.DoesNotContain("api_key_create", tools.Keys);
         Assert.DoesNotContain(tools.Keys, name => name.StartsWith("tenant", StringComparison.OrdinalIgnoreCase));
@@ -126,6 +143,52 @@ public class McpToolListTests(XerpFixture app)
     public async Task S004_AC92_Partner_and_warehouse_tools_have_the_annotations_of_their_pattern() =>
         AssertAnnotations(await ListToolsAsync(), Spec004Tools);
 
+    [Fact]
+    public async Task S005_AC80_Stock_tools_have_description_closed_input_schema_output_schema_and_annotations()
+    {
+        var tools = await ListToolsAsync();
+
+        AssertMetadata(tools, Spec005Tools);
+        AssertAnnotations(tools, Spec005Tools);
+        var post = tools["stock_document_post"].Annotations!;
+        Assert.True(post.DestructiveHint);
+        Assert.False(post.ReadOnlyHint);
+    }
+
+    [Theory]
+    [InlineData("stock_document_create")]
+    [InlineData("stock_document_update")]
+    public async Task S005_AC80_Lines_is_an_array_of_closed_article_and_quantity_objects(string toolName)
+    {
+        // Section 5: "lines is an array of { articleId: uuid, quantity: number } objects (closed schema)".
+        var tools = await ListToolsAsync();
+
+        Assert.True(tools.TryGetValue(toolName, out var tool), $"Tool '{toolName}' is not listed.");
+        var lines = tool!.InputSchema.GetProperty("properties").GetProperty("lines");
+        Assert.Contains("array", SchemaTypes(lines));
+        Assert.True(lines.TryGetProperty("items", out var items), $"{toolName}.lines has no items schema: {lines}");
+        items = Resolve(tool.InputSchema, items);
+        Assert.True(items.TryGetProperty("additionalProperties", out var additional)
+            && additional.ValueKind == JsonValueKind.False, $"{toolName}.lines: the line schema is not closed: {items}");
+        var properties = items.GetProperty("properties");
+        Assert.Equal(["articleId", "quantity"], Sorted(properties.EnumerateObject().Select(p => p.Name)));
+        Assert.Equal(["articleId", "quantity"], Sorted(items.GetProperty("required").EnumerateArray().Select(r => r.GetString()!)));
+        var quantity = SchemaTypes(properties.GetProperty("quantity"));
+        Assert.True(quantity.Contains("number") && !quantity.Contains("string"),
+            $"{toolName}.lines[].quantity must be a JSON number: {properties.GetProperty("quantity")}");
+    }
+
+    /// <summary>Follows a local <c>$ref</c> (<c>#/$defs/Name</c>) inside the tool's input schema.</summary>
+    private static JsonElement Resolve(JsonElement root, JsonElement schema)
+    {
+        if (!schema.TryGetProperty("$ref", out var reference))
+            return schema;
+        var target = root;
+        foreach (var segment in reference.GetString()!.TrimStart('#').Split('/', StringSplitOptions.RemoveEmptyEntries))
+            target = target.GetProperty(segment);
+        return target;
+    }
+
     private static void AssertMetadata(Dictionary<string, Tool> tools, Expected[] expectedTools)
     {
         foreach (var expected in expectedTools)
@@ -173,6 +236,8 @@ public class McpToolListTests(XerpFixture app)
                 "create" => actual == (false, false, false, false),
                 "update" => actual == (false, true, true, false),
                 "delete" => actual == (false, true, false, false),
+                // Spec 005, section 5: posting is permanent.
+                "post" => actual == (false, true, false, false),
                 _ => false,
             };
             Assert.True(ok, $"{expected.Name} ({expected.Kind}): readOnly/destructive/idempotent/openWorld = {actual}.");
@@ -204,7 +269,10 @@ public class McpToolListTests(XerpFixture app)
     [InlineData("article_create", "type", "service,stock")]
     [InlineData("article_list", "type", "service,stock")]
     [InlineData("api_key_list", "actorType", "agent,human")]
-    public async Task AC43_Enumerated_arguments_are_enums_in_the_input_schema(string toolName, string property, string values)
+    [InlineData("stock_document_create", "type", "issue,receipt")]
+    [InlineData("stock_document_list", "type", "issue,receipt")]
+    [InlineData("stock_document_list", "status", "draft,posted")]
+    public async Task AC43_S005_AC80_Enumerated_arguments_are_enums_in_the_input_schema(string toolName, string property, string values)
     {
         var tools = await ListToolsAsync();
 
