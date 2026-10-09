@@ -1,6 +1,6 @@
 namespace Xerp.Domain.Common;
 
-/// <summary>Rules for names (spec 001, R4).</summary>
+/// <summary>Rules for names (spec 001, R4): trimmed, 1 to max characters, no control characters.</summary>
 public static class NameRules
 {
     public const int MaxLength = 200;
@@ -11,7 +11,7 @@ public static class NameRules
     public static bool TryNormalize(string? input, int maxLength, out string name)
     {
         name = input?.Trim() ?? "";
-        return name.Length >= 1 && name.Length <= maxLength;
+        return name.Length >= 1 && name.Length <= maxLength && !TextRules.HasControlCharacters(name);
     }
 
     /// <summary>The normalised name, or an <see cref="ArgumentException"/> when the input breaks the rules.</summary>

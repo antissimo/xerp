@@ -70,4 +70,24 @@ public class CodeAndNameRulesTests
         Assert.True(NameRules.TryNormalize(" " + new string('n', 200) + " ", out _));
         Assert.False(NameRules.TryNormalize(new string('n', 201), out _));
     }
+
+    [Theory]
+    [InlineData("a\u0000b")]
+    [InlineData("a\nb")]
+    [InlineData("a\tb")]
+    [InlineData("a\u0007b")]
+    [InlineData("a\u007fb")]
+    [InlineData("a\u009fb")]
+    public void R4_Name_with_a_control_character_inside_is_rejected(string input)
+    {
+        Assert.False(NameRules.TryNormalize(input, out _));
+    }
+
+    [Fact]
+    public void R4_Control_characters_that_are_white_space_are_trimmed_from_the_ends()
+    {
+        Assert.True(NameRules.TryNormalize("\tPiece\n", out var name));
+        Assert.Equal("Piece", name);
+        Assert.False(NameRules.TryNormalize("\u0000Piece", out _));
+    }
 }

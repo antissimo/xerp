@@ -34,7 +34,7 @@ public sealed class ValidationErrors
             return name;
         Add(field, string.IsNullOrWhiteSpace(input)
             ? "Name is required."
-            : $"Name must be at most {NameRules.MaxLength} characters.");
+            : $"Name must be at most {NameRules.MaxLength} characters and contain no control characters.");
         return "";
     }
 

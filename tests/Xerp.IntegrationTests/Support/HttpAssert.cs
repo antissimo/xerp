@@ -62,6 +62,26 @@ public static class HttpAssert
     public static Task CodeTakenAsync(HttpResponseMessage response) =>
         ProblemAsync(response, HttpStatusCode.Conflict, "CODE_TAKEN");
 
+    public static Task InUseAsync(HttpResponseMessage response) =>
+        ProblemAsync(response, HttpStatusCode.Conflict, "IN_USE");
+
+    /// <summary>409 REFERENCE_NOT_FOUND whose <c>errors</c> has the key of the offending request field (ADR-0008).</summary>
+    public static Task<JsonElement> ReferenceNotFoundAsync(HttpResponseMessage response, string field) =>
+        ReferenceProblemAsync(response, "REFERENCE_NOT_FOUND", field);
+
+    /// <summary>409 REFERENCE_INACTIVE whose <c>errors</c> has the key of the offending request field (ADR-0008).</summary>
+    public static Task<JsonElement> ReferenceInactiveAsync(HttpResponseMessage response, string field) =>
+        ReferenceProblemAsync(response, "REFERENCE_INACTIVE", field);
+
+    private static async Task<JsonElement> ReferenceProblemAsync(HttpResponseMessage response, string code, string field)
+    {
+        var body = await ProblemAsync(response, HttpStatusCode.Conflict, code);
+        Assert.True(body.TryGetProperty("errors", out var errors), $"A {code} problem must have 'errors'.");
+        Assert.True(errors.TryGetProperty(field, out var messages), $"errors has no key '{field}': {errors}");
+        Assert.NotEqual(0, messages.GetArrayLength());
+        return body;
+    }
+
     public static async Task<JsonElement> JsonAsync(HttpResponseMessage response, HttpStatusCode status)
     {
         var text = await response.Content.ReadAsStringAsync();
@@ -74,7 +94,7 @@ public static class HttpAssert
     /// <summary>S6: no stack traces, SQL or connection details in an error body.</summary>
     internal static void AssertLeaksNothing(string body)
     {
-        foreach (var marker in new[] { "   at ", "Exception", "Npgsql", "SELECT ", "INSERT ", "Host=", "Password", "duplicate key" })
+        foreach (var marker in new[] { "   at ", "Exception", "Npgsql", "SELECT ", "INSERT ", "Host=", "Password", "duplicate key", "FK_Articles", "FK_UnitsOfMeasure", "IX_Articles", "IX_UnitsOfMeasure", "violates foreign key" })
             Assert.DoesNotContain(marker, body, StringComparison.OrdinalIgnoreCase);
     }
 

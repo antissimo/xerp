@@ -32,7 +32,7 @@ public class ErrorModelTests(XerpFixture app)
     [InlineData("/api/v1/nope")]
     [InlineData("/api/v1/units-of-measure/by-code")]
     [InlineData("/api/v1/units-of-measure/by-code/kg/extra")]
-    [InlineData("/api/v1/articles")]
+    [InlineData("/api/v1/partners")] // was /api/v1/articles until spec 002 added that route
     [InlineData("/api/v1")]
     public async Task AC71_Unknown_path_under_api_v1_is_a_not_found_problem(string path)
     {
@@ -60,7 +60,6 @@ public class ErrorModelTests(XerpFixture app)
 
         using var response = await tenant.Client.DeleteAsync(Uom.Path);
 
-        Assert.True(response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed);
-        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        await HttpAssert.NotFoundAsync(response);
     }
 }

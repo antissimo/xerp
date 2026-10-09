@@ -140,7 +140,8 @@ As spec 003 §5.3: a `description` that names the error codes and what each mean
 `inputSchema` (`additionalProperties: false`) with a `description` on every property and `required` as in the
 table; an `outputSchema`; annotations by the pattern table of 003 §5.3 (`*_list`/`*_get` read-only; `*_create`;
 `*_update`; `*_delete`). Additionally:
-- nullable text arguments have the schema type `string` or `null`;
+- nullable text arguments have a schema that allows a string and `null` (a `type` array or `anyOf` / `oneOf`;
+  the form is not fixed — 004-q, T-Q3);
 - the description of `partner_create` states that at least one of `isCustomer`, `isSupplier` must be `true`,
   and that `taxId` is not unique (search first to avoid a duplicate partner);
 - the description of the `countryCode` property states the form (two upper-case letters, ISO 3166-1 alpha-2).
