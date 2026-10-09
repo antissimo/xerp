@@ -43,7 +43,8 @@ public static class StockLineChecks
 
     /// <summary>
     /// Posting needs every master of the document active, also those assigned while they still were
-    /// (R13; spec 006, R5): the warehouse(s) and every article. All inactive ones are reported together.
+    /// (R13; spec 006, R5): the warehouse(s) and every article. Header before lines: the inactive warehouses are
+    /// reported together and alone; inactive articles only when the header is clean, all of them together.
     /// </summary>
     /// <param name="inactiveWarehouses">The error key and id of each inactive warehouse of the document.</param>
     public static AppError? ActiveForPosting(
@@ -53,8 +54,9 @@ public static class StockLineChecks
         var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
         foreach (var (field, id) in inactiveWarehouses)
             errors[field] = [$"The record with id '{id}' is inactive."];
-        foreach (var i in Where(lines, l => !articles.TryGetValue(l.ArticleId, out var facts) || !facts.IsActive))
-            errors[StockDocumentValidation.LineKey(i, "articleId")] = [$"The record with id '{lines[i].ArticleId}' is inactive."];
+        if (errors.Count == 0)
+            foreach (var i in Where(lines, l => !articles.TryGetValue(l.ArticleId, out var facts) || !facts.IsActive))
+                errors[StockDocumentValidation.LineKey(i, "articleId")] = [$"The record with id '{lines[i].ArticleId}' is inactive."];
         return errors.Count == 0
             ? null
             : new AppError(ErrorCodes.ReferenceInactive,
