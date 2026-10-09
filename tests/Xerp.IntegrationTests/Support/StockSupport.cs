@@ -118,6 +118,97 @@ public static class Stock
     public static async Task<JsonElement> IssueAsync(HttpClient client, Guid warehouse, Guid article, decimal quantity) =>
         await PostDocumentAsync(client, (await CreateAsync(client, "issue", warehouse, (article, quantity))).Id());
 
+    // ---- transfers and reversal (spec 006) ----
+
+    public const string NextDay = "2026-10-10";
+
+    /// <summary>A create body of a transfer with the required properties only.</summary>
+    public static JsonObject Transfer(Guid from, Guid to, params (Guid Article, decimal Quantity)[] lines) =>
+        Draft("transfer", from, lines).With("toWarehouseId", to.ToString());
+
+    /// <summary>A replace body of a transfer: the five properties of spec 005 and <c>toWarehouseId</c>.</summary>
+    public static JsonObject TransferReplacement(Guid from, Guid to, params (Guid Article, decimal Quantity)[] lines) =>
+        Replacement(from, lines).With("toWarehouseId", to.ToString());
+
+    public static Task<JsonElement> CreateTransferAsync(HttpClient client, Guid from, Guid to, params (Guid Article, decimal Quantity)[] lines) =>
+        CreateAsync(client, Transfer(from, to, lines));
+
+    /// <summary>"Transfer n of an article from one warehouse to another": a transfer with one line, posted.</summary>
+    public static async Task<JsonElement> TransferAsync(HttpClient client, Guid from, Guid to, Guid article, decimal quantity) =>
+        await PostDocumentAsync(client, (await CreateTransferAsync(client, from, to, (article, quantity))).Id());
+
+    public static JsonObject ReverseBody(string date = Date, string? note = null)
+    {
+        var body = new JsonObject { ["documentDate"] = date };
+        return note is null ? body : body.With("note", note);
+    }
+
+    /// <summary><c>POST /stock-documents/{id}/reverse</c>, the raw response.</summary>
+    public static Task<HttpResponseMessage> SendReverseAsync(HttpClient client, Guid id, JsonObject body) =>
+        client.PostAsJsonAsync($"{Documents}/{id}/reverse", body);
+
+    public static Task<HttpResponseMessage> SendReverseAsync(HttpClient client, Guid id, string date = Date, string? note = null) =>
+        SendReverseAsync(client, id, ReverseBody(date, note));
+
+    /// <summary>Reverses a posted document and asserts <c>201</c>; returns the reversing document.</summary>
+    public static async Task<JsonElement> ReverseAsync(HttpClient client, Guid id, string date = Date, string? note = null)
+    {
+        using var response = await SendReverseAsync(client, id, date, note);
+        return await HttpAssert.JsonAsync(response, HttpStatusCode.Created);
+    }
+
+    /// <summary>The ledger entries one document wrote, in ledger order.</summary>
+    public static async Task<JsonElement[]> EntriesAsync(HttpClient client, Guid documentId)
+    {
+        var list = await LedgerAsync(client, $"?documentId={documentId}&limit=500");
+        Assert.Equal(list.Total(), list.Items().Length);
+        return list.Items();
+    }
+
+    /// <summary>The sum of ledger quantities per (article, warehouse) pair; pairs that sum to zero are left out.</summary>
+    public static Dictionary<(Guid Article, Guid Warehouse), decimal> PairSums(IEnumerable<JsonElement> entries) =>
+        entries
+            .GroupBy(e => (e.GetProperty("article").Id(), e.GetProperty("warehouse").Id()))
+            .Select(g => (g.Key, Sum: g.Sum(e => e.Quantity())))
+            .Where(p => p.Sum != 0m)
+            .ToDictionary(p => p.Key, p => p.Sum);
+
+    /// <summary>Stock on hand of the tenant as a map of pairs (absent = zero).</summary>
+    public static async Task<Dictionary<(Guid Article, Guid Warehouse), decimal>> StockMapAsync(HttpClient client)
+    {
+        var list = await OnHandAsync(client, "?limit=500");
+        Assert.Equal(list.Total(), list.Items().Length);
+        return list.Items().ToDictionary(i => (i.GetProperty("article").Id(), i.GetProperty("warehouse").Id()), i => i.Quantity());
+    }
+
+    /// <summary>The whole ledger of the tenant summed per pair (005/R19: this must equal stock on hand).</summary>
+    public static async Task<Dictionary<(Guid Article, Guid Warehouse), decimal>> LedgerMapAsync(HttpClient client) =>
+        PairSums((await LedgerAsync(client, "?limit=500")).Items());
+
+    /// <summary>The article's total over all warehouses (R8: a transfer does not change it).</summary>
+    public static async Task<decimal> TotalAsync(HttpClient client, Guid article) =>
+        (await StockMapAsync(client)).Where(p => p.Key.Article == article).Sum(p => p.Value);
+
+    /// <summary>Asserts that stock on hand is exactly the sum of the ledger and that no pair is negative.</summary>
+    public static async Task<Dictionary<(Guid Article, Guid Warehouse), decimal>> AssertStockEqualsLedgerAsync(HttpClient client)
+    {
+        var stock = await StockMapAsync(client);
+        var ledger = await LedgerMapAsync(client);
+        Assert.True(stock.Count == ledger.Count && stock.All(p => ledger.TryGetValue(p.Key, out var sum) && sum == p.Value),
+            $"Stock on hand differs from the ledger sums:\n[{string.Join(", ", stock)}]\n!=\n[{string.Join(", ", ledger)}]");
+        Assert.All(stock.Values, quantity => Assert.True(quantity > 0m, $"Stock on hand lists a quantity that is not positive: {quantity}"));
+        return stock;
+    }
+
+    /// <summary>The <c>{ id, number }</c> link of a document (<c>reversalOf</c> / <c>reversedBy</c>).</summary>
+    public static void AssertLink(JsonElement document, string property, JsonElement target)
+    {
+        var link = document.GetProperty(property);
+        Assert.True(link.ValueKind == JsonValueKind.Object, $"'{property}' is not a link: {document}");
+        Assert.Equal(target.Id(), link.Id());
+        Assert.Equal(target.Number(), link.Str("number"));
+    }
+
     // ---- queries ----
 
     public static async Task<JsonElement> ListAsync(HttpClient client, string url)
