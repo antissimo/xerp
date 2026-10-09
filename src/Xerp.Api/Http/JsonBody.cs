@@ -22,7 +22,9 @@ public static partial class JsonBody
         NumberHandling = JsonNumberHandling.Strict,
     };
 
-    [GeneratedRegex(@"^\$\.([A-Za-z_][A-Za-z0-9_]*)$")]
+    // A property of the body, or an element of an array property and a property of that element:
+    // "$.code", "$.lines[1]", "$.lines[1].quantity" (ADR-0012, decision 12).
+    [GeneratedRegex(@"^\$\.([A-Za-z_][A-Za-z0-9_]*(?:\[\d+\](?:\.[A-Za-z_][A-Za-z0-9_]*)?)?)$")]
     private static partial Regex TopLevelProperty();
 
     public static async Task<Result<T>> ReadAsync<T>(HttpRequest request, CancellationToken cancellationToken) where T : class

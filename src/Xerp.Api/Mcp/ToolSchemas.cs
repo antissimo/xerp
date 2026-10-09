@@ -43,6 +43,31 @@ public static class ToolSchemas
         return schema;
     }
 
+    /// <summary>A JSON number; a quoted number is a wrong type.</summary>
+    public static JsonObject Number(string description) => new() { ["type"] = "number", ["description"] = description };
+
+    /// <summary>An array of closed objects with exactly the listed properties, all required.</summary>
+    public static JsonObject ArrayOf(string description, int minItems, int maxItems, params (string Name, JsonObject Schema)[] properties)
+    {
+        var declared = new JsonObject();
+        foreach (var (name, property) in properties)
+            declared[name] = property.DeepClone();
+        return new JsonObject
+        {
+            ["type"] = "array",
+            ["description"] = description,
+            ["minItems"] = minItems,
+            ["maxItems"] = maxItems,
+            ["items"] = new JsonObject
+            {
+                ["type"] = "object",
+                ["properties"] = declared,
+                ["required"] = new JsonArray(properties.Select(p => (JsonNode)p.Name).ToArray()),
+                ["additionalProperties"] = false,
+            },
+        };
+    }
+
     /// <summary>A closed object schema: no argument other than the listed ones is accepted.</summary>
     public static JsonElement Input(string[] required, params (string Name, JsonObject Schema)[] properties)
     {

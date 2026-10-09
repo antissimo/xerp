@@ -67,7 +67,7 @@ series are a later spec, and what "negative stock" means when documents carry da
 
 ## Consequences
 - Posting serialises per number counter and per (article, warehouse) pair: fine at the volume of a small
-  company; a known limit for bulk imports.
+  company; a known limit for bulk imports. (For the MVP: per tenant — see the amendment below.)
 - Stock on hand is a `SUM` over the ledger until volume requires a projection; the projection is then an
   implementation detail that must stay equal to the sum (a criterion in spec 005 states the equality).
 - Opening balances are entered as receipts until the stock count spec (008) exists.
@@ -76,3 +76,33 @@ series are a later spec, and what "negative stock" means when documents carry da
 - A mistake in a posted document cannot be corrected until spec 006 (reversal) — except by a compensating
   document of the opposite type, which is itself a correct ledger operation.
 - `IN_USE` now also means "this field cannot change while the record is used" (article `type`, `baseUnitId`).
+
+## Amendment (2026-10-09): one lock per tenant is accepted for the MVP
+Asked by the builder of spec 005 (`docs/questions/005-q.md`, B-Q2). Decision 4 says postings are serialised
+"as far as needed"; the spec notes named the narrowest set of locks (document row, the affected
+(article, warehouse) pairs in a fixed order, the counter row). The builder serialised wider: every write of a
+stock document and the replace of an article run in one transaction that holds a `FOR NO KEY UPDATE` lock on
+the tenant's row.
+
+**Accepted, for the MVP (specs 001–010).** Correctness comes first, and a single lock gives it by
+construction: no lock order to get wrong, no deadlock, one writer per counter, and the stock, order
+quantities and frozen master fields a write decides on cannot change before it commits. Throughput inside one
+tenant is secondary at the volume of a small company; other tenants and all reads are not affected, and
+ordinary master writes are not blocked (their foreign-key checks take a key-share lock, which does not
+conflict).
+
+Conditions:
+1. **Every write whose decision depends on shared state runs under the same lock**: create, replace, delete,
+   post and reverse of stock documents (005, 006, 008); the replace of an article and changes of its unit
+   conversions (005/R26, 007); and create, replace, delete, confirm, close and reopen of orders (009, 010).
+   A write that takes the lock for only part of its decision is a defect.
+2. **Nothing slow happens inside it**: no network call, no waiting on anything but the database.
+3. **The contract does not depend on it.** No criterion may pass only because of the coarse lock, and none
+   may be dropped because of it: the race criteria (005/AC-46, AC-52, AC-53 and their successors) stay.
+   Narrowing the lock later is an implementation change with no migration and no change of the API.
+4. Where a spec's builder note prescribes a lock order (006, 008, 009, 010), the per-tenant lock satisfies it.
+
+Known limits, accepted: a bulk import of many documents for one tenant runs one write at a time; a
+long-running posting (a document of 200 lines) delays that tenant's other stock and order writes for its
+duration. Revisit when a tenant's write volume makes this visible, or with row-level security (019) if the
+runtime role changes what can be locked.
