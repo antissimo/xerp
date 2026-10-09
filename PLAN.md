@@ -3,7 +3,7 @@
 Glavni pregled petlje arhitekt -> tester -> builder -> review -> merge. Redoslijed koraka dolazi iz
 `docs/roadmap.md` (piše ga arhitekt); ovaj dokument vodi orkestrator i ažurira ga nakon svakog koraka.
 
-Zadnje ažuriranje: 2026-10-09 23:35
+Zadnje ažuriranje: 2026-10-10 00:05
 
 ## Opseg MVP-a
 
@@ -11,6 +11,9 @@ Odluka vlasnika (2026-10-09): rad se ograničava na MVP. Granica (prijedlog orke
 **MVP = specovi 001–010** — matični podaci, MCP sučelje, zalihe (primke, izdatnice, međuskladišnice, storno,
 preračun jedinica, inventura), nabava i prodaja. Sve od 011 nadalje (vrednovanje, računovodstvo, računi,
 plaćanja, platforma) je nakon MVP-a i petlja ga ne radi dok vlasnik ne kaže.
+
+**Stanje: MVP je dovršen (2026-10-10).** Svih deset specova i završno čišćenje su spojeni u `main` i na GitHubu.
+Petlja je zaustavljena; nastavak (011+) samo na zahtjev vlasnika.
 
 ## Koraci po specifikaciji
 
@@ -52,9 +55,9 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 
 ## Što tko trenutno radi
 
-- **Arhitekt:** čeka review završnog čišćenja.
-- **Builder:** završno čišćenje prije MVP-a: ograničenje veličine zahtjeva (stavka 001/7), grana `chore/mvp-cleanup`.
-- **Tester:** nije pokrenut (posao za MVP gotov); pokreće se samo za osporene testove.
+- **Arhitekt:** zaustavljen (MVP dovršen).
+- **Builder:** zaustavljen (MVP dovršen).
+- **Tester:** zaustavljen (MVP dovršen).
 
 ## Dnevnik
 
@@ -89,6 +92,7 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 - 2026-10-09 — review 009: kod prihvaćen, 8 testerovih testova ispravljeno (`309f0d6`, `0fbe953`); builder napisao kod za 010. Vlasnik zaustavio sve agente u 22:25.
 - 2026-10-09 — agenti ponovno pokrenuti; 009 prošao ponovni review (OK; orkestrator pokrenuo 517 unit + 1261 integracijski test), spojen u `main` i pushan. Review koda 010: OK, merge čeka zelenu granu.
 - 2026-10-09 — 010 spojen u `main` i pushan (review koda OK; orkestrator pokrenuo 534 unit + 1460 integracijskih testova na završnoj grani). **Svih deset specova MVP-a je spojeno.** Preostaje stavka čišćenja 001/7.
+- 2026-10-10 — završno čišćenje spojeno (ograničenje zahtjeva 1 MB, 413 PAYLOAD_TOO_LARGE; review OK; 534 unit + 1464 integracijska testa). Dokumentacija MVP-a zatvorena (`docs/getting-started.md`, roadmap). **MVP dovršen.** Ostalo nakon MVP-a: `docs/reviews/open-items.md` (15 stavki) i specovi 011+.
 
 ## Odluke vlasnika
 
