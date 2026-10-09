@@ -15,7 +15,7 @@ public static class StockDocumentValidation
     private const string DateFormat = "yyyy-MM-dd";
 
     private const string TypeMessage =
-        $"type must be \"{StockDocumentTypeNames.Receipt}\", \"{StockDocumentTypeNames.Issue}\" or \"{StockDocumentTypeNames.Transfer}\".";
+        $"type must be \"{StockDocumentTypeNames.Receipt}\", \"{StockDocumentTypeNames.Issue}\", \"{StockDocumentTypeNames.Transfer}\" or \"{StockDocumentTypeNames.Count}\".";
 
     private const string StatusMessage =
         $"status must be \"{StockDocumentStatusNames.Draft}\", \"{StockDocumentStatusNames.Posted}\" or \"{StockDocumentStatusNames.Reversed}\".";
@@ -30,7 +30,8 @@ public static class StockDocumentValidation
         var errors = new ValidationErrors();
         if (!StockDocumentTypeNames.TryParse(input.Type, out var type))
             errors.Add("type", string.IsNullOrEmpty(input.Type) ? "type is required. " + TypeMessage : TypeMessage);
-        var values = Values(errors, input.DocumentDate, input.WarehouseId, input.ToWarehouseId, input.Reference, input.Note, input.Lines);
+        // An unknown type is judged like a receipt: a quantity greater than 0, repeats allowed.
+        var values = Values(errors, type, input.DocumentDate, input.WarehouseId, input.ToWarehouseId, input.Reference, input.Note, input.Lines);
         // Only for a known type can the destination be judged (spec 006, R2, R3).
         if (!errors.Has("type") && !errors.Has(ToWarehouseField)
             && DestinationMessage(type, values.WarehouseId, values.ToWarehouseId) is { } message)
@@ -51,11 +52,67 @@ public static class StockDocumentValidation
                 errors.Add(field, $"{field} is required (it may be null).");
             }
         }
-        var values = Values(errors, input.DocumentDate, input.WarehouseId, input.ToWarehouseId, input.Reference, input.Note, input.Lines);
+        // The body has no type, so what depends on it (spec 008, R3, R4) waits for the stored document: OfType.
+        var values = Values(errors, type: null, input.DocumentDate, input.WarehouseId, input.ToWarehouseId, input.Reference, input.Note, input.Lines);
         if (errors.Any)
             return errors.ToError();
         return values;
     }
+
+    /// <summary>
+    /// The rules of form that depend on the type, for a replace, whose body has none (spec 006, R4; spec 008,
+    /// R3, R4, E10): null when the validated values suit a document of <paramref name="type"/>, otherwise
+    /// <c>VALIDATION_FAILED</c> with every such key together - <c>toWarehouseId</c>, <c>lines[i].quantity</c>
+    /// for a zero on a document that is not a count, <c>lines[i].articleId</c> for a repeated article on a count.
+    /// </summary>
+    public static AppError? OfType(StockDocumentType type, StockDocumentValues values)
+    {
+        var errors = new ValidationErrors();
+        if (DestinationMessage(type, values.WarehouseId, values.ToWarehouseId) is { } message)
+            errors.Add(ToWarehouseField, message);
+        for (var i = 0; i < values.Lines.Count; i++)
+        {
+            if (!QuantityRules.IsValidOn(type, values.Lines[i].Quantity))
+                errors.Add(LineKey(i, "quantity"), QuantityMessage(type));
+        }
+        Repeats(errors, type, values.Lines.Select(l => (Guid?)l.ArticleId).ToList());
+        return errors.Any ? errors.ToError() : null;
+    }
+
+    /// <summary>
+    /// A replace that addresses no document (spec 005, R8: validation precedes the existence check): a quantity
+    /// of 0 is acceptable on a count only, and there is no count here - so it is <c>VALIDATION_FAILED</c> with
+    /// key <c>lines[i].quantity</c>, as it was before counts existed. Null when no line has a zero; the caller
+    /// then answers "not found".
+    /// </summary>
+    public static AppError? WithoutDocument(StockDocumentValues values)
+    {
+        var errors = new ValidationErrors();
+        for (var i = 0; i < values.Lines.Count; i++)
+        {
+            if (!QuantityRules.IsValid(values.Lines[i].Quantity))
+                errors.Add(LineKey(i, "quantity"), QuantityMessage(type: null));
+        }
+        return errors.Any ? errors.ToError() : null;
+    }
+
+    // Spec 008, R3: each article at most once on a count, whatever the unit; every line of a repeated article is named.
+    private static void Repeats(ValidationErrors errors, StockDocumentType type, IReadOnlyList<Guid?> articleIds)
+    {
+        if (type != StockDocumentType.Count)
+            return;
+        foreach (var i in CountRules.RepeatedLines(articleIds))
+            errors.Add(LineKey(i, "articleId"),
+                "A count names each article at most once: this article is on more than one line. Add the quantities up, in one unit, on a single line.");
+    }
+
+    private static string QuantityMessage(StockDocumentType? type) =>
+        (type == StockDocumentType.Count
+            ? "quantity is what was counted: 0 or greater (0 means none found)"
+            : type is null
+                ? "quantity must be 0 or greater (0 only on a count)"
+                : "quantity must be greater than 0")
+        + $", at most {QuantityRules.Max.ToString(CultureInfo.InvariantCulture)}, with at most {QuantityRules.DecimalPlaces} decimal places.";
 
     /// <summary>
     /// The destination rule (spec 006, R2, R3) for a document of a known type: null when
@@ -70,7 +127,7 @@ public static class StockDocumentValidation
         if (TransferRules.IsValidDestination(type, warehouseId, toWarehouseId))
             return null;
         if (type != StockDocumentType.Transfer)
-            return $"toWarehouseId is only for a transfer; for a {type.ToName()} leave it out or pass null.";
+            return $"toWarehouseId is only for a transfer; for {(type == StockDocumentType.Issue ? "an" : "a")} {type.ToName()} leave it out or pass null.";
         return toWarehouseId is null
             ? "toWarehouseId is required for a transfer: the id of the warehouse the goods go to."
             : "toWarehouseId must differ from warehouseId: a transfer moves goods to another warehouse.";
@@ -111,8 +168,9 @@ public static class StockDocumentValidation
         return normalized;
     }
 
+    /// <param name="type">The type of the document; null when the request does not say (a replace): then a quantity of 0 passes here and <see cref="OfType"/> decides.</param>
     private static StockDocumentValues Values(
-        ValidationErrors errors, string? documentDate, string? warehouseId, string? toWarehouseId, string? reference, string? note,
+        ValidationErrors errors, StockDocumentType? type, string? documentDate, string? warehouseId, string? toWarehouseId, string? reference, string? note,
         IReadOnlyList<StockLineInput?>? lines)
     {
         var date = Date(errors, documentDate);
@@ -130,6 +188,7 @@ public static class StockDocumentValidation
         var normalizedNote = Note(errors, note);
 
         var lineValues = new List<StockLineRequest>();
+        var articleIds = new List<Guid?>();
         if (lines is null || lines.Count == 0)
             errors.Add("lines", $"lines is required: an array of 1 to {StockDocument.MaxLines} lines.");
         else if (lines.Count > StockDocument.MaxLines)
@@ -141,9 +200,11 @@ public static class StockDocumentValidation
                 if (lines[i] is not { } line)
                 {
                     errors.Add($"lines[{i}]", "A line must be an object with articleId and quantity.");
+                    articleIds.Add(null);
                     continue;
                 }
                 var article = RequiredId(errors, line.ArticleId, LineKey(i, "articleId"), "an article", "articleId");
+                articleIds.Add(errors.Has(LineKey(i, "articleId")) ? null : article);
                 // Spec 007, R12: optional; omitted or null is the article's base unit.
                 Guid? unit = null;
                 if (line.UnitId is not null)
@@ -154,12 +215,13 @@ public static class StockDocumentValidation
                 }
                 if (line.Quantity is not { } quantity)
                     errors.Add(LineKey(i, "quantity"), "quantity is required.");
-                else if (!QuantityRules.IsValid(quantity))
-                    errors.Add(LineKey(i, "quantity"),
-                        $"quantity must be greater than 0, at most {QuantityRules.Max.ToString(CultureInfo.InvariantCulture)}, with at most {QuantityRules.DecimalPlaces} decimal places.");
+                else if (!QuantityRules.IsValidOn(type ?? StockDocumentType.Count, quantity))
+                    errors.Add(LineKey(i, "quantity"), QuantityMessage(type));
                 else
                     lineValues.Add(new StockLineRequest(article, quantity, unit));
             }
+            if (type is { } known)
+                Repeats(errors, known, articleIds);
         }
         return new StockDocumentValues(date, warehouse, toWarehouse, normalizedReference, normalizedNote, lineValues);
     }

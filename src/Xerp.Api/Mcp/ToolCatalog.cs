@@ -115,20 +115,21 @@ public static class ToolCatalog
     private static (string, System.Text.Json.Nodes.JsonObject)[] StockDocumentFields(bool update) =>
     [
         ("documentDate", Text("The business date of the document as YYYY-MM-DD, for example 2026-10-09. Any date, past or future; it does not affect the stock check.")),
-        ("warehouseId", Uuid("The `id` of the warehouse the goods come into (receipt) or leave (issue); for a transfer the source, which the goods leave. See `warehouse_list`. Not the code.")),
+        ("warehouseId", Uuid("The `id` of the warehouse the goods come into (receipt) or leave (issue); for a transfer the source, which the goods leave; for a count the warehouse that was counted. See `warehouse_list`. Not the code.")),
         ("toWarehouseId", NullableUuid("Only for a transfer, where it is required: the `id` of the destination warehouse the goods arrive in. "
-            + "It must differ from `warehouseId`, which is the source. For a receipt or an issue leave it out or pass null.")),
+            + "It must differ from `warehouseId`, which is the source. For a receipt, an issue or a count leave it out or pass null.")),
         ("reference", NullableText("Your own reference, for example a delivery-note number; one line, at most 100 characters."
             + (update ? " Required: pass null for no value." : " Optional."))),
         ("note", NullableText("Free text, may have several lines, at most 2000 characters." + (update ? " Required: pass null for no value." : " Optional."))),
         ("lines", ArrayOf(
             "The lines, 1 to 200; they are numbered 1…n in the order given" + (update ? " and replace all stored lines." : ".")
-            + " The same article may appear on several lines, also in different units."
+            + " The same article may appear on several lines, also in different units - except on a count, where each article appears at most once."
             + " Stock is always kept in the article's base unit: a line in another unit is converted with the article's factor for that unit,"
             + " and the document shows both what was entered (`unit`, `quantity`) and what it is in base units (`factor`, `baseUnit`, `baseQuantity`).",
             1, 200, ["unitId"],
             ("articleId", Uuid("The `id` of a stock article (see `article_list`). Not the code.")),
-            ("quantity", Number("Quantity in the line's unit (`unitId`; the article's base unit when that is left out), as a JSON number (not a string): greater than 0, at most 999999999.999999, at most 6 decimal places.")),
+            ("quantity", Number("Quantity in the line's unit (`unitId`; the article's base unit when that is left out), as a JSON number (not a string): greater than 0, at most 999999999.999999, at most 6 decimal places. "
+                + "On a count it is the counted quantity and 0 is allowed: none found.")),
             ("unitId", NullableUuid("The `id` of the unit of measure the quantity is in: the article's base unit or one of its alternative units (see `article_unit_list`). "
                 + "Optional; left out or null it defaults to the article's base unit. Not the unit's code.")))),
     ];
@@ -351,12 +352,12 @@ public static class ToolCatalog
 
         // ---- stock documents, stock on hand, stock ledger
         XerpTool.For<ListStockDocumentsInput, PagedResult<StockDocumentSummaryDto>>("stock_document_list", ToolKind.Read,
-            "Lists the tenant's stock documents (receipts, issues and transfers), newest first, with paging; each item has `lineCount` instead of the lines. "
+            "Lists the tenant's stock documents (receipts, issues, transfers and counts), newest first, with paging; each item has `lineCount` instead of the lines. "
             + "A reversed document has status `reversed` and `reversedBy`; the document that reversed it has status `posted` and `reversalOf`. "
             + "Filters combine with AND. " + Validation,
             Input([],
             [
-                ("type", Text("Return only documents of this type.", "receipt", "issue", "transfer")),
+                ("type", Text("Return only documents of this type.", "receipt", "issue", "transfer", "count")),
                 ("status", Text("Return only documents in this status. `posted` includes reversing documents; `reversed` are the originals that were reversed.", "draft", "posted", "reversed")),
                 ("warehouseId", Uuid("Return only documents of the warehouse with this `id`: as the warehouse of the document or as the destination of a transfer.")),
                 Search("the document number or the reference"),
@@ -377,12 +378,16 @@ public static class ToolCatalog
         XerpTool.For<CreateStockDocumentInput, StockDocumentDto>("stock_document_create", ToolKind.Create,
             "Creates a stock document as a draft and returns it with its `id`. A `receipt` brings goods into the warehouse, an `issue` takes them out, "
             + "a `transfer` moves them from `warehouseId` (source) to `toWarehouseId` (destination) in one posting. "
+            + "A `count` makes stock equal to what was counted in `warehouseId`: a line's `quantity` is what was counted of the article, in the line's unit, and `0` means none found; "
+            + "each article appears once; articles not listed are not changed. The draft shows per line `bookQuantity` (stock on hand when the draft was saved) and "
+            + "`differenceQuantity` (counted minus book, in base units), and posting writes exactly that difference. Use a count for opening balances (a count on empty stock) "
+            + "and when you know what is there but not the difference; for a known difference use a receipt or an issue. "
             + "A line's `unitId` defaults to the article's base unit; stock is always kept in base units. "
             + "A draft changes no stock and reserves nothing; it takes effect only when posted with `stock_document_post`. "
             + Validation + " " + StockReferences,
             Input(["type", "documentDate", "warehouseId", "lines"],
             [
-                ("type", Text("`receipt`: goods come into the warehouse. `issue`: goods leave it. `transfer`: goods move from `warehouseId` to `toWarehouseId`. Cannot be changed later.", "receipt", "issue", "transfer")),
+                ("type", Text("`receipt`: goods come into the warehouse. `issue`: goods leave it. `transfer`: goods move from `warehouseId` to `toWarehouseId`. `count`: stock in `warehouseId` is set to the counted quantities. Cannot be changed later.", "receipt", "issue", "transfer", "count")),
                 .. StockDocumentFields(update: false),
             ]),
             (services, input, ct) => services.GetRequiredService<StockDocumentOperations>().CreateAsync(input, ct)),
@@ -390,7 +395,7 @@ public static class ToolCatalog
         XerpTool.WithId<ReplaceStockDocumentInput, StockDocumentDto>("stock_document_update", ToolKind.Update,
             "Replaces the date, warehouse, reference, note and all lines of a draft; every argument is required (`reference` and `note` may be null), "
             + "except `toWarehouseId`, which is required for a transfer only (the destination; `warehouseId` is the source). "
-            + "The type cannot change. A line's `unitId` defaults to the article's base unit; stock is always kept in base units. "
+            + "The type cannot change. Saving a count takes the current stock on hand as `bookQuantity` of every line anew. A line's `unitId` defaults to the article's base unit; stock is always kept in base units. "
             + Validation + " `NOT_FOUND`: no such document in this tenant. " + DocumentPosted + " " + StockReferences,
             Input(["id", "documentDate", "warehouseId", "reference", "note", "lines"],
                 [IdOf("draft stock document to replace"), .. StockDocumentFields(update: true)]),
@@ -402,21 +407,25 @@ public static class ToolCatalog
             (services, input, ct) => services.GetRequiredService<StockDocumentOperations>().DeleteAsync(input.Id, ct)),
 
         XerpTool.For<RecordIdInput, StockDocumentDto>("stock_document_post", ToolKind.Post,
-            "Posts a draft stock document. Posting is permanent: the document gets its number (`SR-…` receipt, `SI-…` issue, `ST-…` transfer), can no longer be changed or deleted, "
+            "Posts a draft stock document. Posting is permanent: the document gets its number (`SR-…` receipt, `SI-…` issue, `ST-…` transfer, `SC-…` count), can no longer be changed or deleted, "
             + "and stock on hand changes through ledger entries - a receipt adds its quantities to the warehouse, an issue subtracts them, "
-            + "a transfer subtracts them from the source and adds them to the destination together, so total stock does not change. "
+            + "a transfer subtracts them from the source and adds them to the destination together, so total stock does not change, "
+            + "a count writes the `differenceQuantity` of every line (nothing for a line without a difference), so stock of every counted article equals what was counted. "
             + "It either does all of this or nothing. `NOT_FOUND`: no such document in this tenant. " + DocumentPosted + " "
             + "`REFERENCE_INACTIVE`: a warehouse or an article of the document is inactive (`errors` says which); reactivate it or change the draft. "
             + "Lines in another unit are converted to the article's base unit with the factor as it is at this moment; the posted line keeps that `factor` and `baseQuantity` for good. "
             + "`QUANTITY_NOT_CONVERTIBLE`: with the current factor a line converts to zero or to more than 999999999.999999 (`errors` names `lines[i].quantity`); correct the draft or the factor. "
             + "`INSUFFICIENT_STOCK`: an issue or a transfer would take more than is on hand in its (source) warehouse, counted in base units; `errors` names the short lines (`lines[0].quantity`). "
             + "Nothing was posted and the draft is unchanged: check `stock_on_hand_list`, then correct the draft with `stock_document_update` "
-            + "or receive stock first, and post again.",
+            + "or receive stock first, and post again. A count never returns it. "
+            + "`COUNT_OUTDATED`: stock of a counted article changed since the count was saved, so it no longer equals the line's `bookQuantity` (`errors` names those lines, `lines[0].quantity`). "
+            + "Nothing was posted: read the document with `stock_document_get`, check the count, save it again with `stock_document_update` "
+            + "(this takes the current book quantity) and post again.",
             Input(["id"], IdOf("draft stock document to post")),
             (services, input, ct) => services.GetRequiredService<StockDocumentOperations>().PostAsync(input.Id, ct)),
 
         XerpTool.WithId<ReverseStockDocumentInput, StockDocumentDto>("stock_document_reverse", ToolKind.Reverse,
-            "Reverses a posted stock document (receipt, issue or transfer) and returns the new reversing document. This is the only way to correct a posted document. "
+            "Reverses a posted stock document (receipt, issue, transfer or count) and returns the new reversing document. This is the only way to correct a posted document. "
             + "A reversal is permanent and cannot itself be reversed. It cancels the whole document: the reversing document has the same type, warehouses and lines, "
             + "its own number from the same series, and ledger entries with the opposite sign, so stock is as if the original had never been posted; "
             + "the original gets status `reversed`. To correct a mistake, reverse and then create a new document with `stock_document_create`. "
@@ -424,6 +433,7 @@ public static class ToolCatalog
             + Validation + " `documentDate` earlier than the original's is one of them. `NOT_FOUND`: no such document in this tenant. "
             + "`INVALID_STATE`: the document is a draft, is already reversed, or is itself a reversing document. "
             + "`INSUFFICIENT_STOCK`: the goods the original brought in have already left, so the reversal would make stock negative; `errors` names the original's lines (`lines[0].quantity`). "
+            + "For a count this concerns lines that added stock (a surplus); reversing a count undoes its ledger entries and restores neither the counted nor the book quantity. "
             + "Nothing was reversed: reverse the later documents that took the goods out first (see `stock_ledger_entry_list`), then reverse this one again.",
             Input(["id", "documentDate"],
             [

@@ -18,6 +18,7 @@ public static class ErrorCodes
     public const string UnitIsBaseUnit = "UNIT_IS_BASE_UNIT";
     public const string UnitNotOnArticle = "UNIT_NOT_ON_ARTICLE";
     public const string QuantityNotConvertible = "QUANTITY_NOT_CONVERTIBLE";
+    public const string CountOutdated = "COUNT_OUTDATED";
     public const string InternalError = "INTERNAL_ERROR";
 }
 

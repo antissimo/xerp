@@ -33,4 +33,18 @@ public static class UnitConversion
         baseQuantity = ToBase(quantity, factor);
         return baseQuantity > 0 && baseQuantity <= QuantityRules.Max;
     }
+
+    /// <summary>
+    /// The same for the line of a document of the given type (spec 008, R5): on a count a counted quantity of
+    /// zero converts to zero and is acceptable; a counted quantity greater than zero obeys R15 like any other.
+    /// </summary>
+    public static bool TryToBaseOn(StockDocumentType type, decimal quantity, decimal factor, out decimal baseQuantity)
+    {
+        if (type == StockDocumentType.Count && quantity == 0)
+        {
+            baseQuantity = 0;
+            return true;
+        }
+        return TryToBase(quantity, factor, out baseQuantity);
+    }
 }

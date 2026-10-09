@@ -61,8 +61,10 @@ public static class StockLineChecks
     /// </summary>
     /// <param name="articlesOnDocument">The articles the stored draft already has a line for: these may stay although inactive.</param>
     /// <param name="unitsOnDocument">The units the stored draft already has a line in: these may stay although inactive.</param>
+    /// <param name="type">The type of the document: on a count a counted quantity of zero converts (spec 008, R5).</param>
     public static Result<IReadOnlyList<StockLineEntry>> References(
-        IReadOnlyList<StockLineRequest> lines, StockLineFacts facts, IReadOnlySet<Guid> articlesOnDocument, IReadOnlySet<Guid> unitsOnDocument)
+        IReadOnlyList<StockLineRequest> lines, StockLineFacts facts, IReadOnlySet<Guid> articlesOnDocument, IReadOnlySet<Guid> unitsOnDocument,
+        StockDocumentType type = StockDocumentType.Receipt)
     {
         var articles = facts.Articles;
 
@@ -113,7 +115,7 @@ public static class StockLineChecks
         var entries = lines
             .Select(l => new StockLineEntry(l.ArticleId, l.UnitId ?? articles[l.ArticleId].BaseUnitId, l.Quantity))
             .ToList();
-        var converted = Convert(entries, facts);
+        var converted = Convert(entries, facts, type);
         if (!converted.IsSuccess)
             return converted.Error;
         return entries;
@@ -122,10 +124,12 @@ public static class StockLineChecks
     /// <summary>
     /// Converts every line with the factors of this moment (spec 007, R14, R15, R17): the factor and the base
     /// quantity per line, in line order, or QUANTITY_NOT_CONVERTIBLE with the quantity key of every line whose
-    /// base quantity would be zero or above the maximum.
+    /// base quantity would be zero or above the maximum. On a count a counted quantity of zero converts to zero
+    /// (spec 008, R5); a counted quantity greater than zero obeys the same rule as any other line.
     /// </summary>
     /// <exception cref="InvalidOperationException">A line is in a unit that is not a unit of its article; saving never allows that.</exception>
-    public static Result<IReadOnlyList<ConvertedLine>> Convert(IReadOnlyList<StockLineEntry> lines, StockLineFacts facts)
+    public static Result<IReadOnlyList<ConvertedLine>> Convert(
+        IReadOnlyList<StockLineEntry> lines, StockLineFacts facts, StockDocumentType type = StockDocumentType.Receipt)
     {
         var converted = new List<ConvertedLine>(lines.Count);
         var notConvertible = new LineErrors();
@@ -134,7 +138,7 @@ public static class StockLineChecks
             var line = lines[i];
             var factor = facts.Factor(line.ArticleId, line.UnitId)
                 ?? throw new InvalidOperationException($"Line {i + 1} is in a unit that is not a unit of its article.");
-            if (!UnitConversion.TryToBase(line.Quantity, factor, out var baseQuantity))
+            if (!UnitConversion.TryToBaseOn(type, line.Quantity, factor, out var baseQuantity))
                 notConvertible.Add(i, QuantityField,
                     $"{Text(line.Quantity)} × factor {Text(factor)} is {Text(baseQuantity)} in the article's base unit; "
                     + $"a line must convert to more than 0 and at most {Text(QuantityRules.Max)}.");
@@ -196,6 +200,29 @@ public static class StockLineChecks
         return new AppError(ErrorCodes.InsufficientStock,
             "Stock on hand does not cover the document; nothing was posted and the draft is unchanged. "
             + "Check stock on hand, then lower the quantities or receive stock first, and post again.",
+            errors);
+    }
+
+    /// <summary>
+    /// A count is posted against the book quantity it shows (spec 008, R10): null when stock on hand of every
+    /// line's article in the count's warehouse still equals the line's book quantity, otherwise COUNT_OUTDATED
+    /// with the quantity key of every line for which it does not. Only the quantity is compared.
+    /// </summary>
+    /// <param name="bookQuantities">Per line, in line order, the article and the book quantity recorded when the draft was saved.</param>
+    /// <param name="onHand">Stock on hand per article in the count's warehouse, as it is now; a missing article has none.</param>
+    public static AppError? Current(IReadOnlyList<StockLineValues> bookQuantities, IReadOnlyDictionary<Guid, decimal> onHand)
+    {
+        var outdated = CountRules.OutdatedLines(bookQuantities, onHand);
+        if (outdated.Count == 0)
+            return null;
+        var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        foreach (var index in outdated)
+            errors[StockDocumentValidation.LineKey(index, QuantityField)] =
+                [$"The count was saved against a book quantity of {Text(bookQuantities[index].Quantity)}; stock on hand of this article in the warehouse is now {Text(onHand.GetValueOrDefault(bookQuantities[index].ArticleId))}, in its base unit."];
+        return new AppError(ErrorCodes.CountOutdated,
+            "Stock changed since the count was saved, so the difference it shows is no longer the difference to stock. Nothing was posted "
+            + "and the count is still a draft. Read the document, check the counted quantities, save it again (that takes the current "
+            + "book quantity) and post again.",
             errors);
     }
 

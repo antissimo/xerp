@@ -7,10 +7,12 @@ namespace Xerp.Application.Stock;
 /// A line with the current code and name of its article and units (R23; spec 007, 4.3). <c>Unit</c> and
 /// <c>Quantity</c> are what was entered; <c>Factor</c>, <c>BaseUnit</c> and <c>BaseQuantity</c> say what that is in
 /// the article's base unit - with the article's current factor on a draft, as posted on a posted document.
+/// <c>BookQuantity</c> and <c>DifferenceQuantity</c> are null unless the document is a count (spec 008, section 4):
+/// the stock the count was saved against and the base quantity minus it, both in the base unit.
 /// </summary>
 public sealed record StockDocumentLineDto(
     int LineNo, ReferenceSummary Article, ReferenceSummary Unit, decimal Quantity,
-    decimal Factor, ReferenceSummary BaseUnit, decimal BaseQuantity);
+    decimal Factor, ReferenceSummary BaseUnit, decimal BaseQuantity, decimal? BookQuantity, decimal? DifferenceQuantity);
 
 /// <summary>Another stock document, as a document links to it: the reversed original or the reversing document.</summary>
 public sealed record StockDocumentLinkDto(Guid Id, string Number);
