@@ -25,13 +25,18 @@ public static class Problems
         ErrorCodes.Unauthenticated => StatusCodes.Status401Unauthorized,
         ErrorCodes.Forbidden => StatusCodes.Status403Forbidden,
         ErrorCodes.NotFound => StatusCodes.Status404NotFound,
-        ErrorCodes.CodeTaken or ErrorCodes.InUse or ErrorCodes.InvalidState
+        ErrorCodes.CodeTaken or ErrorCodes.InUse or ErrorCodes.InvalidState or ErrorCodes.CannotRevokeSelf
             or ErrorCodes.ReferenceNotFound or ErrorCodes.ReferenceInactive => StatusCodes.Status409Conflict,
         _ => StatusCodes.Status500InternalServerError,
     };
 
-    public static IResult From(AppError error) =>
-        Results.Json(ToBody(error), statusCode: StatusOf(error.Code), contentType: ContentType);
+    public static IResult From(AppError error) => new ProblemResult(error);
+
+    /// <summary>An endpoint result that writes exactly what <see cref="WriteAsync"/> writes, challenge header included.</summary>
+    private sealed class ProblemResult(AppError error) : IResult
+    {
+        public Task ExecuteAsync(HttpContext httpContext) => WriteAsync(httpContext, error);
+    }
 
     /// <summary>Writes the problem directly; for middleware, where there is no endpoint result.</summary>
     public static Task WriteAsync(HttpContext context, AppError error)

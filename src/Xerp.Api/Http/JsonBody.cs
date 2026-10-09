@@ -29,18 +29,36 @@ public static partial class JsonBody
     {
         try
         {
-            var value = await JsonSerializer.DeserializeAsync<T>(request.Body, Options, cancellationToken);
-            return value is null
-                ? AppError.Validation(WholeBody, "The request body must be a JSON object.")
-                : value;
+            return Bound(await JsonSerializer.DeserializeAsync<T>(request.Body, Options, cancellationToken));
         }
         catch (JsonException ex)
         {
-            // The exception text is not passed on: it can echo input and is not a stable contract.
-            var match = TopLevelProperty().Match(ex.Path ?? "");
-            return match.Success
-                ? AppError.Validation(match.Groups[1].Value, "Unknown property, or a value of the wrong JSON type.")
-                : AppError.Validation(WholeBody, "The request body must be a JSON object with the documented properties only.");
+            return Rejected(ex);
         }
+    }
+
+    /// <summary>The same strict binding for a JSON object that is already in memory (MCP tool arguments).</summary>
+    public static Result<T> Read<T>(ReadOnlySpan<byte> utf8Json) where T : class
+    {
+        try
+        {
+            return Bound(JsonSerializer.Deserialize<T>(utf8Json, Options));
+        }
+        catch (JsonException ex)
+        {
+            return Rejected(ex);
+        }
+    }
+
+    private static Result<T> Bound<T>(T? value) where T : class =>
+        value is null ? AppError.Validation(WholeBody, "The request body must be a JSON object.") : value;
+
+    private static AppError Rejected(JsonException ex)
+    {
+        // The exception text is not passed on: it can echo input and is not a stable contract.
+        var match = TopLevelProperty().Match(ex.Path ?? "");
+        return match.Success
+            ? AppError.Validation(match.Groups[1].Value, "Unknown property, or a value of the wrong JSON type.")
+            : AppError.Validation(WholeBody, "The request body must be a JSON object with the documented properties only.");
     }
 }

@@ -5,7 +5,7 @@ using System.Text.Json;
 namespace Xerp.IntegrationTests.Support;
 
 /// <summary>Shortcuts for the article endpoints (spec 002).</summary>
-public static class Art
+public static class ArticleApi
 {
     public const string Path = "/api/v1/articles";
 

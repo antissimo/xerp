@@ -17,6 +17,7 @@ public static class DependencyInjection
         services.AddDbContext<XerpDbContext>((provider, options) => options.UseNpgsql(connectionString(provider)));
         services.AddScoped<IXerpDb>(provider => provider.GetRequiredService<XerpDbContext>());
         services.AddScoped<IApiKeyLookup, ApiKeyLookup>();
+        services.AddScoped<ICurrentTenantReader, CurrentTenantReader>();
         services.AddScoped<ITenantProvisioningStore, TenantProvisioningStore>();
         services.AddSingleton<ApiKeyCrypto>();
         services.AddSingleton<IApiKeyGenerator>(provider => provider.GetRequiredService<ApiKeyCrypto>());

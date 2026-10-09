@@ -22,16 +22,16 @@ public class ArticleTests(XerpFixture app)
     public async Task AC10_Article_routes_without_a_valid_key_are_unauthenticated()
     {
         var id = Guid.CreateVersion7();
-        var body = Art.Body("A1", "Bolt", Guid.CreateVersion7());
+        var body = ArticleApi.Body("A1", "Bolt", Guid.CreateVersion7());
 
         foreach (var client in new[] { app.Anonymous(), app.WithBearer(XerpFixture.NewKeyString()) })
         {
-            using var list = await client.GetAsync(Art.Path);
-            using var get = await client.GetAsync($"{Art.Path}/{id}");
-            using var byCode = await client.GetAsync($"{Art.Path}/by-code/A1");
-            using var post = await client.PostAsJsonAsync(Art.Path, body);
-            using var put = await client.PutAsJsonAsync($"{Art.Path}/{id}", body);
-            using var delete = await client.DeleteAsync($"{Art.Path}/{id}");
+            using var list = await client.GetAsync(ArticleApi.Path);
+            using var get = await client.GetAsync($"{ArticleApi.Path}/{id}");
+            using var byCode = await client.GetAsync($"{ArticleApi.Path}/by-code/A1");
+            using var post = await client.PostAsJsonAsync(ArticleApi.Path, body);
+            using var put = await client.PutAsJsonAsync($"{ArticleApi.Path}/{id}", body);
+            using var delete = await client.DeleteAsync($"{ArticleApi.Path}/{id}");
 
             await HttpAssert.UnauthenticatedAsync(list);
             await HttpAssert.UnauthenticatedAsync(get);
@@ -45,8 +45,8 @@ public class ArticleTests(XerpFixture app)
     [Fact]
     public async Task AC11_Admin_key_on_article_routes_is_forbidden()
     {
-        using var list = await app.Admin().GetAsync(Art.Path);
-        using var post = await app.Admin().PostAsJsonAsync(Art.Path, Art.Body("A1", "Bolt", Guid.CreateVersion7()));
+        using var list = await app.Admin().GetAsync(ArticleApi.Path);
+        using var post = await app.Admin().PostAsJsonAsync(ArticleApi.Path, ArticleApi.Body("A1", "Bolt", Guid.CreateVersion7()));
 
         await HttpAssert.ForbiddenAsync(list);
         await HttpAssert.ForbiddenAsync(post);
@@ -56,9 +56,9 @@ public class ArticleTests(XerpFixture app)
     public async Task AC20_Create_returns_201_with_location_and_full_representation()
     {
         var tenant = await app.NewTenantAsync();
-        var unit = await Art.UnitAsync(tenant.Client, "pcs", "Piece");
+        var unit = await ArticleApi.UnitAsync(tenant.Client, "pcs", "Piece");
 
-        using var response = await Art.PostAsync(tenant.Client, "ART-001", "Steel bolt M8", unit);
+        using var response = await ArticleApi.PostAsync(tenant.Client, "ART-001", "Steel bolt M8", unit);
 
         var article = await HttpAssert.JsonAsync(response, HttpStatusCode.Created);
         Assert.Equal(7, article.Id().Version);
@@ -83,12 +83,12 @@ public class ArticleTests(XerpFixture app)
     public async Task AC21_Get_by_id_and_by_code_in_any_case_return_the_same_article()
     {
         var tenant = await app.NewTenantAsync();
-        var created = await Art.CreateAsync(tenant.Client, "ART-001", "Steel bolt M8", await Art.UnitAsync(tenant.Client));
+        var created = await ArticleApi.CreateAsync(tenant.Client, "ART-001", "Steel bolt M8", await ArticleApi.UnitAsync(tenant.Client));
 
-        var byId = await Art.GetAsync(tenant.Client, created.Id());
-        using var exactResponse = await tenant.Client.GetAsync($"{Art.Path}/by-code/ART-001");
+        var byId = await ArticleApi.GetAsync(tenant.Client, created.Id());
+        using var exactResponse = await tenant.Client.GetAsync($"{ArticleApi.Path}/by-code/ART-001");
         var exact = await HttpAssert.JsonAsync(exactResponse, HttpStatusCode.OK);
-        using var lowerResponse = await tenant.Client.GetAsync($"{Art.Path}/by-code/art-001");
+        using var lowerResponse = await tenant.Client.GetAsync($"{ArticleApi.Path}/by-code/art-001");
         var lower = await HttpAssert.JsonAsync(lowerResponse, HttpStatusCode.OK);
 
         Assert.Equal(created.ToString(), byId.ToString());
@@ -101,14 +101,14 @@ public class ArticleTests(XerpFixture app)
     public async Task AC22_Code_name_and_description_are_trimmed_and_line_breaks_kept()
     {
         var tenant = await app.NewTenantAsync();
-        var unit = await Art.UnitAsync(tenant.Client);
+        var unit = await ArticleApi.UnitAsync(tenant.Client);
 
-        var article = await Art.CreateAsync(tenant.Client, "  A1  ", "  Bolt  ", unit, description: "  line1\nline2  ");
+        var article = await ArticleApi.CreateAsync(tenant.Client, "  A1  ", "  Bolt  ", unit, description: "  line1\nline2  ");
 
         Assert.Equal("A1", article.Str("code"));
         Assert.Equal("Bolt", article.Str("name"));
         Assert.Equal("line1\nline2", article.Str("description"));
-        Assert.Equal(article.ToString(), (await Art.GetAsync(tenant.Client, article.Id())).ToString());
+        Assert.Equal(article.ToString(), (await ArticleApi.GetAsync(tenant.Client, article.Id())).ToString());
     }
 
     [Theory]
@@ -118,42 +118,42 @@ public class ArticleTests(XerpFixture app)
     public async Task AC23_Empty_blank_or_null_description_is_stored_as_null(string descriptionJson)
     {
         var tenant = await app.NewTenantAsync();
-        var unit = await Art.UnitAsync(tenant.Client);
+        var unit = await ArticleApi.UnitAsync(tenant.Client);
         var json = Fill("""{ "code": "A1", "name": "Bolt", "type": "stock", "baseUnitId": "{U}", "description": {D} }""", unit)
             .Replace("{D}", descriptionJson);
 
-        using var response = await tenant.Client.PostAsync(Art.Path, HttpAssert.Raw(json));
+        using var response = await tenant.Client.PostAsync(ArticleApi.Path, HttpAssert.Raw(json));
 
         var article = await HttpAssert.JsonAsync(response, HttpStatusCode.Created);
         Assert.Equal(JsonValueKind.Null, article.GetProperty("description").ValueKind);
-        Assert.Equal(JsonValueKind.Null, (await Art.GetAsync(tenant.Client, article.Id())).GetProperty("description").ValueKind);
+        Assert.Equal(JsonValueKind.Null, (await ArticleApi.GetAsync(tenant.Client, article.Id())).GetProperty("description").ValueKind);
     }
 
     [Fact]
     public async Task AC24_Create_inactive_service()
     {
         var tenant = await app.NewTenantAsync();
-        var unit = await Art.UnitAsync(tenant.Client, "h", "Hour");
+        var unit = await ArticleApi.UnitAsync(tenant.Client, "h", "Hour");
 
-        var article = await Art.CreateAsync(tenant.Client, "SRV-1", "Consulting", unit, type: "service", isActive: false);
+        var article = await ArticleApi.CreateAsync(tenant.Client, "SRV-1", "Consulting", unit, type: "service", isActive: false);
 
         Assert.Equal("service", article.Str("type"));
         Assert.False(article.GetProperty("isActive").GetBoolean());
         Assert.Equal(unit, article.BaseUnitId());
         Assert.Equal("h", article.GetProperty("baseUnit").Str("code"));
-        Assert.Equal(article.ToString(), (await Art.GetAsync(tenant.Client, article.Id())).ToString());
+        Assert.Equal(article.ToString(), (await ArticleApi.GetAsync(tenant.Client, article.Id())).ToString());
     }
 
     [Fact]
     public async Task AC25_Length_limits_are_inclusive()
     {
         var tenant = await app.NewTenantAsync();
-        var unit = await Art.UnitAsync(tenant.Client);
+        var unit = await ArticleApi.UnitAsync(tenant.Client);
 
-        var max = await Art.CreateAsync(tenant.Client, new string('c', 50), new string('n', 200), unit, description: new string('d', 2000));
-        using var longCode = await Art.PostAsync(tenant.Client, new string('x', 51), "Name", unit);
-        using var longName = await Art.PostAsync(tenant.Client, "ok", new string('n', 201), unit);
-        using var longDescription = await Art.PostAsync(tenant.Client, "ok", "Name", unit, description: new string('d', 2001));
+        var max = await ArticleApi.CreateAsync(tenant.Client, new string('c', 50), new string('n', 200), unit, description: new string('d', 2000));
+        using var longCode = await ArticleApi.PostAsync(tenant.Client, new string('x', 51), "Name", unit);
+        using var longName = await ArticleApi.PostAsync(tenant.Client, "ok", new string('n', 201), unit);
+        using var longDescription = await ArticleApi.PostAsync(tenant.Client, "ok", "Name", unit, description: new string('d', 2001));
 
         Assert.Equal(50, max.Str("code").Length);
         Assert.Equal(200, max.Str("name").Length);
@@ -161,7 +161,7 @@ public class ArticleTests(XerpFixture app)
         await HttpAssert.ValidationAsync(longCode, "code");
         await HttpAssert.ValidationAsync(longName, "name");
         await HttpAssert.ValidationAsync(longDescription, "description");
-        Assert.Equal(1, (await Art.ListAsync(tenant.Client)).Total());
+        Assert.Equal(1, (await ArticleApi.ListAsync(tenant.Client)).Total());
     }
 
     public static TheoryData<string, string[]> InvalidFieldBodies() => new()
@@ -200,12 +200,12 @@ public class ArticleTests(XerpFixture app)
     public async Task AC26_AC27_AC28_AC29_Invalid_fields_are_rejected_with_their_keys(string json, string[] errorKeys)
     {
         var tenant = await app.NewTenantAsync();
-        var unit = await Art.UnitAsync(tenant.Client, "pcs");
+        var unit = await ArticleApi.UnitAsync(tenant.Client, "pcs");
 
-        using var response = await tenant.Client.PostAsync(Art.Path, HttpAssert.Raw(Fill(json, unit, "pcs")));
+        using var response = await tenant.Client.PostAsync(ArticleApi.Path, HttpAssert.Raw(Fill(json, unit, "pcs")));
 
         await HttpAssert.ValidationAsync(response, errorKeys);
-        Assert.Equal(0, (await Art.ListAsync(tenant.Client)).Total());
+        Assert.Equal(0, (await ArticleApi.ListAsync(tenant.Client)).Total());
     }
 
     [Theory]
@@ -226,27 +226,27 @@ public class ArticleTests(XerpFixture app)
     public async Task AC28_AC30_Wrong_json_type_unknown_property_malformed_json_or_empty_body_is_rejected(string json)
     {
         var tenant = await app.NewTenantAsync();
-        var unit = await Art.UnitAsync(tenant.Client);
+        var unit = await ArticleApi.UnitAsync(tenant.Client);
 
-        using var response = await tenant.Client.PostAsync(Art.Path, HttpAssert.Raw(Fill(json, unit)));
+        using var response = await tenant.Client.PostAsync(ArticleApi.Path, HttpAssert.Raw(Fill(json, unit)));
 
         await HttpAssert.ValidationAsync(response);
-        Assert.Equal("""{"items":[],"total":0,"limit":50,"offset":0}""", (await Art.ListAsync(tenant.Client)).GetRawText());
+        Assert.Equal("""{"items":[],"total":0,"limit":50,"offset":0}""", (await ArticleApi.ListAsync(tenant.Client)).GetRawText());
     }
 
     [Fact]
     public async Task AC31_Duplicate_code_in_any_case_is_taken()
     {
         var tenant = await app.NewTenantAsync();
-        var unit = await Art.UnitAsync(tenant.Client);
-        await Art.CreateAsync(tenant.Client, "ART-1", "First", unit);
+        var unit = await ArticleApi.UnitAsync(tenant.Client);
+        await ArticleApi.CreateAsync(tenant.Client, "ART-1", "First", unit);
 
-        using var same = await Art.PostAsync(tenant.Client, "ART-1", "Again", unit);
-        using var lower = await Art.PostAsync(tenant.Client, "art-1", "Lower", unit);
+        using var same = await ArticleApi.PostAsync(tenant.Client, "ART-1", "Again", unit);
+        using var lower = await ArticleApi.PostAsync(tenant.Client, "art-1", "Lower", unit);
 
         await HttpAssert.CodeTakenAsync(same);
         await HttpAssert.CodeTakenAsync(lower);
-        var list = await Art.ListAsync(tenant.Client);
+        var list = await ArticleApi.ListAsync(tenant.Client);
         Assert.Equal(["ART-1"], list.Codes());
         Assert.Equal("First", list.GetProperty("items")[0].Str("name"));
     }
@@ -255,28 +255,28 @@ public class ArticleTests(XerpFixture app)
     public async Task AC32_Ten_parallel_creates_of_one_code_give_one_201_and_nine_409()
     {
         var tenant = await app.NewTenantAsync();
-        var unit = await Art.UnitAsync(tenant.Client);
+        var unit = await ArticleApi.UnitAsync(tenant.Client);
 
         var responses = await Task.WhenAll(Enumerable.Range(0, 10)
-            .Select(i => Art.PostAsync(tenant.Client, i % 2 == 0 ? "race" : "RACE", $"Racer {i}", unit)));
+            .Select(i => ArticleApi.PostAsync(tenant.Client, i % 2 == 0 ? "race" : "RACE", $"Racer {i}", unit)));
 
         Assert.Equal(1, responses.Count(r => r.StatusCode == HttpStatusCode.Created));
         Assert.Equal(9, responses.Count(r => r.StatusCode == HttpStatusCode.Conflict));
         foreach (var conflict in responses.Where(r => r.StatusCode == HttpStatusCode.Conflict))
             await HttpAssert.CodeTakenAsync(conflict);
-        Assert.Equal(1, (await Art.ListAsync(tenant.Client)).Total());
+        Assert.Equal(1, (await ArticleApi.ListAsync(tenant.Client)).Total());
     }
 
     [Fact]
     public async Task AC33_Article_codes_and_unit_codes_are_separate_namespaces()
     {
         var tenant = await app.NewTenantAsync();
-        var unit = await Art.UnitAsync(tenant.Client, "kg", "Kilogram");
+        var unit = await ArticleApi.UnitAsync(tenant.Client, "kg", "Kilogram");
 
-        var article = await Art.CreateAsync(tenant.Client, "kg", "Sold by the kilogram", unit);
+        var article = await ArticleApi.CreateAsync(tenant.Client, "kg", "Sold by the kilogram", unit);
 
         using var unitByCode = await tenant.Client.GetAsync($"{Uom.Path}/by-code/kg");
-        using var articleByCode = await tenant.Client.GetAsync($"{Art.Path}/by-code/kg");
+        using var articleByCode = await tenant.Client.GetAsync($"{ArticleApi.Path}/by-code/kg");
         var foundUnit = await HttpAssert.JsonAsync(unitByCode, HttpStatusCode.OK);
         var foundArticle = await HttpAssert.JsonAsync(articleByCode, HttpStatusCode.OK);
         Assert.Equal(unit, foundUnit.Id());
