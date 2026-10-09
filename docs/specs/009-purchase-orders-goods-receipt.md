@@ -53,7 +53,9 @@ Out of scope
 `PurchaseOrderLine` (tenant-owned): `Id`, `TenantId`, `OrderId`, `LineNo` (1…n), `ArticleId`, `UnitId`,
 `Quantity` numeric(18,6), `UnitPrice` numeric(18,6), `Factor` and `BaseQuantity` (set at confirmation).
 
-`StockDocument` gains `PurchaseOrderId` (nullable); `StockDocumentLine` gains `OrderLineNo` (nullable).
+`StockDocument` gains `PurchaseOrderId` (nullable); `StockDocumentLine` gains `OrderLineNo` (nullable) and, so
+that its reference to the order line can be a foreign key, a `PurchaseOrderId` that repeats its document's
+(null on an unlinked document; in no representation; `009-q.md`, B-Q3).
 `DocumentCounter` gets the type `purchaseOrder`.
 
 Keys: every new foreign key (to `Partner`, `Warehouse`, `Article`, `UnitOfMeasure`, `ApiKey`, from a stock
@@ -377,6 +379,8 @@ Conventions, "the standard setup", "Stock(A, W1)" as in spec 005 §10; unit `box
 - "Received(k)" and "Outstanding(k)" are `receivedBaseQuantity` and `outstandingBaseQuantity` of order line k
   in `GET /purchase-orders/{id}`; "Incoming(A, W1)" is `incomingQuantity` of that pair in
   `GET /stock-on-hand`, or 0 when the pair is absent.
+- A reversal of a receipt in these criteria is dated on or after the receipt (006/R12 holds unchanged: an
+  earlier date is `400` with key `documentDate`, before stock is looked at).
 Unmarked criteria are black-box (tester).
 
 Structure
