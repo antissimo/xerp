@@ -11,6 +11,7 @@ namespace Xerp.IntegrationTests;
 /// Spec 004, AC-90 to AC-93: the list grows to 24 tools; the ten new ones have the same metadata rules.
 /// Spec 005, AC-80: the list grows to 32 tools; the eight stock tools have the same metadata rules.
 /// Spec 006, AC-80: 33 tools. Spec 007, AC-80: 37 tools, a <c>lines</c> item gains <c>unitId</c>.
+/// Spec 008, AC-80: still 37 tools; <c>type</c> allows <c>count</c>.
 /// </summary>
 [Collection(XerpCollection.Name)]
 public class McpToolListTests(XerpFixture app)
@@ -254,6 +255,20 @@ public class McpToolListTests(XerpFixture app)
     }
 
     [Fact]
+    public async Task S008_AC80_The_tool_list_is_unchanged_and_the_descriptions_mention_counts_and_COUNT_OUTDATED()
+    {
+        var tools = await ListToolsAsync();
+
+        // "No new tool; tools/list still returns exactly the 37 tools of spec 007."
+        Assert.Equal(37, Tools.Length);
+        Assert.Equal(Sorted(Tools.Select(t => t.Name)), Sorted(tools.Keys));
+        Assert.DoesNotContain(tools.Keys, name => name.Contains("count", StringComparison.OrdinalIgnoreCase));
+        // The one place where a criterion asks for words in a description (AC-80).
+        Assert.Contains("count", tools["stock_document_create"].Description ?? "", StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("COUNT_OUTDATED", tools["stock_document_post"].Description ?? "", StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task S007_AC80_Article_list_has_a_described_optional_alternativeUnitId()
     {
         var tools = await ListToolsAsync();
@@ -358,10 +373,10 @@ public class McpToolListTests(XerpFixture app)
     [InlineData("article_create", "type", "service,stock")]
     [InlineData("article_list", "type", "service,stock")]
     [InlineData("api_key_list", "actorType", "agent,human")]
-    [InlineData("stock_document_create", "type", "issue,receipt,transfer")]
-    [InlineData("stock_document_list", "type", "issue,receipt,transfer")]
+    [InlineData("stock_document_create", "type", "count,issue,receipt,transfer")]
+    [InlineData("stock_document_list", "type", "count,issue,receipt,transfer")]
     [InlineData("stock_document_list", "status", "draft,posted,reversed")]
-    public async Task AC43_S005_AC80_S006_AC80_Enumerated_arguments_are_enums_in_the_input_schema(string toolName, string property, string values)
+    public async Task AC43_S005_AC80_S006_AC80_S008_AC80_Enumerated_arguments_are_enums_in_the_input_schema(string toolName, string property, string values)
     {
         var tools = await ListToolsAsync();
 

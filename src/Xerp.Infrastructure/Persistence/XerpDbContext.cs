@@ -241,6 +241,9 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
             // Spec 007: set at posting and never afterwards; null on a draft line.
             e.Property(l => l.Factor).HasPrecision(12, UnitConversion.FactorDecimalPlaces);
             e.Property(l => l.BaseQuantity).HasPrecision(18, QuantityRules.DecimalPlaces);
+            // Spec 008: on a count line, stock on hand when the draft was last saved; null on every other type.
+            e.Property(l => l.BookQuantity).HasPrecision(18, QuantityRules.DecimalPlaces);
+            e.Ignore(l => l.DifferenceQuantity);
             e.Ignore(l => l.Entry);
             e.Ignore(l => l.BaseValues);
             e.HasIndex(l => new { l.TenantId, l.DocumentId, l.LineNo }).IsUnique();
