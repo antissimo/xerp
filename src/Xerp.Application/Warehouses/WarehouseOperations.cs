@@ -96,7 +96,7 @@ public sealed class WarehouseOperations(IXerpDb db, ITenantContext context, IClo
         if (warehouse is null)
             return NotFound();
         // A draft counts like a posted document (spec 005, R24, R25).
-        if (await db.StockDocuments.AnyAsync(d => d.WarehouseId == id, cancellationToken))
+        if (await db.StockDocuments.AnyAsync(d => d.WarehouseId == id || d.ToWarehouseId == id, cancellationToken))
             return InUse();
         db.Warehouses.Remove(warehouse);
         try

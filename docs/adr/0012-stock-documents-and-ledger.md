@@ -93,8 +93,8 @@ conflict).
 
 Conditions:
 1. **Every write whose decision depends on shared state runs under the same lock**: create, replace, delete,
-   post and reverse of stock documents (005, 006, 008); the replace of an article and changes of its unit
-   conversions (005/R26, 007); and create, replace, delete, confirm, close and reopen of orders (009, 010).
+   post and reverse of stock documents (005, 006, 008); the replace of an article, changes of its unit
+   conversions and the delete of an article, which deletes its conversions (005/R26, 007); and create, replace, delete, confirm, close and reopen of orders (009, 010).
    A write that takes the lock for only part of its decision is a defect.
 2. **Nothing slow happens inside it**: no network call, no waiting on anything but the database.
 3. **The contract does not depend on it.** No criterion may pass only because of the coarse lock, and none

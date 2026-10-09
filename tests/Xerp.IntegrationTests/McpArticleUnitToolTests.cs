@@ -173,7 +173,6 @@ public class McpArticleUnitToolTests(XerpFixture app)
         await s.Mcp.ErrorAsync("article_unit_set", new { articleId = a, factor = 6 }, "VALIDATION_FAILED", "unitId");
         await s.Mcp.ErrorAsync("article_unit_set", new { unitId = box, factor = 6 }, "VALIDATION_FAILED", "articleId");
         await s.Mcp.ErrorAsync("article_unit_set", new { articleId = a, unitId = box }, "VALIDATION_FAILED", "factor");
-        await s.Mcp.ErrorAsync("article_unit_set", new { articleId = a, unitId = "abc", factor = 6 }, "VALIDATION_FAILED", "unitId");
         await s.Mcp.ErrorAsync("article_unit_get", new { articleId = a }, "VALIDATION_FAILED", "unitId");
         await s.Mcp.ErrorAsync("article_unit_get", new { articleId = "", unitId = box }, "VALIDATION_FAILED", "articleId");
         await s.Mcp.ErrorAsync("article_unit_delete", new { unitId = box }, "VALIDATION_FAILED", "articleId");
@@ -182,6 +181,19 @@ public class McpArticleUnitToolTests(XerpFixture app)
         await s.Mcp.ErrorAsync("article_unit_list", new { articleId = Guid.NewGuid() }, "NOT_FOUND");
         await s.Mcp.ErrorAsync("article_unit_get", new { articleId = a, unitId = s.S.Pack }, "NOT_FOUND");
         await s.Mcp.ErrorAsync("article_unit_delete", new { articleId = a, unitId = s.S.Pack }, "NOT_FOUND");
+        // A string that is not a UUID is NOT_FOUND without errors keys, as the malformed path segment over HTTP
+        // (003/R15, AC-24). Neither id is a reference argument, also not unitId of article_unit_set (007-q B-D1).
+        foreach (var (tool, arguments) in new (string, object)[]
+                 {
+                     ("article_unit_set", new { articleId = a, unitId = "abc", factor = 6 }),
+                     ("article_unit_set", new { articleId = "abc", unitId = box, factor = 6 }),
+                     ("article_unit_get", new { articleId = a, unitId = "abc" }),
+                     ("article_unit_get", new { articleId = "abc", unitId = box }),
+                     ("article_unit_delete", new { articleId = a, unitId = "abc" }),
+                     ("article_unit_delete", new { articleId = "abc", unitId = box }),
+                     ("article_unit_list", new { articleId = "abc" }),
+                 })
+            Assert.Empty(McpAssert.ErrorKeys(await s.Mcp.ErrorAsync(tool, arguments, "NOT_FOUND")));
 
         Assert.Equal(12m, (await Units.GetAsync(s.Http, a, box)).Factor());
     }
