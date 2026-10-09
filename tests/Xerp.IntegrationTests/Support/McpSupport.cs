@@ -201,27 +201,3 @@ public static class Keys
     public static Guid[] Ids(this JsonElement list) =>
         list.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("id").GetGuid()).ToArray();
 }
-
-/// <summary>Shortcuts for the article endpoints, written against the contract of spec 002, section 4.</summary>
-public static class Art
-{
-    public const string Path = "/api/v1/articles";
-
-    public static async Task<JsonElement> CreateAsync(HttpClient client, string code, string name, Guid baseUnitId, string type = "stock")
-    {
-        using var response = await client.PostAsJsonAsync(Path, new { code, name, type, baseUnitId });
-        return await HttpAssert.JsonAsync(response, HttpStatusCode.Created);
-    }
-
-    public static async Task<JsonElement> GetAsync(HttpClient client, Guid id)
-    {
-        using var response = await client.GetAsync($"{Path}/{id}");
-        return await HttpAssert.JsonAsync(response, HttpStatusCode.OK);
-    }
-
-    public static async Task<JsonElement> ListAsync(HttpClient client, string query = "")
-    {
-        using var response = await client.GetAsync(Path + query);
-        return await HttpAssert.JsonAsync(response, HttpStatusCode.OK);
-    }
-}
