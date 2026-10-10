@@ -3,7 +3,7 @@
 Glavni pregled petlje arhitekt -> tester -> builder -> review -> merge. Redoslijed koraka dolazi iz
 `docs/roadmap.md` (piše ga arhitekt); ovaj dokument vodi orkestrator i ažurira ga nakon svakog koraka.
 
-Zadnje ažuriranje: 2026-10-10 03:20
+Zadnje ažuriranje: 2026-10-10 03:22
 
 ## Opseg MVP-a
 
@@ -41,7 +41,7 @@ Oznake: ✅ gotovo · 🔄 u tijeku · ⬜ nije započeto · — ne primjenjuje 
 | 010 | Prodajne narudžbe -> isporuka | ✅ | ✅ | ✅ | ✅ | ✅ |
 | | **— granica MVP-a (dovršen) — 011 je prva značajka nakon MVP-a, na zahtjev vlasnika; ostalo ispod čeka —** | | | | | |
 | 011 | Zadano (centralno) skladište, lager lista po skladištu, spremljeni saldo zaliha | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 011a | Partner u zaglavlju skladišnog dokumenta (primka: dobavljač, izdatnica: kupac) | ✅ | ✅ | 🔄 | ⬜ | ⬜ |
+| 011a | Partner u zaglavlju skladišnog dokumenta (primka: dobavljač, izdatnica: kupac) | ✅ | ✅ | ✅ | 🔄 | ⬜ |
 | 012 | Vrednovanje zaliha | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 013 | Kontni plan + temeljnice | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 014 | Brojčane serije dokumenata | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -57,8 +57,8 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 
 ## Što tko trenutno radi
 
-- **Arhitekt:** čeka kod za 011a (review).
-- **Builder:** implementacija speca 011a (`feat/011a-partner-on-stock-documents`).
+- **Arhitekt:** review speca 011a.
+- **Builder:** čeka ishod reviewa 011a.
 - **Tester:** zaustavljen; testovi za 011 i 011a napisani.
 
 ## Dnevnik
@@ -101,6 +101,7 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 - 2026-10-10 — testovi za 011a napisani (`cd7ed07`).
 - 2026-10-10 — kod za 011 gotov (`0f308c1`), na reviewu; arhitekt odgovorio na testerova pitanja za 011 i 011a (bez izmjena testova).
 - 2026-10-10 — review 011: kod prihvaćen, 6 testerovih testova ispravljeno (`788a013`); ponovni review OK; orkestrator pokrenuo 571 unit + 1594 integracijska testa; 011 spojen u `main` i pushan.
+- 2026-10-10 — kod za 011a gotov (`1e198d6`), na reviewu.
 
 ## Odluke vlasnika
 
