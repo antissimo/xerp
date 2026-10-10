@@ -10,6 +10,8 @@ public static class StockEndpoints
     public const string DocumentsRoute = "/stock-documents";
     public const string OnHandRoute = "/stock-on-hand";
     public const string LedgerRoute = "/stock-ledger-entries";
+    public const string BalanceDifferencesRoute = "/stock-balance-differences";
+    public const string BalanceRebuildRoute = "/stock-balances/rebuild";
 
     public static void MapStockEndpoints(this IEndpointRouteBuilder v1)
     {
@@ -108,5 +110,23 @@ public static class StockEndpoints
             var result = await queries.LedgerAsync(input, ct);
             return result.IsSuccess ? Results.Ok(result.Value) : Problems.From(result.Error);
         }).AcceptsQuery("articleId", "warehouseId", "documentId", "limit", "offset");
+
+        // Spec 011, 4.5: verify. A read; an empty list is the healthy state.
+        v1.MapGet(BalanceDifferencesRoute, async (HttpRequest request, StockBalances balances, CancellationToken ct) =>
+        {
+            var binder = new QueryBinder(request.Query);
+            var input = new ListStockBalanceDifferencesInput(binder.Int("limit"), binder.Int("offset"));
+            if (binder.Error is { } error)
+                return Problems.From(error);
+            var result = await balances.DifferencesAsync(input, ct);
+            return result.IsSuccess ? Results.Ok(result.Value) : Problems.From(result.Error);
+        }).AcceptsQuery("limit", "offset");
+
+        // Spec 011, 4.5: rebuild. No body is read: there is nothing a caller can say about a balance (S2).
+        v1.MapPost(BalanceRebuildRoute, async (StockBalances balances, CancellationToken ct) =>
+        {
+            var result = await balances.RebuildAsync(ct);
+            return result.IsSuccess ? Results.Ok(result.Value) : Problems.From(result.Error);
+        });
     }
 }

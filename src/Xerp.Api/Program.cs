@@ -36,6 +36,7 @@ builder.Services.AddScoped<PartnerOperations>();
 builder.Services.AddScoped<WarehouseOperations>();
 builder.Services.AddScoped<StockDocumentOperations>();
 builder.Services.AddScoped<StockQueries>();
+builder.Services.AddScoped<StockBalances>();
 builder.Services.AddScoped<PurchaseOrderOperations>();
 builder.Services.AddScoped<SalesOrderOperations>();
 builder.Services.AddScoped<ApiKeyOperations>();

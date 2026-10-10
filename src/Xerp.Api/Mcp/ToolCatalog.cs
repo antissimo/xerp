@@ -16,7 +16,7 @@ namespace Xerp.Api.Mcp;
 public sealed record NoArguments;
 
 /// <summary>
-/// The complete list of MCP tools (spec 003, 5.3; spec 004, 5.1; specs 005 to 009, 5). Adding an operation means adding its tool here; the
+/// The complete list of MCP tools (spec 003, 5.3; spec 004, 5.1; specs 005 to 011, 5). Adding an operation means adding its tool here; the
 /// tool-list test holds the expected names literally.
 /// </summary>
 public static class ToolCatalog
@@ -137,10 +137,16 @@ public static class ToolCatalog
                 + "On a document that is not linked leave it out or pass null.", 1)))),
     ];
 
+    private const string StockWarehouse =
+        "The `id` of the warehouse the goods come into (receipt) or leave (issue); for a transfer the source, which the goods leave; for a count the warehouse that was counted. See `warehouse_list`. Not the code.";
+
     private static (string, System.Text.Json.Nodes.JsonObject)[] StockDocumentHeader(bool update) =>
     [
         ("documentDate", Text("The business date of the document as YYYY-MM-DD, for example 2026-10-09. Any date, past or future; it does not affect the stock check.")),
-        ("warehouseId", Uuid("The `id` of the warehouse the goods come into (receipt) or leave (issue); for a transfer the source, which the goods leave; for a count the warehouse that was counted. See `warehouse_list`. Not the code.")),
+        ("warehouseId", update
+            ? Uuid(StockWarehouse + " Required: an update always names the warehouse.")
+            : NullableUuid(StockWarehouse + " Optional for a receipt, an issue and a count: left out or null, the document is created on the tenant's default warehouse "
+                + "- or, with `purchaseOrderId` or `salesOrderId`, on that order's warehouse. Required for a transfer.")),
         ("toWarehouseId", NullableUuid("Only for a transfer, where it is required: the `id` of the destination warehouse the goods arrive in. "
             + "It must differ from `warehouseId`, which is the source. For a receipt, an issue or a count leave it out or pass null.")),
         ("reference", NullableText("Your own reference, for example a delivery-note number; one line, at most 100 characters."
@@ -182,7 +188,9 @@ public static class ToolCatalog
         (o.DueDate, NullableText($"{o.DueDateIs}, as YYYY-MM-DD; not earlier than `orderDate`."
             + (update ? " Required: pass null for no value." : " Optional."))),
         (o.PartnerId, Uuid($"The `id` of the partner that is the {o.Partner} of the order; it must have `{o.Role}` = true (see `partner_list`). Not the code.")),
-        ("warehouseId", Uuid($"The `id` of the warehouse {o.WarehouseIs} (see `warehouse_list`). Not the code.")),
+        ("warehouseId", update
+            ? Uuid($"The `id` of the warehouse {o.WarehouseIs} (see `warehouse_list`). Not the code. Required: an update always names the warehouse.")
+            : NullableUuid($"The `id` of the warehouse {o.WarehouseIs} (see `warehouse_list`). Not the code. Optional: left out or null, the order is created on the tenant's default warehouse.")),
         ("reference", NullableText($"{o.ReferenceIs}; one line, at most 100 characters."
             + (update ? " Required: pass null for no value." : " Optional."))),
         ("note", NullableText("Free text, may have several lines, at most 2000 characters." + (update ? " Required: pass null for no value." : " Optional."))),
@@ -389,8 +397,14 @@ public static class ToolCatalog
 
         // ---- warehouses
         XerpTool.For<ListWarehousesInput, PagedResult<WarehouseDto>>("warehouse_list", ToolKind.Read,
-            "Lists the tenant's warehouses ordered by code, with paging; `total` counts all matches. " + Validation,
-            Input([], [Search("the code or the name"), IsActiveFilter("warehouses"), .. Paging]),
+            "Lists the tenant's warehouses ordered by code, with paging; `total` counts all matches. "
+            + "Every tenant has exactly one default warehouse, the one with `isDefault` true: documents created without `warehouseId` go to it. Find it with `{ \"isDefault\": true }`. " + Validation,
+            Input([],
+            [
+                Search("the code or the name"), IsActiveFilter("warehouses"),
+                ("isDefault", Flag("true: return only the tenant's default warehouse (exactly one). false: return every other warehouse. Omit for all.")),
+                .. Paging,
+            ]),
             (services, input, ct) => services.GetRequiredService<WarehouseOperations>().ListAsync(input, ct)),
 
         XerpTool.For<RecordAddressInput, WarehouseDto>("warehouse_get", ToolKind.Read,
@@ -406,15 +420,57 @@ public static class ToolCatalog
 
         XerpTool.WithId<WarehouseInput, WarehouseDto>("warehouse_update", ToolKind.Update,
             "Replaces all fields of a warehouse; every argument is required (the address arguments may be null, which clears them). "
-            + "Set `isActive` to false to retire a warehouse. " + Validation + " `NOT_FOUND`: no such warehouse in this tenant. " + CodeTaken,
+            + "Set `isActive` to false to retire a warehouse. `isDefault` is not an argument: the default is changed with `warehouse_set_default`. "
+            + Validation + " `NOT_FOUND`: no such warehouse in this tenant. "
+            + "`DEFAULT_WAREHOUSE`: `isActive` false was sent for the tenant's default warehouse, which must stay active (`errors` names `isActive`); "
+            + "make another warehouse the default first with `warehouse_set_default`, then deactivate this one. " + CodeTaken,
             Input(["id", "code", "name", .. AddressNames, "isActive"], [IdOf("warehouse to replace"), .. WarehouseFields(update: true)]),
             (services, id, input, ct) => services.GetRequiredService<WarehouseOperations>().ReplaceAsync(id, input, ct)),
 
         XerpTool.For<RecordIdInput, WarehouseDeleted>("warehouse_delete", ToolKind.Delete,
             "Deletes a warehouse that no stock document and no order uses; returns `{ \"deleted\": true }`. `NOT_FOUND`: no such warehouse in this tenant. "
+            + "`DEFAULT_WAREHOUSE`: this is the tenant's default warehouse, which cannot be deleted whether or not anything uses it; make another warehouse the default first with `warehouse_set_default`. "
             + "`IN_USE`: a stock document (draft or posted) or a purchase order or a sales order (draft, confirmed or closed) names this warehouse; deactivate it with `warehouse_update` instead.",
             Input(["id"], IdOf("warehouse to delete")),
             (services, input, ct) => services.GetRequiredService<WarehouseOperations>().DeleteAsync(input.Id, ct)),
+
+        // ---- spec 011, section 5
+        XerpTool.For<RecordIdInput, WarehouseDto>("warehouse_set_default", ToolKind.Repeatable,
+            "Makes a warehouse the tenant's default warehouse and returns it with `isDefault` true; the former default becomes an ordinary warehouse in the same step "
+            + "and can then be deactivated or deleted. From now on documents created without `warehouseId` go to this warehouse; existing documents keep theirs. "
+            + "Calling it for the warehouse that already is the default changes nothing. `NOT_FOUND`: no such warehouse in this tenant. "
+            + "`DEFAULT_WAREHOUSE`: the warehouse is inactive (`errors` names `isActive`); reactivate it with `warehouse_update` first. The default is unchanged.",
+            Input(["id"], IdOf("warehouse to make the default")),
+            (services, input, ct) => services.GetRequiredService<WarehouseOperations>().SetDefaultAsync(input.Id, ct)),
+
+        XerpTool.For<ListWarehouseStockInput, PagedResult<StockOnHandDto>>("warehouse_stock_list", ToolKind.Read,
+            "Lists the stock of one warehouse: every stock article of the tenant with its quantity in this warehouse, zero included - also articles that never moved here and inactive articles; "
+            + "service articles are never listed. Ordered by article code. Each item has the four quantities of `stock_on_hand_list` for this warehouse, in the article's base unit: "
+            + "`quantity` (in the warehouse now), `incomingQuantity`, `reservedQuantity`, `availableQuantity`. For stock across warehouses, or only the pairs that have something, use `stock_on_hand_list`. "
+            + "Filters combine with AND. " + Validation + " `NOT_FOUND`: no such warehouse in this tenant.",
+            Input(["id"],
+            [
+                IdOf("warehouse whose stock to list"),
+                Search("the article's code or name"),
+                IsActiveFilter("articles"),
+                ("hasStock", Flag("true: only articles with `quantity` greater than 0 in this warehouse. false: only articles with `quantity` 0. Omit for all.")),
+                .. Paging,
+            ]),
+            (services, input, ct) => services.GetRequiredService<StockQueries>().WarehouseStockAsync(input, ct)),
+
+        XerpTool.For<ListStockBalanceDifferencesInput, PagedResult<StockBalanceDifferenceDto>>("stock_balance_difference_list", ToolKind.Read,
+            "Verifies the stored stock quantities against the stock ledger: lists every article and warehouse whose stored quantity (`storedQuantity`) is not the sum of its ledger entries (`ledgerQuantity`), "
+            + "with `differenceQuantity` = stored minus ledger, ordered by article code then warehouse code. An empty list (`total` 0) is the healthy state and the only one a correct system shows. "
+            + "A difference is a defect of the system, not of the caller's data: the ledger is right and the stored quantity is wrong. Run `stock_balance_rebuild` to repair it and report it. It changes nothing. " + Validation,
+            Input([], Paging),
+            (services, input, ct) => services.GetRequiredService<StockBalances>().DifferencesAsync(input, ct)),
+
+        XerpTool.For<NoArguments, StockBalanceRebuildDto>("stock_balance_rebuild", ToolKind.Repeatable,
+            "Recomputes the stored stock quantities of the tenant from the stock ledger and returns `{ pairs, corrected }`: `pairs` is the number of article and warehouse pairs that have ledger entries, "
+            + "`corrected` the number of pairs whose stored quantity differed from the ledger and was set right - 0 in a correct system. It takes no arguments and cannot set a quantity: the ledger alone decides the result. "
+            + "It changes no document and no ledger entry, and is safe to repeat. Afterwards `stock_balance_difference_list` is empty. " + Validation,
+            Input([]),
+            (services, _, ct) => services.GetRequiredService<StockBalances>().RebuildAsync(ct)),
 
         // ---- stock documents, stock on hand, stock ledger
         XerpTool.For<ListStockDocumentsInput, PagedResult<StockDocumentSummaryDto>>("stock_document_list", ToolKind.Read,
@@ -452,18 +508,20 @@ public static class ToolCatalog
             + "and when you know what is there but not the difference; for a known difference use a receipt or an issue. "
             + "A line's `unitId` defaults to the article's base unit; stock is always kept in base units. "
             + "A draft changes no stock and reserves nothing; it takes effect only when posted with `stock_document_post`. "
-            + "To receive goods of a purchase order, create a `receipt` with `purchaseOrderId`, the order's warehouse and `orderLineNo` on every line; "
-            + "to deliver goods of a sales order, create an `issue` with `salesOrderId`, the order's warehouse and `orderLineNo` on every line. "
+            + "Without `warehouseId` a receipt, an issue or a count is created on the tenant's default warehouse (on a document linked to an order: on the order's warehouse); "
+            + "a transfer must name both warehouses; the result's `warehouse` shows which warehouse was taken. "
+            + "To receive goods of a purchase order, create a `receipt` with `purchaseOrderId` and `orderLineNo` on every line; "
+            + "to deliver goods of a sales order, create an `issue` with `salesOrderId` and `orderLineNo` on every line - in both cases leave `warehouseId` out or give the order's warehouse. "
             + "The draft reserves nothing of the order either - quantities are compared with it when the document is posted. A document has at most one of the two links. "
             + Validation + " " + StockReferences + " " + OrderLink,
-            Input(["type", "documentDate", "warehouseId", "lines"],
+            Input(["type", "documentDate", "lines"],
             [
                 ("type", Text("`receipt`: goods come into the warehouse. `issue`: goods leave it. `transfer`: goods move from `warehouseId` to `toWarehouseId`. `count`: stock in `warehouseId` is set to the counted quantities. Cannot be changed later.", "receipt", "issue", "transfer", "count")),
                 .. StockDocumentHeader(update: false),
                 ("purchaseOrderId", NullableUuid("Only for a receipt: the `id` of the confirmed purchase order whose goods it receives (see `purchase_order_list`); not the order's number. "
                     + "Every line then needs `orderLineNo`. The link cannot be changed later. Left out or null: a document that is not linked to an order.")),
                 ("salesOrderId", NullableUuid("Only for an issue: the `id` of the confirmed sales order whose goods it delivers (see `sales_order_list`); not the order's number. "
-                    + "Every line then needs `orderLineNo`, and `warehouseId` must be the order's warehouse. The link cannot be changed later. Left out or null: a document that is not linked to an order.")),
+                    + "Every line then needs `orderLineNo`, and `warehouseId`, when given, must be the order's warehouse. The link cannot be changed later. Left out or null: a document that is not linked to an order.")),
                 StockDocumentFields(update: false)[^1],
             ]),
             (services, input, ct) => services.GetRequiredService<StockDocumentOperations>().CreateAsync(input, ct)),
@@ -534,7 +592,8 @@ public static class ToolCatalog
             + "ordered by article code then warehouse code. `quantity` is what is in the warehouse now; `incomingQuantity` is what confirmed purchase orders for that warehouse "
             + "still expect (ordered minus received) - it is not stock and cannot be issued; `reservedQuantity` is what confirmed sales orders shipping from that warehouse still owe "
             + "(ordered minus delivered); `availableQuantity` is `quantity` minus `reservedQuantity` and is negative when more is promised than is there - `incomingQuantity` is not part of it. "
-            + "A reservation informs and blocks nothing: any issue or transfer may still take the stock. A pair that is not listed has none of them. Drafts and closed orders do not count. " + Validation,
+            + "A reservation informs and blocks nothing: any issue or transfer may still take the stock. A pair that is not listed has none of them. Drafts and closed orders do not count. "
+            + "For the complete list of one warehouse - every stock article, zero included - use `warehouse_stock_list`. " + Validation,
             Input([],
             [
                 ("articleId", Uuid("Return only the stock of the article with this `id`.")),
@@ -590,8 +649,9 @@ public static class ToolCatalog
             + "A line's `unitPrice` is the price of one unit of the line (per box when the line is in boxes), in the tenant's currency, without tax; `lineAmount` is `quantity` × `unitPrice` rounded to 2 decimals. "
             + "Only stock articles can be ordered. The supplier must be a partner with `isSupplier` = true. "
             + "A draft orders nothing: it has no number, no incoming quantity and cannot be received against until confirmed with `purchase_order_confirm`. "
+            + "Without `warehouseId` the order is created on the tenant's default warehouse; the result's `warehouse` shows which warehouse was taken. "
             + Validation + " " + OrderReferences(Purchase),
-            Input(["orderDate", "supplierId", "warehouseId", "lines"], OrderFields(Purchase, update: false)),
+            Input(["orderDate", "supplierId", "lines"], OrderFields(Purchase, update: false)),
             (services, input, ct) => services.GetRequiredService<PurchaseOrderOperations>().CreateAsync(input, ct)),
 
         XerpTool.WithId<ReplacePurchaseOrderInput, PurchaseOrderDto>("purchase_order_update", ToolKind.Update,
@@ -666,8 +726,9 @@ public static class ToolCatalog
             + "A line's `unitPrice` is the selling price of one unit of the line (per box when the line is in boxes), in the tenant's currency, without tax; `lineAmount` is `quantity` × `unitPrice` rounded to 2 decimals. "
             + "Only stock articles can be ordered. The customer must be a partner with `isCustomer` = true. "
             + "A draft is an offer: it has prices and a total, no number, reserves nothing and cannot be delivered until confirmed with `sales_order_confirm`. "
+            + "Without `warehouseId` the order is created on the tenant's default warehouse; the result's `warehouse` shows which warehouse was taken. "
             + Validation + " " + OrderReferences(Sales),
-            Input(["orderDate", "customerId", "warehouseId", "lines"], OrderFields(Sales, update: false)),
+            Input(["orderDate", "customerId", "lines"], OrderFields(Sales, update: false)),
             (services, input, ct) => services.GetRequiredService<SalesOrderOperations>().CreateAsync(input, ct)),
 
         XerpTool.WithId<ReplaceSalesOrderInput, SalesOrderDto>("sales_order_update", ToolKind.Update,

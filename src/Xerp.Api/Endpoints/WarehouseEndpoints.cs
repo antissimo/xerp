@@ -1,5 +1,6 @@
 using Xerp.Api.Http;
 using Xerp.Application.Common;
+using Xerp.Application.Stock;
 using Xerp.Application.Warehouses;
 
 namespace Xerp.Api.Endpoints;
@@ -19,7 +20,7 @@ public static class WarehouseEndpoints
                 return Problems.From(input.Error);
             var result = await operations.ListAsync(input.Value, ct);
             return result.IsSuccess ? Results.Ok(result.Value) : Problems.From(result.Error);
-        }).AcceptsQuery("search", "isActive", "limit", "offset");
+        }).AcceptsQuery("search", "isActive", "isDefault", "limit", "offset");
 
         // A malformed id does not match the route and ends as NOT_FOUND like any unknown path.
         warehouses.MapGet("/{id:guid}", async (Guid id, WarehouseOperations operations, CancellationToken ct) =>
@@ -59,12 +60,32 @@ public static class WarehouseEndpoints
             var result = await operations.DeleteAsync(id, ct);
             return result.IsSuccess ? Results.NoContent() : Problems.From(result.Error);
         });
+
+        // Spec 011, 4.1. No body: the warehouse to make the default is the addressed one.
+        warehouses.MapPost("/{id:guid}/set-default", async (Guid id, WarehouseOperations operations, CancellationToken ct) =>
+        {
+            var result = await operations.SetDefaultAsync(id, ct);
+            return result.IsSuccess ? Results.Ok(result.Value) : Problems.From(result.Error);
+        });
+
+        // Spec 011, 4.3: the stock list of one warehouse - every stock article, zero included.
+        warehouses.MapGet("/{id:guid}/stock", async (Guid id, HttpRequest request, StockQueries queries, CancellationToken ct) =>
+        {
+            var binder = new QueryBinder(request.Query);
+            var input = new ListWarehouseStockInput(
+                null, binder.Text("search"), binder.Bool("isActive"), binder.Bool("hasStock"), binder.Int("limit"), binder.Int("offset"));
+            if (binder.Error is { } error)
+                return Problems.From(error);
+            var result = await queries.WarehouseStockAsync(id, input, ct);
+            return result.IsSuccess ? Results.Ok(result.Value) : Problems.From(result.Error);
+        }).AcceptsQuery("search", "isActive", "hasStock", "limit", "offset");
     }
 
     private static Result<ListWarehousesInput> BindList(IQueryCollection query)
     {
         var binder = new QueryBinder(query);
-        var input = new ListWarehousesInput(binder.Text("search"), binder.Bool("isActive"), binder.Int("limit"), binder.Int("offset"));
+        var input = new ListWarehousesInput(
+            binder.Text("search"), binder.Bool("isActive"), binder.Int("limit"), binder.Int("offset"), binder.Bool("isDefault"));
         return binder.Error is { } error ? error : input;
     }
 }
