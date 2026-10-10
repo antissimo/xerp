@@ -248,8 +248,8 @@ and are answered as HTTP problem documents, not as tool errors (ADR-0009).
   `(TenantId, <column>)` -> `ApiKeys (TenantId, Id)` with `ON DELETE RESTRICT`: an actor can never belong to
   another tenant, and an API key that has written anything can be revoked but never deleted (ADR-0010).
 - Ledger tables (stock ledger from spec 005; journal lines later) are append-only: no `UPDATE`, no `DELETE`;
-  corrections are reversing entries (ADR-0007). Stock on hand is the sum of the stock ledger and is never
-  negative (ADR-0012).
+  corrections are reversing entries (ADR-0007). Stock on hand always equals the sum of the stock ledger and is
+  never negative (ADR-0012); it is read from the stored balance (next point).
 - Stored projections (ADR-0018): `StockBalance` holds the quantity per (tenant, warehouse, article). The
   ledger is the truth and the balance its copy: written only together with ledger entries, in the same
   transaction and under the same per-tenant lock, and by the rebuild operation; read by everything that

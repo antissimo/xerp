@@ -110,7 +110,8 @@ curl -s -X POST $API/articles -H "$H" -H "$C" \
   -d "{\"code\":\"BOLT-M8\",\"name\":\"Steel bolt M8\",\"type\":\"stock\",\"baseUnitId\":\"$UNIT\"}"
 ART='<id>'
 
-# 3. A warehouse
+# 3. A warehouse (optional since spec 011: a new tenant already has its default warehouse, CENTRAL,
+#    and a receipt, issue, count or order created without warehouseId goes to it)
 curl -s -X POST $API/warehouses -H "$H" -H "$C" -d '{"code":"WH-1","name":"Main warehouse"}'
 WH='<id>'
 
