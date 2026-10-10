@@ -8,6 +8,12 @@ section 3.
 the owner's request; it is the first post-MVP spec. It took the number 011, so the unwritten rows moved down by
 one (012–021; mapping at the end of section 3). Nothing below row 11 is written or built.
 
+**Status, 2026-10-10 (later): specs 011 and 011a are merged; spec 012 is written** (configurable rules:
+the mechanism and the stock and order policies), on the owner's requirement that every validation and
+business rule be configurable per tenant (ADR-0020, `docs/rules.md`). Rows 12–14 are new — the mechanism and
+the two further batches that move the existing rules onto it — so the unwritten rows moved down by three
+(015–024; mapping at the end of section 3).
+
 Ordered backlog. Each item becomes one spec `docs/specs/NNN-name.md` (occasionally two) sized for one builder
 session. Only the next spec is written in full; later items are refined when they come up, so numbers after the
 written specs are indicative. Order changes are made here, by the architect, with a reason.
@@ -82,7 +88,7 @@ renumbered; 001–004 kept their numbers. From here on the row number is the spe
 What stays ahead of posting, and why:
 - **Document numbers** — a posted document needs a final, unique, gapless number. Spec 005 builds the counter
   (one fixed pattern per document type); *configurable* series are only needed where numbering is a legal matter,
-  so they come immediately before invoices (014).
+  so they come immediately before invoices (017).
 - **Attribution** — every document records `createdBy`, `updatedBy`, `postedBy` and `postedAt`, and ledger
   entries are append-only (ADR-0007). That is the minimum that makes agent posting accountable without the
   audit log.
@@ -102,25 +108,28 @@ What stays ahead of posting, and why:
 | 9 | **009 Purchase orders -> goods receipt** — order (`draft -> confirmed <-> closed`) with supplier, warehouse and lines with unit and unit price; a goods receipt is a `receipt` stock document linked to the order and its lines; received quantity per line in base units, never above the ordered quantity; reversal gives it back; `incomingQuantity` in stock on hand (ADR-0016). *Merged.* | SAP B1 base/target documents; BC "Qty. to Receive". | Inbound before outbound: stock must exist before it can be sold. |
 | 10 | **010 Sales orders -> delivery** — the mirror of 009: order with customer, warehouse, lines and prices; a delivery is an `issue` stock document linked to the order, refused above the ordered quantity and above stock on hand; `reservedQuantity` and `availableQuantity` in stock on hand, informational (ADR-0017). No quotation document: a draft order is the offer. *Merged.* | SAP B1 (order raises committed, delivery reduces stock); BC partial shipments. | Mirror of 009 plus availability. |
 | — | **MVP boundary (owner decision, 2026-10-09).** Specs 001–010 are the MVP and are merged; everything below is post-MVP and is not written until the owner says so. See "MVP boundary" under the table. | — | — |
-| 11 | **011 Default warehouse, warehouse stock list, stored stock balance** — every tenant is created with a default (central) warehouse, exactly one and always active, movable with `set-default`; `warehouseId` may be omitted on create of a document and means the default; the stock list of a warehouse shows every stock article with its quantity, zero included; `StockBalance` per (warehouse, article) is written with the ledger in the posting transaction, the ledger stays the truth; verify and rebuild (ADR-0018, ADR-0019). *Written; owner request 2026-10-10.* | ERPNext Bin (stored quantity per item and warehouse, rebuilt by "repost"); BC "Location" mandatory setup; SAP B1 default warehouse *(all unverified — not re-opened for this spec)*. | Asked for by the owner before anything else post-MVP. It touches every posting, so it comes before valuation (012), which adds value next to the quantity by the same pattern. |
-| 11a | **011a Partner on stock documents** — optional `partnerId` on the header of a receipt (a supplier) and an issue (a customer), returned as `partner`; on a document linked to an order it is taken from the order and cannot differ; list filter `partnerId`. Not on transfers and counts. The partner must have the role of the type; a manual document re-checks it at posting; reversal copies it. *Written; owner request 2026-10-10.* | BC posted receipts and shipments carry the vendor / customer; SAP B1 goods receipt PO has the business partner on the header *(both unverified)*. | Closes the one gap between the built documents and the header-and-lines rule; small, and invoices (015) created from receipts and deliveries need the partner there. Numbered 011a so that nothing is renumbered a second time. |
-| 12 | **012 Inventory valuation** — cost on inbound entries, moving average per item, value of stock report. | BC value entries; ERPNext Moving Average; Odoo AVCO. | Needs purchase prices (009); prerequisite for COGS. |
-| 13 | **013 Chart of accounts + journal entries** — accounts with categories, balanced manual journals, post/reverse, trial balance, accounting periods. | BC chart of accounts and account categories; SAP B1 reversal-only journals. | Foundation of all financial posting. |
-| 14 | **014 Number series** — per-tenant configurable series per document type (prefix/year pattern, date-effective lines, gapless flag), replacing the fixed patterns of 005. | BC No. Series (gaps not allowed by default); ERPNext naming series tokens. | Legal numbering of invoices must be configurable; nothing before invoices needs more than the fixed counter. |
-| 15 | **015 Taxes + sales/purchase invoices** — generic tax codes (rate, included/excluded, tax accounts) with no country-specific rules, invoices created from deliveries/receipts or stand-alone, posting to G/L through posting configuration, gapless invoice numbers, credit notes. | SAP B1 A/R invoice postings; BC General Posting Setup, corrective credit memo; Odoo invoicing policy. | Needs 009/010, 013, 014. Jurisdiction-neutral by owner decision. |
-| 16 | **016 Payments and open items** — incoming/outgoing payments, application to invoices, partner balances, aging. | SAP B1 incoming payments; BC customer ledger entries and application. | Closes order-to-cash and procure-to-pay. |
-| 17 | **017 Audit log** *(platform)* — append-only record of every write: actor, actor type, operation, entity, before/after; query endpoint/tool. | BC change log *(unverified)*; vision principle 4. | Master-data changes are not yet traceable beyond `updatedBy`; ledgers already cover documents. |
-| 18 | **018 Permissions** *(platform)* — roles/scopes per API key (read, write masters, create drafts, post, manage keys), `FORBIDDEN` paths; key expiry. Default stays: a new key, human or agent, may post. | BC permission sets and roles. | Needed to restrict an agent to drafts; until then every key has full access to its tenant (ADR-0003, ADR-0010). |
-| 19 | **019 OpenAPI document** *(platform; formerly 003a)* — complete OpenAPI description of `/api/v1`, served to any tenant key and committed under `docs/` with a drift test. | ADR-0005 amendment. | Must exist before an external client (CLI, web UI) starts; `docs/questions/001-q.md` Q3. |
-| 20 | **020 Row-level security** *(platform)* — PostgreSQL RLS policies as a second tenant barrier; non-owner runtime DB role. | ADR-0002. | Hardening; must precede any production tenant. |
-| 21 | **021 Rate limiting** *(platform)* — limits on `/api/v1` and `/mcp`. | MCP specification (servers must rate-limit tool calls). | Must precede production tenants. |
+| 11 | **011 Default warehouse, warehouse stock list, stored stock balance** — every tenant is created with a default (central) warehouse, exactly one and always active, movable with `set-default`; `warehouseId` may be omitted on create of a document and means the default; the stock list of a warehouse shows every stock article with its quantity, zero included; `StockBalance` per (warehouse, article) is written with the ledger in the posting transaction, the ledger stays the truth; verify and rebuild (ADR-0018, ADR-0019). *Written; owner request 2026-10-10.* | ERPNext Bin (stored quantity per item and warehouse, rebuilt by "repost"); BC "Location" mandatory setup; SAP B1 default warehouse *(all unverified — not re-opened for this spec)*. | Asked for by the owner before anything else post-MVP. It touches every posting, so it comes before valuation (015), which adds value next to the quantity by the same pattern. |
+| 11a | **011a Partner on stock documents** — optional `partnerId` on the header of a receipt (a supplier) and an issue (a customer), returned as `partner`; on a document linked to an order it is taken from the order and cannot differ; list filter `partnerId`. Not on transfers and counts. The partner must have the role of the type; a manual document re-checks it at posting; reversal copies it. *Written; owner request 2026-10-10.* | BC posted receipts and shipments carry the vendor / customer; SAP B1 goods receipt PO has the business partner on the header *(both unverified)*. | Closes the one gap between the built documents and the header-and-lines rule; small, and invoices (018) created from receipts and deliveries need the partner there. Numbered 011a so that nothing is renumbered a second time. |
+| 12 | **012 Configurable rules: mechanism + stock and order policies** — rule registry (key, type, default, allowed values) in Domain, values per tenant, history of changes; `GET /rules`, `PUT /rules/{key}`, reset, `GET /rule-changes` and five MCP tools; errors name the rule that refused (`rules`); first six rules: `stock.negativeStock`, `purchase.overReceiptPercent`, `sales.overDeliveryPercent`, `sales.reservation` (new code `STOCK_RESERVED`), `quantity.decimals`, `document.maxLines`. Defaults reproduce specs 001–011a. *Written; owner requirement 2026-10-10.* | ERPNext Stock Settings ("Allow Negative Stock", over-receipt / over-delivery allowance), BC Inventory Setup ("Prevent Negative Inventory"), Odoo reservation *(all unverified — not opened for this spec)*; ADR-0020. | The owner wants the rule "from the start": the mechanism must exist before any further rule is written, and the six policies show it end to end — a choice, a tolerance, a new blocking behaviour, two validation limits. |
+| 13 | **013 Rules, batch 2: master data** — rule types `boolean`, `text`, `pattern`; code patterns and lengths, name and text lengths, required fields (description, tax id, address fields), uniqueness of names and tax ids, "a partner needs a role", "the code may change", country code form — for units, articles, partners, warehouses, API key names (`docs/rules.md` §3, batch 013). No new operation; every existing validation of specs 001–004 reads its rule and names it in the error. | `docs/rules.md` §3–§4; BC and ERPNext mandatory-field and naming settings *(unverified)*. | Second, because it is wide and shallow: it completes the three remaining rule types on fields that have no posting logic, and after it every `400` of the masters names its rule. |
+| 14 | **014 Rules, batch 3: documents** — date windows, required and maximum-length header fields, repeated articles, inactive masters on save / at posting / at reversal, omitted warehouse, partner required and its role, receipt and delivery outside the order's warehouse, outdated count (`refuse` / `adjust`), price and amount precision and rounding, quantity rounding, factor decimals, reopening and auto-closing of orders, confirming beyond availability (`docs/rules.md` §3, batch 014). May be split in two (014 stock documents, 014a orders) when written. | `docs/rules.md` §3–§4. | Last of the retrofit: after it every rule of specs 001–011a that is not an invariant, a number format (017) or a permission (021) is configurable, and only then does new functionality resume — so no later spec has to remember which old checks are still fixed. |
+| 15 | **015 Inventory valuation** — cost on inbound entries, moving average per item, value of stock report; the valuation method and what stock below zero costs are rules (ADR-0020). | BC value entries; ERPNext Moving Average; Odoo AVCO. | Needs purchase prices (009); prerequisite for COGS. |
+| 16 | **016 Chart of accounts + journal entries** — accounts with categories, balanced manual journals, post/reverse, trial balance, accounting periods. | BC chart of accounts and account categories; SAP B1 reversal-only journals. | Foundation of all financial posting. |
+| 17 | **017 Number series** — per-tenant configurable series per document type (prefix/year pattern, date-effective lines, gapless flag), replacing the fixed patterns of 005; its settings are rules on the registry of 012 (`docs/rules.md` §3, "With other specs"). | BC No. Series (gaps not allowed by default); ERPNext naming series tokens. | Legal numbering of invoices must be configurable; nothing before invoices needs more than the fixed counter. |
+| 18 | **018 Taxes + sales/purchase invoices** — generic tax codes (rate, included/excluded, tax accounts) with no country-specific rules, invoices created from deliveries/receipts or stand-alone, posting to G/L through posting configuration, gapless invoice numbers, credit notes. | SAP B1 A/R invoice postings; BC General Posting Setup, corrective credit memo; Odoo invoicing policy. | Needs 009/010, 016, 017. Jurisdiction-neutral by owner decision. |
+| 19 | **019 Payments and open items** — incoming/outgoing payments, application to invoices, partner balances, aging. | SAP B1 incoming payments; BC customer ledger entries and application. | Closes order-to-cash and procure-to-pay. |
+| 20 | **020 Audit log** *(platform)* — append-only record of every write: actor, actor type, operation, entity, before/after; query endpoint/tool. | BC change log *(unverified)*; vision principle 4. | Master-data changes are not yet traceable beyond `updatedBy`; ledgers already cover documents. |
+| 21 | **021 Permissions** *(platform)* — roles/scopes per API key (read, write masters, create drafts, post, manage keys), `FORBIDDEN` paths; key expiry. Default stays: a new key, human or agent, may post. Includes who may change rules (012). | BC permission sets and roles. | Needed to restrict an agent to drafts; until then every key has full access to its tenant (ADR-0003, ADR-0010). |
+| 22 | **022 OpenAPI document** *(platform; formerly 003a)* — complete OpenAPI description of `/api/v1`, served to any tenant key and committed under `docs/` with a drift test. | ADR-0005 amendment. | Must exist before an external client (CLI, web UI) starts; `docs/questions/001-q.md` Q3. |
+| 23 | **023 Row-level security** *(platform)* — PostgreSQL RLS policies as a second tenant barrier; non-owner runtime DB role. | ADR-0002. | Hardening; must precede any production tenant. |
+| 24 | **024 Rate limiting** *(platform)* — limits on `/api/v1` and `/mcp`. | MCP specification (servers must rate-limit tool calls). | Must precede production tenants. |
 | — | Later: OAuth-based MCP authorization together with human login, article groups/categories (and posting configuration per group), barcodes, partner contact data (e-mail, phone, contact persons), several addresses per partner (with 009/010 if they need delivery and invoice addresses), retention/erasure of personal data in partner records, perpetual inventory posting (stock -> G/L), price lists and discounts, bins/locations, lots/serials, multi-currency, returns, fixed reporting, optimistic concurrency (`ETag`/`If-Match`) on masters, country localisation packs (outside the core). | — | Each depends on the core above. |
 
 ### MVP boundary (owner decision, 2026-10-09)
 
 **The MVP is specs 001–010**: tenants and API keys, units, articles, partners, warehouses, the MCP server,
 the stock ledger with receipts, issues, transfers, reversal, unit conversions and stock count, purchase orders
-with goods receipt, sales orders with delivery. Rows 11–21 and the "Later" row are post-MVP. No spec beyond
+with goods receipt, sales orders with delivery. Rows 11–24 and the "Later" row are post-MVP. No spec beyond
 010 is written unless the owner asks; 011 was asked for on 2026-10-10.
 
 **Merged (2026-10-09):**
@@ -150,35 +159,35 @@ Open points left by the reviews are in `docs/reviews/open-items.md`; how to run 
 
 **What the MVP does not do.**
 - **No invoices.** No sales or purchase invoice, no tax, no credit note; an order is delivered or received
-  but never billed (015).
+  but never billed (018).
 - **No accounting.** No chart of accounts, no journal entries, no value of stock or cost of goods sold, no
-  payments or partner balances (012, 013, 016).
+  payments or partner balances (015, 016, 019).
 - **No permissions.** Every API key of a tenant, human or agent, can do everything in that tenant, including
-  posting and creating keys (018).
+  posting and creating keys (021).
 - **No audit log.** Documents and orders say who created, posted and confirmed them and the ledger is
-  append-only, but changes to master data are not recorded beyond `updatedBy` / `updatedAt` (017).
+  append-only, but changes to master data are not recorded beyond `updatedBy` / `updatedAt` (020).
 
-Also absent: row-level security in the database (020), rate limiting (021), an OpenAPI document (019), a web
+Also absent: row-level security in the database (023), rate limiting (024), an OpenAPI document (022), a web
 UI and a CLI (separate projects). The table gives the same limits next to what the MVP has in their place,
 with the spec that would add each:
 
 | The MVP has | It lacks | Until |
 |---|---|---|
-| Unit prices and order amounts on purchase and sales orders | Any value of stock, cost of a receipt, cost of goods sold | 012 |
-| Posted receipts and deliveries linked to orders | Invoices, tax, "invoiced quantity" on order lines; an order is fulfilled but never billed | 015 |
-| `stock` articles on orders | `service` articles on orders | 015 |
+| Unit prices and order amounts on purchase and sales orders | Any value of stock, cost of a receipt, cost of goods sold | 015 |
+| Posted receipts and deliveries linked to orders | Invoices, tax, "invoiced quantity" on order lines; an order is fulfilled but never billed | 018 |
+| `stock` articles on orders | `service` articles on orders | 018 |
 | One unnamed currency, amounts with 2 decimals | A currency setting; other precisions | Later (multi-currency) |
-| Fixed number patterns (`SR-`, `SI-`, `ST-`, `SC-`, `PO-`, `SO-`) | Configurable series | 014 |
+| Fixed number patterns (`SR-`, `SI-`, `ST-`, `SC-`, `PO-`, `SO-`) | Configurable series | 017 |
 | Reversal of a whole receipt or delivery | Partial returns; changing a confirmed order (close + new order instead); over-receipt | Later |
-| `createdBy` / `postedBy` / `confirmedBy` and append-only ledgers | Audit log of master-data changes; permissions per key (every key may do everything in its tenant) | 017, 018 |
+| `createdBy` / `postedBy` / `confirmedBy` and append-only ledgers | Audit log of master-data changes; permissions per key (every key may do everything in its tenant) | 020, 021 |
 
 None of these blocks using the MVP for what it does, and none is added to specs 009 or 010. Two limits are
 worth stating to anyone who is shown the MVP:
-- **It is not ready for production tenants.** Section 4 requires the audit log (017), permissions (018),
-  row-level security (020) and rate limiting (021) first; an external client also needs the OpenAPI document
-  (019).
+- **It is not ready for production tenants.** Section 4 requires the audit log (020), permissions (021),
+  row-level security (023) and rate limiting (024) first; an external client also needs the OpenAPI document
+  (022).
 - **It has no money side.** Prices on orders are recorded and totalled, nothing more: no valuation, no
-  invoices, no ledger accounts, no payments (012, 013, 015, 016).
+  invoices, no ledger accounts, no payments (015, 016, 018, 019).
 
 Renumbering of 2026-10-09 (old -> new), for reading older reviews and question files: 003a -> 018; 005 audit
 log -> 016; 006 permissions -> 017; 007 number series -> 013; 008 stock ledger -> 005 and 006; 009 unit
@@ -191,6 +200,14 @@ Renumbering of 2026-10-10 (old -> new): spec 011 (default warehouse and stored b
 rate limiting -> 021. This file, `docs/architecture.md` and `docs/getting-started.md` use the new numbers.
 Specs 001–010, ADR-0001 to ADR-0017, the reviews, the question files and `docs/reviews/open-items.md` were
 written before and keep the old numbers where they point past 010.
+
+Renumbering of 2026-10-10, second (old -> new): rows 012–014 (configurable rules and its two further
+batches) were inserted, so 012 valuation -> 015; 013 chart of accounts -> 016; 014 number series -> 017; 015
+invoices -> 018; 016 payments -> 019; 017 audit log -> 020; 018 permissions -> 021; 019 OpenAPI -> 022; 020
+row-level security -> 023; 021 rate limiting -> 024. This file, `docs/architecture.md`, `docs/rules.md` and
+`docs/getting-started.md` use the new numbers. Specs 011 and 011a, ADR-0018 and ADR-0019 and their reviews
+and question files were written before and keep the numbers of the first renumbering where they point past
+011a (their "012" is valuation, "015" invoices, "018" permissions).
 
 Removed on 2026-10-08 by owner decision: the former items "017 CLI" and "019 Web UI". Both are separate projects
 outside this repository; they consume the HTTP API (ADR-0005 amendment).
@@ -222,8 +239,8 @@ outside this repository; they consume the HTTP API (ADR-0005 amendment).
   default warehouse (ADR-0019). Every write of the stock ledger writes the stored balance in the same
   transaction (ADR-0018).
 - Every posting operation assigns a final document number and records who posted and when; ledger rows are
-  append-only. Before production tenants: audit log (017), permissions (018), row-level security (020) and
-  rate limiting (021).
+  append-only. Before production tenants: audit log (020), permissions (021), row-level security (023) and
+  rate limiting (024).
 
 ## 5. Sources opened on 2026-10-08
 

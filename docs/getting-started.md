@@ -402,7 +402,7 @@ What to know about the API:
 - Resources of the MVP: `/units-of-measure`, `/articles`, `/articles/{id}/units`, `/partners`, `/warehouses`,
   `/stock-documents`, `/stock-on-hand`, `/stock-ledger-entries`, `/purchase-orders`, `/sales-orders`,
   `/api-keys`, `/whoami`; since spec 011 also `/warehouses/{id}/stock`, `/stock-balance-differences` and
-  `/stock-balances/rebuild`. Their fields and rules are in `docs/specs/001…011a`. There is no OpenAPI document yet (roadmap, 019).
+  `/stock-balances/rebuild`. Their fields and rules are in `docs/specs/001…011a`. There is no OpenAPI document yet (roadmap, 022).
 
 ## 9. Connect an MCP client
 
@@ -452,8 +452,8 @@ of BOLT-M8 from SUP-1 to WH-1, confirm the order and receive 4 of them."*
 ## 10. Limits of this setup
 
 - Local only: bound to `127.0.0.1`, plain HTTP. Do not expose it as it is.
-- Every tenant key can do everything in its tenant, including posting; there are no permissions yet (018),
-  no audit log of master-data changes (017), no rate limiting (021).
+- Every tenant key can do everything in its tenant, including posting; there are no permissions yet (021),
+  no audit log of master-data changes (020), no rate limiting (024).
 - The admin key and every API key are bearer secrets: keep `.env` out of version control and revoke a key
   that leaked.
 - **No money side.** Prices on orders are recorded and totalled, nothing else: no invoices, no tax, no

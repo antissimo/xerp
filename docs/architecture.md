@@ -188,7 +188,8 @@ Every non-2xx response under `/api/v1` is `application/problem+json` (RFC 9457) 
 | 409 | `CANNOT_REVOKE_SELF` | An API key tried to revoke itself. |
 | 409 | `DEFAULT_WAREHOUSE` | The operation would leave the tenant without an active default warehouse: delete or deactivation of the default warehouse, or making an inactive warehouse the default (spec 011). `errors` has `isActive` except on delete. |
 | 409 | `INVALID_STATE` | Operation not allowed in the document's current status (e.g. replace, delete or post of a posted document; reversal of a draft, of a reversed or of a reversing document; replace of a confirmed order; close of a draft order). |
-| 409 | `INSUFFICIENT_STOCK` | Posting would make stock on hand negative. `errors` has `lines[i].quantity` for the short lines. |
+| 409 | `INSUFFICIENT_STOCK` | Posting would take stock on hand below zero while `stock.negativeStock` is `refuse` (the default). `errors` has `lines[i].quantity` for the short lines. |
+| 409 | `STOCK_RESERVED` | With `sales.reservation` = `block`: a posting or reversal would take goods that confirmed sales orders reserve (spec 012). `errors` has `lines[i].quantity`. |
 | 409 | `ARTICLE_NOT_STOCKED` | A stock document line names a `service` article. `errors` has `lines[i].articleId`. |
 | 409 | `UNIT_IS_BASE_UNIT` | A unit conversion was set for the article's own base unit (spec 007). `errors` has `unitId`. |
 | 409 | `UNIT_NOT_ON_ARTICLE` | A document line's unit is neither the base unit nor an alternative unit of its article. `errors` has `lines[i].unitId`. |
@@ -197,7 +198,7 @@ Every non-2xx response under `/api/v1` is `application/problem+json` (RFC 9457) 
 | 409 | `PARTNER_ROLE_MISSING` | The partner named on an order, or on an unlinked receipt or issue (011a), lacks the role the document needs (`isSupplier` / `isCustomer`). `errors` has `supplierId` / `customerId` / `partnerId`. |
 | 409 | `ORDER_NOT_OPEN` | A stock document is saved or posted against an order that is not `confirmed`. `errors` has `purchaseOrderId` / `salesOrderId`. |
 | 409 | `ORDER_MISMATCH` | A stock document linked to an order names another warehouse or (011a) another partner, or a line's article is not its order line's. `errors` has `warehouseId`, `partnerId` and/or `lines[i].articleId`. |
-| 409 | `QUANTITY_EXCEEDS_ORDER` | Posting would take an order line above its ordered quantity. `errors` has `lines[i].quantity` for the lines linked to it. |
+| 409 | `QUANTITY_EXCEEDS_ORDER` | Posting would take an order line above its ordered quantity plus the tenant's tolerance (`purchase.overReceiptPercent` / `sales.overDeliveryPercent`, default 0). `errors` has `lines[i].quantity` for the lines linked to it. |
 | 413 | `PAYLOAD_TOO_LARGE` | The request body is larger than 1 048 576 bytes (1 MB), declared or counted while read. Refused before anything is parsed or applied; no `errors`. Checked after the credential and before routing, on `/api/v1` and on `/mcp` (review of open item 001/7). |
 | 500 | `INTERNAL_ERROR` | Unexpected. No stack trace or SQL in the body. |
 
@@ -238,7 +239,7 @@ and are answered as HTTP problem documents, not as tool errors (ADR-0009).
 - The CLI and the web UI are not built in this repository. They are ordinary HTTP API clients with their own
   API keys; nothing in the backend is specific to them. Because they are developed separately, the HTTP API must
   not change incompatibly within `/api/v1`, and the OpenAPI document is the description they build against.
-  It does not exist yet: spec 019 delivers it (served in every environment to any authenticated tenant key,
+  It does not exist yet: spec 022 delivers it (served in every environment to any authenticated tenant key,
   and committed to the repository so that a contract change is visible in a diff).
 - Every spec defines both the HTTP and the MCP signature of each operation. Specs 001 and 002 carry their MCP
   signatures as contract only; spec 003 implements them. From spec 004 on, a spec's tools are implemented with it,
