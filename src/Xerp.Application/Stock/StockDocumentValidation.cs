@@ -1,6 +1,7 @@
 using System.Globalization;
 using Xerp.Application.Common;
 using Xerp.Application.Orders;
+using Xerp.Application.Warehouses;
 using Xerp.Domain.Common;
 using Xerp.Domain.Inventory;
 using Xerp.Domain.Orders;
@@ -53,14 +54,19 @@ public static class StockDocumentValidation
                 errors.Add(kind.LinkField, $"{kind.LinkField} must be the id (UUID) of a {kind.Name}, not its number.");
         }
         // An unknown type is judged like a receipt: a quantity greater than 0, repeats allowed.
-        var values = Values(errors, type, linked, input.DocumentDate, input.WarehouseId, input.ToWarehouseId, input.Reference, input.Note, input.Lines);
+        // Spec 011, R8, R9: a create may leave the warehouse out - it is then resolved under the tenant's lock -
+        // except for a transfer, which names both of its warehouses.
+        var values = Values(
+            errors, type, linked, input.DocumentDate, input.WarehouseId, input.ToWarehouseId, input.Reference, input.Note, input.Lines,
+            warehouseOptional: errors.Has("type") || type != StockDocumentType.Transfer);
+        var warehouseOmitted = input.WarehouseId is null;
         // Only for a known type can the destination be judged (spec 006, R2, R3).
         if (!errors.Has("type") && !errors.Has(ToWarehouseField)
             && DestinationMessage(type, values.WarehouseId, values.ToWarehouseId) is { } message)
             errors.Add(ToWarehouseField, message);
         if (errors.Any)
             return errors.ToError();
-        return new NewStockDocumentValues(type, values, link);
+        return new NewStockDocumentValues(type, values, link, warehouseOmitted);
     }
 
     public static Result<StockDocumentValues> Replace(ReplaceStockDocumentInput input)
@@ -211,12 +217,13 @@ public static class StockDocumentValidation
 
     /// <param name="type">The type of the document; null when the request does not say (a replace): then a quantity of 0 passes here and <see cref="OfType"/> decides.</param>
     /// <param name="linked">Whether the request links the document to an order; null when it does not say (a replace).</param>
+    /// <param name="warehouseOptional">Whether <c>warehouseId</c> may be omitted or null (spec 011, R8): the returned <c>WarehouseId</c> is then empty until it is resolved.</param>
     private static StockDocumentValues Values(
         ValidationErrors errors, StockDocumentType? type, bool? linked, string? documentDate, string? warehouseId, string? toWarehouseId, string? reference, string? note,
-        IReadOnlyList<StockLineInput?>? lines)
+        IReadOnlyList<StockLineInput?>? lines, bool warehouseOptional = false)
     {
         var date = Date(errors, documentDate);
-        var warehouse = RequiredId(errors, warehouseId, "warehouseId", "a warehouse");
+        var warehouse = DefaultWarehouseRules.Named(errors, warehouseId, warehouseOptional) ?? default;
         // Only the form here: whether a destination is needed depends on the type (spec 006, R2, R3).
         Guid? toWarehouse = null;
         if (toWarehouseId is not null)

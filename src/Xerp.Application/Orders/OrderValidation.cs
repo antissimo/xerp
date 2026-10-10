@@ -1,6 +1,7 @@
 using System.Globalization;
 using Xerp.Application.Common;
 using Xerp.Application.Stock;
+using Xerp.Application.Warehouses;
 using Xerp.Domain.Common;
 using Xerp.Domain.Inventory;
 using Xerp.Domain.Orders;
@@ -61,9 +62,14 @@ public static class OrderValidation
     /// <param name="dueDateGiven">False when a replace omitted the due date, which it may not (R4).</param>
     /// <param name="referenceGiven">False when a replace omitted the reference.</param>
     /// <param name="noteGiven">False when a replace omitted the note.</param>
+    /// <param name="warehouseOptional">
+    /// True for a create (spec 011, R8): <c>warehouseId</c> may be omitted or null, and the result then says
+    /// <c>WarehouseOmitted</c> with an empty <c>WarehouseId</c> for the operation to resolve. A replace names it (R9).
+    /// </param>
     public static Result<OrderValues> Values(
         OrderKind kind, string? orderDate, string? dueDate, string? partnerId, string? warehouseId, string? reference, string? note,
-        IReadOnlyList<OrderLineInput?>? lines, bool dueDateGiven = true, bool referenceGiven = true, bool noteGiven = true)
+        IReadOnlyList<OrderLineInput?>? lines, bool dueDateGiven = true, bool referenceGiven = true, bool noteGiven = true,
+        bool warehouseOptional = false)
     {
         var errors = new ValidationErrors();
 
@@ -86,7 +92,7 @@ public static class OrderValidation
         }
 
         var partner = RequiredId(errors, partnerId, kind.PartnerField, "a partner");
-        var warehouse = RequiredId(errors, warehouseId, WarehouseField, "a warehouse");
+        var warehouse = DefaultWarehouseRules.Named(errors, warehouseId, warehouseOptional);
 
         // R4: as on a stock document (spec 005, R7).
         string? normalizedReference = null;
@@ -151,7 +157,7 @@ public static class OrderValidation
 
         if (errors.Any)
             return errors.ToError();
-        return new OrderValues(date, due, partner, warehouse, normalizedReference, normalizedNote, lineValues);
+        return new OrderValues(date, due, partner, warehouse ?? default, normalizedReference, normalizedNote, lineValues, WarehouseOmitted: warehouse is null);
     }
 
     public static Result<OrderListQuery> List(

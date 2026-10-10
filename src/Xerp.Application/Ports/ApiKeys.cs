@@ -1,3 +1,4 @@
+using Xerp.Domain.Inventory;
 using Xerp.Domain.Tenancy;
 
 namespace Xerp.Application.Ports;
@@ -31,11 +32,11 @@ public interface IApiKeyLookup
     Task<ApiKeyRecord?> FindByHashAsync(string keyHash, CancellationToken cancellationToken = default);
 }
 
-/// <summary>Writes a new tenant together with its first API key in one transaction.</summary>
+/// <summary>Writes a new tenant together with its first API key and its default warehouse in one transaction.</summary>
 public interface ITenantProvisioningStore
 {
     /// <exception cref="UniqueConstraintViolationException">The tenant code is already used.</exception>
-    Task AddAsync(Tenant tenant, ApiKey firstKey, CancellationToken cancellationToken = default);
+    Task AddAsync(Tenant tenant, ApiKey firstKey, Warehouse defaultWarehouse, CancellationToken cancellationToken = default);
 
     Task<bool> CodeExistsAsync(string code, CancellationToken cancellationToken = default);
 }

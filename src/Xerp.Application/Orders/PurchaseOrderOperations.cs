@@ -26,7 +26,9 @@ public sealed class PurchaseOrderOperations(IXerpDb db, ITenantContext context, 
 
     public Task<Result<PurchaseOrderDto>> CreateAsync(CreatePurchaseOrderInput input, CancellationToken cancellationToken = default) =>
         CreateAsync(
-            new OrderInput(input.OrderDate, input.ExpectedDate, input.SupplierId, input.WarehouseId, input.Reference, input.Note, input.Lines),
+            new OrderInput(
+                input.OrderDate, input.ExpectedDate, input.SupplierId, input.WarehouseId, input.Reference, input.Note, input.Lines,
+                WarehouseOptional: true),
             cancellationToken);
 
     public Task<Result<PurchaseOrderDto>> ReplaceAsync(Guid id, ReplacePurchaseOrderInput input, CancellationToken cancellationToken = default) =>

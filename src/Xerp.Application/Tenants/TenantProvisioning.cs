@@ -1,5 +1,6 @@
 using Xerp.Application.Common;
 using Xerp.Application.Ports;
+using Xerp.Domain.Inventory;
 using Xerp.Domain.Tenancy;
 
 namespace Xerp.Application.Tenants;
@@ -13,7 +14,11 @@ public sealed record IssuedApiKeyDto(Guid Id, string Name, string ActorType, str
 
 public sealed record TenantCreatedDto(TenantDto Tenant, IssuedApiKeyDto ApiKey);
 
-/// <summary>Spec 001, 4.1: creates a tenant together with its first API key (R12).</summary>
+/// <summary>
+/// Spec 001, 4.1: creates a tenant together with its first API key (R12) - and, since spec 011 (R1, ADR-0019),
+/// with its default warehouse, written by that key. All three in one transaction: afterwards either all exist
+/// or none does, so there is no moment at which a tenant is without a default warehouse.
+/// </summary>
 public sealed class TenantProvisioning(
     ITenantProvisioningStore store,
     IApiKeyGenerator keyGenerator,
@@ -39,7 +44,7 @@ public sealed class TenantProvisioning(
         var key = ApiKey.Create(tenant.Id, InitialKeyName, ActorType.Human, keyHasher.Hash(secret), now);
         try
         {
-            await store.AddAsync(tenant, key, cancellationToken);
+            await store.AddAsync(tenant, key, Warehouse.CreateDefault(now, key.Id), cancellationToken);
         }
         catch (UniqueConstraintViolationException ex) when (ex.ConstraintName == DbNames.TenantCodeIndex)
         {

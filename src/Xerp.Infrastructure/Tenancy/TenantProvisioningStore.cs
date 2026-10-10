@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Xerp.Application.Ports;
+using Xerp.Domain.Inventory;
 using Xerp.Domain.Tenancy;
 using Xerp.Infrastructure.Persistence;
 
@@ -12,14 +13,16 @@ public sealed class TenantProvisioningStore(DbContextOptions<XerpDbContext> opti
         public Guid? ApiKeyId => null;
     }
 
-    public async Task AddAsync(Tenant tenant, ApiKey firstKey, CancellationToken cancellationToken = default)
+    public async Task AddAsync(Tenant tenant, ApiKey firstKey, Warehouse defaultWarehouse, CancellationToken cancellationToken = default)
     {
-        // The admin has no tenant. The first key is written through a context whose tenant is the new
-        // tenant, so the usual cross-tenant write check applies to it instead of being bypassed.
+        // The admin has no tenant. The first key and the default warehouse are written through a context whose
+        // tenant is the new tenant, so the usual stamping and cross-tenant write check apply to them instead
+        // of being bypassed.
         await using var scoped = new XerpDbContext(options, new NewTenantContext(tenant.Id));
         scoped.Tenants.Add(tenant);
         scoped.ApiKeys.Add(firstKey);
-        await scoped.SaveChangesAsync(cancellationToken); // one SaveChanges = one transaction (R12)
+        scoped.Warehouses.Add(defaultWarehouse);
+        await scoped.SaveChangesAsync(cancellationToken); // one SaveChanges = one transaction (R12; spec 011, R1)
     }
 
     public Task<bool> CodeExistsAsync(string code, CancellationToken cancellationToken = default) =>

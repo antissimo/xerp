@@ -75,7 +75,7 @@ public sealed record StockDocumentSummaryDto(
     Guid? PostedBy);
 
 /// <summary>
-/// Stock on hand of one (article, warehouse) pair: <c>Quantity</c> is the sum of its ledger entries (R19);
+/// Stock on hand of one (article, warehouse) pair: <c>Quantity</c> is its stored balance, which is the sum of its ledger entries (R19; spec 011, R23);
 /// <c>IncomingQuantity</c> is what confirmed purchase orders still expect into the warehouse, in base units
 /// (spec 009, R35); <c>ReservedQuantity</c> what confirmed sales orders shipping from it still owe, and
 /// <c>AvailableQuantity</c> is <c>Quantity</c> minus that, possibly negative (spec 010, R15, R16). An order
@@ -110,6 +110,7 @@ public sealed record StockLineInput(string? ArticleId = null, decimal? Quantity 
 /// <summary>A validated line of a request: well-formed, not yet known to exist. <c>UnitId</c> null is the article's base unit.</summary>
 public readonly record struct StockLineRequest(Guid ArticleId, decimal Quantity, Guid? UnitId = null, int? OrderLineNo = null);
 
+/// <param name="WarehouseId">Omitted or null on a receipt, an issue or a count: the tenant's default warehouse, or the linked order's warehouse (spec 011, R8, R10).</param>
 /// <param name="PurchaseOrderId">The purchase order a receipt fulfils; omitted or null for an unlinked document (spec 009, R18).</param>
 /// <param name="SalesOrderId">The sales order an issue delivers; omitted or null for an unlinked document (spec 010, R5, R6).</param>
 public sealed record CreateStockDocumentInput(
@@ -151,6 +152,13 @@ public sealed record StockDocumentAddressInput(string? Id = null, string? Number
 
 public sealed record ListStockOnHandInput(string? ArticleId = null, string? WarehouseId = null, int? Limit = null, int? Offset = null);
 
+/// <summary>
+/// The stock list of one warehouse (spec 011, 4.3). <c>Id</c> is the warehouse, for clients without a URL path;
+/// <c>Search</c> and <c>IsActive</c> are the article's; <c>HasStock</c> keeps the items with or without stock.
+/// </summary>
+public sealed record ListWarehouseStockInput(
+    string? Id = null, string? Search = null, bool? IsActive = null, bool? HasStock = null, int? Limit = null, int? Offset = null);
+
 public sealed record ListStockLedgerEntriesInput(
     string? ArticleId = null, string? WarehouseId = null, string? DocumentId = null, int? Limit = null, int? Offset = null);
 
@@ -159,7 +167,12 @@ public sealed record StockDocumentValues(
     DateOnly DocumentDate, Guid WarehouseId, Guid? ToWarehouseId, string? Reference, string? Note, IReadOnlyList<StockLineRequest> Lines);
 
 /// <summary>Validated input of a create: the type, the values and the order the document is linked to, if any.</summary>
-public sealed record NewStockDocumentValues(StockDocumentType Type, StockDocumentValues Values, OrderLink? Link = null);
+/// <param name="WarehouseOmitted">
+/// Spec 011, R8: the request named no warehouse (omitted or null). <c>Values.WarehouseId</c> is then empty and
+/// the operation resolves it - the linked order's warehouse, otherwise the tenant's default - before anything else.
+/// </param>
+public sealed record NewStockDocumentValues(
+    StockDocumentType Type, StockDocumentValues Values, OrderLink? Link = null, bool WarehouseOmitted = false);
 
 public sealed record StockDocumentListQuery(
     StockDocumentType? Type, StockDocumentStatus? Status, Guid? WarehouseId, string? Search, int Limit, int Offset, Guid? PurchaseOrderId = null, Guid? SalesOrderId = null);

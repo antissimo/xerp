@@ -14,6 +14,7 @@ public sealed record WarehouseDto(
     string? Region,
     string? CountryCode,
     bool IsActive,
+    bool IsDefault,
     DateTime CreatedAt,
     DateTime UpdatedAt,
     Guid CreatedBy,
@@ -32,13 +33,15 @@ public sealed record WarehouseInput : AddressInput
     public bool? IsActive { get => _isActive; init => _isActive = Given(value); }
 }
 
-public sealed record ListWarehousesInput(string? Search = null, bool? IsActive = null, int? Limit = null, int? Offset = null);
+/// <param name="IsDefault">Spec 011: <c>true</c> returns exactly the tenant's default warehouse, <c>false</c> every other one.</param>
+public sealed record ListWarehousesInput(
+    string? Search = null, bool? IsActive = null, int? Limit = null, int? Offset = null, bool? IsDefault = null);
 
 /// <summary>Validated field values of a warehouse.</summary>
 public sealed record WarehouseValues(string Code, string Name, Address Address, bool IsActive);
 
 /// <summary>Validated list query. <c>Search</c> is null when there is no text filter.</summary>
-public sealed record WarehouseListQuery(string? Search, bool? IsActive, int Limit, int Offset);
+public sealed record WarehouseListQuery(string? Search, bool? IsActive, int Limit, int Offset, bool? IsDefault = null);
 
 /// <summary>The result of a delete (MCP: <c>{ "deleted": true }</c>; HTTP: 204).</summary>
 public sealed record WarehouseDeleted(bool Deleted = true);

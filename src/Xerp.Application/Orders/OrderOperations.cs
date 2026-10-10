@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Xerp.Application.Common;
 using Xerp.Application.Ports;
 using Xerp.Application.Stock;
+using Xerp.Application.Warehouses;
 using Xerp.Domain.Inventory;
 using Xerp.Domain.Orders;
 
@@ -131,6 +132,14 @@ public abstract class OrderOperations<TOrder, TLine, TDto, TSummary>(IXerpDb db,
         {
             return await db.SerializedPerTenantAsync<Result<TDto>>(async ct =>
             {
+                // Spec 011, R8: no warehouse named means the tenant's default at this moment - read under the
+                // lock set-default takes too - and from here on the order is as if the caller had named it.
+                if (values.WarehouseOmitted)
+                    values = values with
+                    {
+                        WarehouseId = DefaultWarehouseRules.ForNewDocument(null, null, await WarehouseReads.DefaultIdAsync(db, ct)),
+                        WarehouseOmitted = false,
+                    };
                 var lines = await CheckReferencesAsync(values, stored: null, ct);
                 if (!lines.IsSuccess)
                     return lines.Error;
@@ -391,7 +400,7 @@ public abstract class OrderOperations<TOrder, TLine, TDto, TSummary>(IXerpDb db,
 
     private Result<OrderValues> Validate(OrderInput input) => OrderValidation.Values(
         kind, input.OrderDate, input.DueDate, input.PartnerId, input.WarehouseId, input.Reference, input.Note, input.Lines,
-        input.DueDateGiven, input.ReferenceGiven, input.NoteGiven);
+        input.DueDateGiven, input.ReferenceGiven, input.NoteGiven, input.WarehouseOptional);
 
     private sealed record PartnerState(bool IsActive, bool HasRole);
 
