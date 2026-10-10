@@ -159,7 +159,8 @@ Five new tools; `tools/list` returns exactly 62: the 57 of spec 011 and `rule_li
 
 - Mapping, attribution and errors as 003/R12–R17. `key` is the addressing argument: missing, `null` or not a
   string -> `VALIDATION_FAILED` with key `key`; a string that is no rule -> `NOT_FOUND`. `value` missing or
-  not a boolean -> `VALIDATION_FAILED` with key `value`.
+  not a boolean -> `VALIDATION_FAILED` with key `value`. `rule_set` with neither answers both keys: both are
+  the form of the request (R5; 012-q B-Q4).
 - A tool error carries `rules` exactly as the HTTP problem does: `{ "code", "detail", "errors"?, "rules"? }`.
 - Annotations: `rule_list`, `rule_get`, `rule_change_list` read-only; `rule_set`, `rule_reset` not read-only,
   idempotent, not destructive.
@@ -228,7 +229,8 @@ at most 200 lines (005/R4, 008/R2, 009/R5). Their refusals carry no `rules` memb
   nothing: no change is recorded, `updatedAt` / `updatedBy` stay.
 - R9. **Reset** removes the tenant's value: `value == default`, `source == "default"`, `updatedAt` /
   `updatedBy` those of the reset. Reset of a rule whose `source` is already `"default"` succeeds and changes
-  nothing.
+  nothing. A reset of a tenant value that equals the default does change something — the tenant's value is
+  gone — and is recorded, with `oldValue == newValue` (012-q T-Q5).
 - R10. **Every set and reset that changes something records one change**: `action`, the effective value
   before (`oldValue`) and after (`newValue`), `changedAt` (equal to the rule's `updatedAt`), `changedBy`.
   Changes are never altered or deleted; no operation removes them.
@@ -459,7 +461,11 @@ Structure
      (nullable), or the output schema of an order (`supplier` / `customer` nullable);
   5. the builder's test that the database refuses a negative `StockBalance.Quantity` (011): removed; AC-52
      takes its place. A builder's model test that `SupplierId` / `CustomerId` is not nullable, if one
-     exists: changed to nullable.
+     exists: changed to nullable. With it, the builder's unit tests of the same decision in Domain: "a
+     stored balance never goes below zero" (`StockBalanceRulesTests`) and "a count's book quantity is never
+     negative" (`StockCountRulesTests`) now expect what section 3, R19 and R20 say;
+  6. the builder's unit tests that call one of the six checks: they pass the rule's default explicitly
+     (the checks take the boolean, AC-04); no expected value in them changes (012-q B-Q2).
   One migration added.
 - AC-02 *(builder, model)* The model and table tests pass with `RuleValue` and `RuleChange`; both are
   tenant-owned and filtered.
