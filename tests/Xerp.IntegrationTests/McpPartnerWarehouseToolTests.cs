@@ -262,7 +262,7 @@ public class McpPartnerWarehouseToolTests(XerpFixture app)
         McpAssert.JsonEqual(http, byId);
         McpAssert.JsonEqual(http, byCode);
         McpAssert.JsonEqual(await W.ListAsync(s.Http), all);
-        Assert.Equal(5, all.Total());
+        Assert.Equal(6, all.Total()); // with the default warehouse (spec 011, R1)
         McpAssert.JsonEqual(await W.ListAsync(s.Http, "?search=store&isActive=true&limit=1&offset=1"), filtered);
         Assert.Equal(["S-2"], filtered.Codes());
         Assert.Equal(3, filtered.Total());
@@ -319,7 +319,7 @@ public class McpPartnerWarehouseToolTests(XerpFixture app)
         await s.Mcp.ErrorAsync("warehouse_update", W.Full("W9").WithId(warehouse.Id()).Without("city"),
             "VALIDATION_FAILED", "city");
 
-        Assert.Equal(["W1"], (await W.ListAsync(s.Http)).Codes());
+        Assert.Equal(["CENTRAL", "W1"], (await W.ListAsync(s.Http)).Codes());
         await W.AssertUnchangedAsync(s.Http, warehouse);
     }
 
@@ -346,8 +346,8 @@ public class McpPartnerWarehouseToolTests(XerpFixture app)
         await s.Mcp.ErrorAsync("warehouse_create", new { code = "W-1", name = "Second" }, "CODE_TAKEN");
 
         var list = await W.ListAsync(s.Http);
-        Assert.Equal(["W-1"], list.Codes());
-        Assert.Equal("First", list.GetProperty("items")[0].Str("name"));
+        Assert.Equal(["CENTRAL", "W-1"], list.Codes());
+        Assert.Equal("First", list.GetProperty("items")[1].Str("name"));
     }
 
     // ---- parity and attribution ----

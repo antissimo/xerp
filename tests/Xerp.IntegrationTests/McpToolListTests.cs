@@ -14,6 +14,8 @@ namespace Xerp.IntegrationTests;
 /// Spec 008, AC-80: still 37 tools; <c>type</c> allows <c>count</c>.
 /// Spec 009, AC-85: 45 tools; the stock tools gain the order link (<c>purchaseOrderId</c>, <c>orderLineNo</c>).
 /// Spec 010, AC-85: 53 tools; <c>stock_document_create</c> and <c>stock_document_list</c> gain <c>salesOrderId</c>.
+/// Spec 011, AC-70: 57 tools; <c>warehouse_list</c> gains <c>isDefault</c>; <c>warehouseId</c> leaves <c>required</c> of the
+/// three create tools of documents.
 /// </summary>
 [Collection(XerpCollection.Name)]
 public class McpToolListTests(XerpFixture app)
@@ -54,7 +56,7 @@ public class McpToolListTests(XerpFixture app)
         new("partner_update", ["id", "code", "name", "isCustomer", "isSupplier", "taxId", .. Address, "isActive"],
             ["id", "code", "name", "isCustomer", "isSupplier", "taxId", .. Address, "isActive"], "update"),
         new("partner_delete", ["id"], ["id"], "delete"),
-        new("warehouse_list", ["search", "isActive", "limit", "offset"], [], "read"),
+        new("warehouse_list", ["search", "isActive", "isDefault", "limit", "offset"], [], "read"),
         new("warehouse_get", ["id", "code"], [], "read"),
         new("warehouse_create", ["code", "name", .. Address, "isActive"], ["code", "name"], "create"),
         new("warehouse_update", ["id", "code", "name", .. Address, "isActive"],
@@ -69,7 +71,7 @@ public class McpToolListTests(XerpFixture app)
         new("stock_document_list", ["type", "status", "warehouseId", "purchaseOrderId", "salesOrderId", "search", "limit", "offset"], [], "read"),
         new("stock_document_get", ["id", "number"], [], "read"),
         new("stock_document_create", ["type", "documentDate", "warehouseId", "toWarehouseId", "purchaseOrderId", "salesOrderId", "lines", "reference", "note"],
-            ["type", "documentDate", "warehouseId", "lines"], "create"),
+            ["type", "documentDate", "lines"], "create"),
         new("stock_document_update", ["id", "documentDate", "warehouseId", "toWarehouseId", "reference", "note", "lines"],
             ["id", "documentDate", "warehouseId", "reference", "note", "lines"], "update"),
         new("stock_document_delete", ["id"], ["id"], "delete"),
@@ -100,7 +102,7 @@ public class McpToolListTests(XerpFixture app)
         new("purchase_order_list", ["status", "receiptStatus", "supplierId", "warehouseId", "search", "limit", "offset"], [], "read"),
         new("purchase_order_get", ["id", "number"], [], "read"),
         new("purchase_order_create", ["orderDate", "supplierId", "warehouseId", "lines", "expectedDate", "reference", "note"],
-            ["orderDate", "supplierId", "warehouseId", "lines"], "create"),
+            ["orderDate", "supplierId", "lines"], "create"),
         new("purchase_order_update", ["id", "orderDate", "expectedDate", "supplierId", "warehouseId", "reference", "note", "lines"],
             ["id", "orderDate", "expectedDate", "supplierId", "warehouseId", "reference", "note", "lines"], "update"),
         new("purchase_order_delete", ["id"], ["id"], "delete"),
@@ -115,7 +117,7 @@ public class McpToolListTests(XerpFixture app)
         new("sales_order_list", ["status", "deliveryStatus", "customerId", "warehouseId", "search", "limit", "offset"], [], "read"),
         new("sales_order_get", ["id", "number"], [], "read"),
         new("sales_order_create", ["orderDate", "customerId", "warehouseId", "lines", "requestedDate", "reference", "note"],
-            ["orderDate", "customerId", "warehouseId", "lines"], "create"),
+            ["orderDate", "customerId", "lines"], "create"),
         new("sales_order_update", ["id", "orderDate", "requestedDate", "customerId", "warehouseId", "reference", "note", "lines"],
             ["id", "orderDate", "requestedDate", "customerId", "warehouseId", "reference", "note", "lines"], "update"),
         new("sales_order_delete", ["id"], ["id"], "delete"),
@@ -124,9 +126,19 @@ public class McpToolListTests(XerpFixture app)
         new("sales_order_reopen", ["id"], ["id"], "create"),
     ];
 
-    // The complete list (spec 004, section 5.3; specs 005 to 010, section 5): a new tool must be added here by its spec.
+    // Spec 011, section 5. Set-default and rebuild change state, destroy nothing and may be repeated.
+    private static readonly Expected[] Spec011Tools =
+    [
+        new("warehouse_set_default", ["id"], ["id"], "repeatable"),
+        new("warehouse_stock_list", ["id", "search", "isActive", "hasStock", "limit", "offset"], ["id"], "read"),
+        new("stock_balance_difference_list", ["limit", "offset"], [], "read"),
+        new("stock_balance_rebuild", [], [], "repeatable"),
+    ];
+
+    // The complete list (spec 004, section 5.3; specs 005 to 011, section 5): a new tool must be added here by its spec.
     private static readonly Expected[] Tools =
-        [.. Spec003Tools, .. Spec004Tools, .. Spec005Tools, .. Spec006Tools, .. Spec007Tools, .. Spec009Tools, .. Spec010Tools];
+        [.. Spec003Tools, .. Spec004Tools, .. Spec005Tools, .. Spec006Tools, .. Spec007Tools, .. Spec009Tools, .. Spec010Tools,
+            .. Spec011Tools];
 
     private async Task<Dictionary<string, Tool>> ListToolsAsync(string? key = null)
     {
@@ -139,7 +151,7 @@ public class McpToolListTests(XerpFixture app)
     private static string[] Sorted(IEnumerable<string> values) => values.Order(StringComparer.Ordinal).ToArray();
 
     [Fact]
-    public async Task AC40_S004_AC90_S005_AC80_S006_AC80_S007_AC80_S009_AC85_S010_AC85_Tool_list_is_exactly_the_53_tools_of_the_specs()
+    public async Task AC40_S004_AC90_S005_AC80_S006_AC80_S007_AC80_S009_AC85_S010_AC85_S011_AC70_Tool_list_is_exactly_the_57_tools_of_the_specs()
     {
         var tools = await ListToolsAsync();
 
@@ -150,7 +162,8 @@ public class McpToolListTests(XerpFixture app)
         Assert.Equal(4, Spec007Tools.Length);
         Assert.Equal(8, Spec009Tools.Length);
         Assert.Equal(8, Spec010Tools.Length);
-        Assert.Equal(53, Tools.Length);
+        Assert.Equal(4, Spec011Tools.Length);
+        Assert.Equal(57, Tools.Length);
         Assert.Equal(Sorted(Tools.Select(t => t.Name)), Sorted(tools.Keys));
         Assert.DoesNotContain("api_key_create", tools.Keys);
         Assert.DoesNotContain(tools.Keys, name => name.StartsWith("tenant", StringComparison.OrdinalIgnoreCase));
@@ -302,8 +315,8 @@ public class McpToolListTests(XerpFixture app)
     {
         var tools = await ListToolsAsync();
 
-        // "No new tool; tools/list still returns exactly the 37 tools of spec 007" — 45 since spec 009, 53 since spec 010.
-        Assert.Equal(53, Tools.Length);
+        // "No new tool; tools/list still returns exactly the 37 tools of spec 007" — 45 since spec 009, 53 since spec 010, 57 since spec 011.
+        Assert.Equal(57, Tools.Length);
         Assert.Equal(Sorted(Tools.Select(t => t.Name)), Sorted(tools.Keys));
         Assert.DoesNotContain(tools.Keys, name => name.Contains("count", StringComparison.OrdinalIgnoreCase));
         // The one place where a criterion asks for words in a description (AC-80).
@@ -467,6 +480,92 @@ public class McpToolListTests(XerpFixture app)
             Assert.Contains(quantity, onHand, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task S011_AC70_The_four_tools_of_spec_011_have_description_closed_input_schema_output_schema_and_annotations()
+    {
+        var tools = await ListToolsAsync();
+
+        AssertMetadata(tools, Spec011Tools);
+        AssertAnnotations(tools, Spec011Tools);
+        foreach (var name in new[] { "warehouse_set_default", "stock_balance_rebuild" })
+        {
+            var a = tools[name].Annotations!;
+            Assert.True(a.ReadOnlyHint == false && a.DestructiveHint == false && a.IdempotentHint == true && a.OpenWorldHint == false,
+                $"{name}: readOnly/destructive/idempotent/openWorld = {(a.ReadOnlyHint, a.DestructiveHint, a.IdempotentHint, a.OpenWorldHint)}.");
+        }
+        foreach (var name in new[] { "warehouse_stock_list", "stock_balance_difference_list" })
+            Assert.True(tools[name].Annotations!.ReadOnlyHint == true && tools[name].Annotations!.OpenWorldHint == false, $"{name} is not read-only.");
+        var hasStock = SchemaTypes(tools["warehouse_stock_list"].InputSchema.GetProperty("properties").GetProperty("hasStock"));
+        Assert.True(hasStock.Contains("boolean") && !hasStock.Contains("string"), "warehouse_stock_list.hasStock must be a JSON boolean.");
+    }
+
+    [Fact]
+    public async Task S011_AC70_Warehouse_list_has_a_described_optional_boolean_isDefault()
+    {
+        var tools = await ListToolsAsync();
+
+        var schema = tools["warehouse_list"].InputSchema;
+        Assert.True(schema.GetProperty("properties").TryGetProperty("isDefault", out var property), "warehouse_list has no isDefault property.");
+        Assert.True(property.TryGetProperty("description", out var description) && !string.IsNullOrWhiteSpace(description.GetString()),
+            "warehouse_list.isDefault has no description.");
+        var types = SchemaTypes(property);
+        Assert.True(types.Contains("boolean") && !types.Contains("string"), $"warehouse_list.isDefault must be a JSON boolean: {property}");
+        if (schema.TryGetProperty("required", out var required))
+            Assert.DoesNotContain("isDefault", required.EnumerateArray().Select(r => r.GetString()));
+    }
+
+    [Theory]
+    [InlineData("stock_document_create")]
+    [InlineData("purchase_order_create")]
+    [InlineData("sales_order_create")]
+    public async Task S011_AC70_WarehouseId_is_optional_on_create_and_allows_a_uuid_or_null(string toolName)
+    {
+        // Section 5: "warehouseId leaves required and allows a uuid or null".
+        var tools = await ListToolsAsync();
+
+        var schema = tools[toolName].InputSchema;
+        Assert.True(schema.GetProperty("properties").TryGetProperty("warehouseId", out var property), $"{toolName} has no warehouseId.");
+        Assert.DoesNotContain("warehouseId", schema.GetProperty("required").EnumerateArray().Select(r => r.GetString()));
+        var types = SchemaTypes(property);
+        Assert.True(types.Contains("string") && types.Contains("null"), $"{toolName}.warehouseId must allow a string and null: {property}");
+        // The update tools still require it (R9).
+        var update = tools[toolName.Replace("_create", "_update")].InputSchema;
+        Assert.Contains("warehouseId", update.GetProperty("required").EnumerateArray().Select(r => r.GetString()));
+    }
+
+    [Fact]
+    public async Task S011_AC70_Every_tool_that_returns_a_warehouse_has_isDefault_in_its_output_schema()
+    {
+        var tools = await ListToolsAsync();
+
+        foreach (var name in new[] { "warehouse_get", "warehouse_create", "warehouse_update", "warehouse_set_default" })
+        {
+            Assert.True(tools.TryGetValue(name, out var tool), $"Tool '{name}' is not listed.");
+            Assert.True(tool!.OutputSchema is { } output && output.GetProperty("properties").TryGetProperty("isDefault", out _),
+                $"{name}: the outputSchema has no isDefault: {tool.OutputSchema}");
+        }
+    }
+
+    [Fact]
+    public async Task S011_Section5_The_descriptions_say_what_the_spec_asks()
+    {
+        var tools = await ListToolsAsync();
+        string Description(string name) => tools.TryGetValue(name, out var tool) ? tool.Description ?? "" : "";
+
+        // Section 5, "Descriptions say": the names an agent has to act on.
+        Assert.Contains("isDefault", Description("warehouse_list"), StringComparison.Ordinal);
+        foreach (var name in new[] { "stock_document_create", "purchase_order_create", "sales_order_create" })
+            Assert.Contains("default warehouse", Description(name), StringComparison.OrdinalIgnoreCase);
+        foreach (var name in new[] { "warehouse_update", "warehouse_delete" })
+        {
+            Assert.Contains("DEFAULT_WAREHOUSE", Description(name), StringComparison.Ordinal);
+            Assert.Contains("warehouse_set_default", Description(name), StringComparison.Ordinal);
+        }
+        Assert.Contains("stock_on_hand_list", Description("warehouse_stock_list"), StringComparison.Ordinal);
+        Assert.Contains("stock_balance_rebuild", Description("stock_balance_difference_list"), StringComparison.Ordinal);
+        Assert.Contains("ledger", Description("stock_balance_rebuild"), StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>Follows a local <c>$ref</c> (<c>#/$defs/Name</c>) inside the tool's input schema.</summary>
     private static JsonElement Resolve(JsonElement root, JsonElement schema)
     {
@@ -527,6 +626,8 @@ public class McpToolListTests(XerpFixture app)
                 "delete" => actual == (false, true, false, false),
                 // Spec 005, section 5: posting is permanent.
                 "post" => actual == (false, true, false, false),
+                // Spec 011, section 5: warehouse_set_default and stock_balance_rebuild.
+                "repeatable" => actual == (false, false, true, false),
                 _ => false,
             };
             Assert.True(ok, $"{expected.Name} ({expected.Kind}): readOnly/destructive/idempotent/openWorld = {actual}.");

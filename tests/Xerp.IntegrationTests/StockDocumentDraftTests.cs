@@ -310,8 +310,7 @@ public class StockDocumentDraftTests(XerpFixture app)
     [InlineData("type", "\"return\"")] // spec 006 made "transfer" a valid type
     [InlineData("type", "\"Receipt\"")]
     [InlineData("type", null)]
-    [InlineData("warehouseId", "\"abc\"")]
-    [InlineData("warehouseId", null)]
+    [InlineData("warehouseId", "\"abc\"")] // a missing warehouseId is the default warehouse since spec 011 (011/AC-30)
     public async Task AC26_Invalid_or_missing_header_field_is_rejected_with_its_key(string property, string? json)
     {
         // json == null: the property is omitted.

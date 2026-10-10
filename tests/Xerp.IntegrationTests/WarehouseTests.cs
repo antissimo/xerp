@@ -10,13 +10,14 @@ public class WarehouseTests(XerpFixture app)
 {
     private static readonly MasterApi W = MasterApi.Warehouses;
 
-    // Spec 004, 4.2: all properties are always present; no partner properties.
+    // Spec 004, 4.2: all properties are always present; no partner properties. Spec 011, 4.1: isDefault.
     private static readonly string[] Representation =
     [
         "addressLine1", "addressLine2", "city", "code", "countryCode", "createdAt", "createdBy", "id", "isActive",
-        "name", "postalCode", "region", "updatedAt", "updatedBy",
+        "isDefault", "name", "postalCode", "region", "updatedAt", "updatedBy",
     ];
 
+    /// <summary>The number of warehouses, the default one every tenant is created with included (spec 011, R1).</summary>
     private async Task<int> TotalAsync(TestTenant tenant) => (await W.ListAsync(tenant.Client)).Total();
 
     private static JsonObject Changed(string code) => new()
@@ -152,7 +153,7 @@ public class WarehouseTests(XerpFixture app)
         using var response = await W.PostAsync(tenant.Client, W.Minimal("W1").With(field, new string('x', max + 1)));
 
         await HttpAssert.ValidationAsync(response, field);
-        Assert.Equal(0, await TotalAsync(tenant));
+        Assert.Equal(1, await TotalAsync(tenant));
     }
 
     [Theory]
@@ -177,7 +178,7 @@ public class WarehouseTests(XerpFixture app)
         using var response = await tenant.Client.PostAsync(W.Path, HttpAssert.Raw(json));
 
         await HttpAssert.ValidationAsync(response, errorKey);
-        Assert.Equal(0, await TotalAsync(tenant));
+        Assert.Equal(1, await TotalAsync(tenant));
     }
 
     [Fact]
@@ -204,7 +205,7 @@ public class WarehouseTests(XerpFixture app)
         using var response = await tenant.Client.PostAsync(W.Path, HttpAssert.Raw(json));
 
         await HttpAssert.ValidationAsync(response);
-        Assert.Equal(0, await TotalAsync(tenant));
+        Assert.Equal(1, await TotalAsync(tenant));
     }
 
     [Fact]
@@ -219,8 +220,8 @@ public class WarehouseTests(XerpFixture app)
         await HttpAssert.CodeTakenAsync(same);
         await HttpAssert.CodeTakenAsync(lower);
         var list = await W.ListAsync(tenant.Client);
-        Assert.Equal(["WH-1"], list.Codes());
-        Assert.Equal("First", list.GetProperty("items")[0].Str("name"));
+        Assert.Equal(["CENTRAL", "WH-1"], list.Codes());
+        Assert.Equal("First", list.GetProperty("items")[1].Str("name"));
     }
 
     [Fact]
@@ -235,7 +236,7 @@ public class WarehouseTests(XerpFixture app)
         Assert.Equal(9, responses.Count(r => r.StatusCode == HttpStatusCode.Conflict));
         foreach (var conflict in responses.Where(r => r.StatusCode == HttpStatusCode.Conflict))
             await HttpAssert.CodeTakenAsync(conflict);
-        Assert.Equal(1, await TotalAsync(tenant));
+        Assert.Equal(2, await TotalAsync(tenant));
     }
 
     [Fact]
@@ -298,7 +299,7 @@ public class WarehouseTests(XerpFixture app)
 
         Assert.Equal("Abc-1", kept.Str("code"));
         Assert.Equal("ABC-1", recased.Str("code"));
-        Assert.Equal(1, await TotalAsync(tenant));
+        Assert.Equal(2, await TotalAsync(tenant));
     }
 
     [Theory]
@@ -335,7 +336,7 @@ public class WarehouseTests(XerpFixture app)
         await HttpAssert.ValidationAsync(invalidPut, "name");
         await HttpAssert.NotFoundAsync(notUuid);
         await HttpAssert.NotFoundAsync(byCode);
-        Assert.Equal(0, await TotalAsync(tenant));
+        Assert.Equal(1, await TotalAsync(tenant));
     }
 
     [Fact]
@@ -354,7 +355,7 @@ public class WarehouseTests(XerpFixture app)
         await HttpAssert.NotFoundAsync(get);
         await HttpAssert.NotFoundAsync(second);
         Assert.NotEqual(created.Id(), again.Id());
-        Assert.Equal(1, await TotalAsync(tenant));
+        Assert.Equal(2, await TotalAsync(tenant));
     }
 
     [Fact]
@@ -368,15 +369,16 @@ public class WarehouseTests(XerpFixture app)
         var all = await W.ListAsync(tenant.Client);
         var third = await W.ListAsync(tenant.Client, "?limit=2&offset=2");
 
+        // Spec 011, R1: "empty" is "only the default warehouse".
         Assert.Equal(["items", "limit", "offset", "total"], empty.PropertyNames());
-        Assert.Equal(0, empty.GetProperty("items").GetArrayLength());
-        Assert.Equal(0, empty.Total());
+        Assert.Equal(["CENTRAL"], empty.Codes());
+        Assert.Equal(1, empty.Total());
         Assert.Equal(50, empty.GetProperty("limit").GetInt32());
         Assert.Equal(0, empty.GetProperty("offset").GetInt32());
-        Assert.Equal(["A", "b", "c"], all.Codes());
-        Assert.Equal(3, all.Total());
-        Assert.Equal(["c"], third.Codes());
-        Assert.Equal(3, third.Total());
+        Assert.Equal(["A", "b", "c", "CENTRAL"], all.Codes());
+        Assert.Equal(4, all.Total());
+        Assert.Equal(["c", "CENTRAL"], third.Codes());
+        Assert.Equal(4, third.Total());
     }
 
     [Theory]
@@ -405,11 +407,11 @@ public class WarehouseTests(XerpFixture app)
         var all = await W.ListAsync(tenant.Client);
         using var invalid = await tenant.Client.GetAsync($"{W.Path}?isActive=maybe");
 
-        Assert.Equal(["on-1", "on-2"], active.Codes());
-        Assert.Equal(2, active.Total());
+        Assert.Equal(["CENTRAL", "on-1", "on-2"], active.Codes());
+        Assert.Equal(3, active.Total());
         Assert.Equal(["off-1"], inactive.Codes());
         Assert.Equal(1, inactive.Total());
-        Assert.Equal(3, all.Total());
+        Assert.Equal(4, all.Total());
         await HttpAssert.ValidationAsync(invalid, "isActive");
     }
 
@@ -420,7 +422,7 @@ public class WarehouseTests(XerpFixture app)
     [InlineData("?search=%25", "X-3")] // a literal percent sign only
     [InlineData("?search=_", "")]
     [InlineData("?search=main&isActive=false", "")]
-    [InlineData("?search=", "W-1,W-2,X-3")]
+    [InlineData("?search=", "CENTRAL,W-1,W-2,X-3")]
     public async Task AC83_Search_matches_code_and_name_but_not_the_address(string query, string expectedCodes)
     {
         var tenant = await app.NewTenantAsync();

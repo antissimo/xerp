@@ -90,12 +90,18 @@ public class PartnerWarehouseIsolationTests(XerpFixture app)
         await P.AssertUnchangedAsync(a.Http, owned.Partner);
         await W.AssertUnchangedAsync(a.Http, owned.Warehouse);
         Assert.Equal(["X1"], (await P.ListAsync(a.Http)).Codes());
-        Assert.Equal(["W1"], (await W.ListAsync(a.Http)).Codes());
+        Assert.Equal(["CENTRAL", "W1"], (await W.ListAsync(a.Http)).Codes());
     }
 
     private static void AssertEmpty(JsonElement list, string what)
     {
         Assert.True(list.GetProperty("items").GetArrayLength() == 0 && list.Total() == 0, $"{what} is not empty: {list}");
+    }
+
+    /// <summary>Spec 011, R1: a tenant that created no warehouse has its default warehouse and nothing else.</summary>
+    private static void AssertOnlyDefault(JsonElement list, string what)
+    {
+        Assert.True(list.Codes().SequenceEqual(["CENTRAL"]) && list.Total() == 1, $"{what} is not only the default warehouse: {list}");
     }
 
     [Fact]
@@ -107,8 +113,10 @@ public class PartnerWarehouseIsolationTests(XerpFixture app)
 
         foreach (var query in new[] { "", "?search=T-777", "?search=X1", "?isCustomer=true", "?isActive=true", "?search=acme" })
             AssertEmpty(await P.ListAsync(b.Http, query), $"B's GET /partners{query}");
-        foreach (var query in new[] { "", "?search=W1", "?isActive=true", "?search=main" })
+        foreach (var query in new[] { "?search=W1", "?search=main" })
             AssertEmpty(await W.ListAsync(b.Http, query), $"B's GET /warehouses{query}");
+        foreach (var query in new[] { "", "?isActive=true" })
+            AssertOnlyDefault(await W.ListAsync(b.Http, query), $"B's GET /warehouses{query}");
         // The same queries do find the records for A, so the emptiness above is isolation and not a broken filter.
         Assert.Equal(["X1"], (await P.ListAsync(a.Http, "?search=T-777")).Codes());
         Assert.Equal(["W1"], (await W.ListAsync(a.Http, "?search=W1")).Codes());
@@ -150,7 +158,7 @@ public class PartnerWarehouseIsolationTests(XerpFixture app)
         await HttpAssert.NotFoundAsync(deleteWarehouse);
         await AssertUnchangedAsync(a, owned);
         AssertEmpty(await P.ListAsync(b.Http), "B's partner list");
-        AssertEmpty(await W.ListAsync(b.Http), "B's warehouse list");
+        AssertOnlyDefault(await W.ListAsync(b.Http), "B's warehouse list");
     }
 
     [Fact]
@@ -210,7 +218,7 @@ public class PartnerWarehouseIsolationTests(XerpFixture app)
         Assert.DoesNotContain("T-777", problem.ToString());
         Assert.DoesNotContain(owned.Partner.Id().ToString(), problem.ToString());
         AssertEmpty(await P.ListAsync(b.Http), "B's partner list");
-        AssertEmpty(await W.ListAsync(b.Http), "B's warehouse list");
+        AssertOnlyDefault(await W.ListAsync(b.Http), "B's warehouse list");
         await AssertUnchangedAsync(a, owned);
     }
 
@@ -226,7 +234,7 @@ public class PartnerWarehouseIsolationTests(XerpFixture app)
         AssertEmpty(await b.Mcp.OkAsync("partner_list", new { }), "B's partner_list");
         AssertEmpty(await b.Mcp.OkAsync("partner_list", new { search = "T-777" }), "B's partner_list for A's tax id");
         AssertEmpty(await b.Mcp.OkAsync("partner_list", new { isCustomer = true }), "B's partner_list of customers");
-        AssertEmpty(await b.Mcp.OkAsync("warehouse_list", new { }), "B's warehouse_list");
+        AssertOnlyDefault(await b.Mcp.OkAsync("warehouse_list", new { }), "B's warehouse_list");
         AssertEmpty(await b.Mcp.OkAsync("warehouse_list", new { search = "W1" }), "B's warehouse_list for A's code");
         await b.Mcp.ErrorAsync("partner_get", new { id = partnerId }, "NOT_FOUND");
         await b.Mcp.ErrorAsync("partner_get", new { code = "X1" }, "NOT_FOUND");
@@ -257,7 +265,7 @@ public class PartnerWarehouseIsolationTests(XerpFixture app)
         Assert.NotEqual(owned.Partner.Id(), partnerB.Id());
         Assert.NotEqual(owned.Warehouse.Id(), warehouseB.Id());
         Assert.Equal(["X1"], (await P.ListAsync(b.Http)).Codes());
-        Assert.Equal(["W1"], (await W.ListAsync(b.Http)).Codes());
+        Assert.Equal(["CENTRAL", "W1"], (await W.ListAsync(b.Http)).Codes());
         await AssertUnchangedAsync(a, owned);
     }
 
