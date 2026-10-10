@@ -14,6 +14,11 @@ fragment, number and quantity quoted here is what came back.
 (section 4, checked for the earlier version of this guide only); and rules stated in prose without a quoted
 result — they are taken from the specs, and the ones not exercised are marked *(not run)*.
 
+**Added on 2026-10-10, not run:** section 6.5 (spec 011, merged as `442e24e`: the default warehouse, the
+stock list of a warehouse, checking and rebuilding the stored balance) and section 6.6 (spec 011a, the
+partner on a stock document, as reviewed on `1e198d6`). Routes, parameters, properties and error codes there
+were read from the code of `1e198d6`; no call was run and no result is quoted.
+
 ## 1. Start the stack
 
 Needs Docker with Compose. Nothing else: the API image is built from source.
@@ -222,6 +227,68 @@ curl -s "$API/stock-ledger-entries?documentId=$CNT" -H "$H" # one entry: -5
 is saved; if stock of a counted article moved before posting, the post is refused with `409 COUNT_OUTDATED` —
 save the draft again (`PUT`) and post *(not run)*. Articles not on the count are untouched.
 
+### 6.5 The default warehouse, the stock list, the stored balance *(not run)*
+
+Every tenant has exactly one default warehouse. A new tenant gets it with the tenant: code `CENTRAL`,
+`"isDefault": true`.
+
+```bash
+curl -s "$API/warehouses?isDefault=true" -H "$H"            # the default warehouse
+curl -s -X POST $API/warehouses/$WH/set-default -H "$H"     # no body; 200, WH-1 is now the default
+```
+
+- A receipt, an issue, a count, a purchase order and a sales order created **without** `warehouseId` (or with
+  `null`) go to the default warehouse; a receipt or delivery linked to an order goes to the order's
+  warehouse. A transfer always names both warehouses, and every replace (`PUT`) names the warehouse.
+- The default warehouse cannot be deactivated or deleted (`409 DEFAULT_WAREHOUSE`): make another one the
+  default first. Only an active warehouse can become the default (the same code otherwise).
+
+The stock list of one warehouse has a row for **every** stock article, also those with nothing on hand:
+
+```bash
+curl -s "$API/warehouses/$WH/stock" -H "$H"
+curl -s "$API/warehouses/$WH/stock?hasStock=true&search=bolt" -H "$H"
+```
+
+Items have the properties of a stock-on-hand item (`article`, `warehouse`, `unit`, `quantity`,
+`incomingQuantity`, `reservedQuantity`, `availableQuantity`); filters are `search`, `isActive`, `hasStock`,
+`limit`, `offset`.
+
+Stock on hand is read from a stored balance per article and warehouse, written together with the ledger at
+every posting and reversal. Two operations compare it with the ledger and repair it:
+
+```bash
+curl -s $API/stock-balance-differences -H "$H"
+# a list; empty when every balance equals the sum of its ledger entries. An item has "article",
+# "warehouse", "unit", "storedQuantity", "ledgerQuantity", "differenceQuantity" (stored minus ledger).
+curl -s -X POST $API/stock-balances/rebuild -H "$H"         # no body; { "pairs": n, "corrected": m }
+```
+
+The ledger is the truth: rebuild makes the balances equal to it and never changes the ledger. In normal
+operation the first list is empty and rebuild corrects `0`.
+
+### 6.6 The partner on a receipt or an issue *(not run)*
+
+A receipt may name the supplier the goods came from, an issue the customer they went to: `partnerId` in the
+header, returned as `"partner": { "id", "code", "name" }` (or `null`). `$SUP` is a supplier as created in
+section 7.
+
+```bash
+curl -s -X POST $API/stock-documents -H "$H" -H "$C" \
+  -d "{\"type\":\"receipt\",\"documentDate\":\"2026-10-10\",\"partnerId\":\"$SUP\",
+       \"lines\":[{\"articleId\":\"$ART\",\"quantity\":10}]}"
+curl -s "$API/stock-documents?partnerId=$SUP" -H "$H"       # every document of that partner
+```
+
+- Optional. The partner of a receipt must have `isSupplier`, of an issue `isCustomer`, otherwise
+  `409 PARTNER_ROLE_MISSING`; it is checked again when the document is posted (active, and still has the
+  role). A transfer and a count have no partner (`400` if one is named).
+- A receipt or delivery **linked to an order** always has the order's partner: leave `partnerId` out. Naming
+  another partner is refused with `409 ORDER_MISMATCH`.
+- A replace (`PUT`) of a receipt or an issue must send `partnerId`; `null` removes the partner.
+- A reversal carries the original's partner. A partner named by any stock document cannot be deleted
+  (`409 IN_USE`).
+
 ## 7. Purchase flow: order -> confirm -> linked receipt -> post
 
 ```bash
@@ -334,12 +401,13 @@ What to know about the API:
 - **Masters** in use cannot be deleted (`409 IN_USE`); deactivate them with `"isActive": false`.
 - Resources of the MVP: `/units-of-measure`, `/articles`, `/articles/{id}/units`, `/partners`, `/warehouses`,
   `/stock-documents`, `/stock-on-hand`, `/stock-ledger-entries`, `/purchase-orders`, `/sales-orders`,
-  `/api-keys`, `/whoami`. Their fields and rules are in `docs/specs/001…010`. There is no OpenAPI document yet (roadmap, 019).
+  `/api-keys`, `/whoami`; since spec 011 also `/warehouses/{id}/stock`, `/stock-balance-differences` and
+  `/stock-balances/rebuild`. Their fields and rules are in `docs/specs/001…011a`. There is no OpenAPI document yet (roadmap, 019).
 
 ## 9. Connect an MCP client
 
 The MCP server is the same process: **`http://localhost:8000/mcp`**, Streamable HTTP transport, stateless,
-authenticated with a tenant API key in the `Authorization: Bearer` header. It offers 53 tools — one per HTTP
+authenticated with a tenant API key in the `Authorization: Bearer` header. It offers 57 tools (53 until spec 011) — one per HTTP
 operation (`article_create`, `stock_document_post`, `stock_document_reverse`, `article_unit_set`,
 `purchase_order_confirm`, `sales_order_create`, `stock_on_hand_list`, …; creating API keys is HTTP only) — and a tool call does exactly
 what the HTTP request does, as the tenant and actor of the key. Use an `agent` key (section 4) so that the
@@ -357,7 +425,8 @@ curl -s -X POST $M -H "Authorization: Bearer $KEY" -H "$C" -H "$A" \
 curl -s -X POST $M -H "Authorization: Bearer $KEY" -H "$C" -H "$A" \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"sales_order_get","arguments":{"number":"SO-000001"}}}'
 ```
-`tools/list` returned 53 tools.
+`tools/list` returned 53 tools (run on 2026-10-09; 57 since spec 011, which added `warehouse_set_default`,
+`warehouse_stock_list`, `stock_balance_difference_list` and `stock_balance_rebuild`).
 Answers come as one `event: message` / `data: {…}` block.
 
 Client configuration — **not verified in this repository**; the shape below is the usual one for clients

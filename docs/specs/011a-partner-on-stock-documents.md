@@ -117,8 +117,11 @@ An unlinked document (no `purchaseOrderId`, no `salesOrderId`)
   every create and replace, also when the partner is kept (009/R2). A partner with both roles fits both.
 - R7. Order of checks on create and replace (005/R8, extended): validation -> document exists -> is a draft
   -> header references: `REFERENCE_NOT_FOUND`, then `REFERENCE_INACTIVE` (warehouse and partner are both
-  header masters; the keys that apply are reported together, as for the two warehouses of a transfer) ->
-  `PARTNER_ROLE_MISSING` -> lines. Each stage answers alone.
+  header masters; the keys that apply are reported together) -> `PARTNER_ROLE_MISSING` -> lines. Each stage
+  answers alone. On replace, what only the stored type can decide — `partnerId` missing on a receipt or an
+  issue, non-null on a transfer or a count — is answered where `toWarehouseId` is (006/R4): after the
+  document is found and before "is a draft" (`011a-q.md`, B-Q3). The two warehouses of a transfer are checked
+  as before (006/R4).
 
 A linked document
 - R8. **The partner of a linked document is the order's partner**: the supplier of the purchase order on a
@@ -230,7 +233,9 @@ Structure
      earlier tests gain `"partnerId": null` and nothing else (a shared replace helper may send it for a
      transfer or a count as well — R1 accepts it); tests that enumerate the properties a replace body must
      contain gain the case of AC-22;
-  4. tests of the stock document's foreign keys or migrations kept by the builder.
+  4. tests of the stock document's foreign keys or migrations kept by the builder, and the builder's unit
+     tests of the order link, whose fixture of the order's facts gains the order's partner (no assertion
+     changes; `011a-q.md`, B-Q2).
   No test of spec 004 changes: an unused partner is still deleted with `204`. No test that asserts a
   quantity, a number, a posting result, an order's progress or the tool list changes. One migration added.
 - AC-02 *(builder)* The migration (R17): on a database with a posted linked receipt, its reversing document,
