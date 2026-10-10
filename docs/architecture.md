@@ -2,6 +2,7 @@
 
 Owner of this file: the architect. Decisions with alternatives are in `docs/adr/`. Vision: `docs/vision.md`.
 Feature order: `docs/roadmap.md`. A spec may refine, but not contradict, this document.
+What a tenant can change and what nobody can: `docs/rules.md` (section 11).
 
 ## 1. Where the code is today and where it must go
 
@@ -152,14 +153,16 @@ Rules:
   gets its `number` when confirmed (`POST /<resource>/{id}/confirm`) and is then immutable; `close` and
   `reopen` switch it between `confirmed` and `closed`. Goods are received or delivered by a stock document
   linked to the order (`purchaseOrderId` / `salesOrderId` on the header, `orderLineNo` on each line); progress
-  per order line is kept in base units and never exceeds the ordered quantity.
+  per order line is kept in base units and, by default, never exceeds the ordered quantity (rules
+  `purchase.overReceiptPercent`, `sales.overDeliveryPercent`).
   Stock on hand shows, per (article, warehouse), `quantity` (the stored balance, equal to the ledger sum), `incomingQuantity` (outstanding
   on confirmed purchase orders), `reservedQuantity` (outstanding on confirmed sales orders) and
-  `availableQuantity` (`quantity − reservedQuantity`, may be negative). Reservation informs and blocks nothing
-  (ADR-0017).
+  `availableQuantity` (`quantity − reservedQuantity`, may be negative). By default reservation informs and blocks nothing
+  (ADR-0017; rule `sales.reservation`).
 - Prices and amounts are exact decimals in the tenant's one currency: a unit price has at most 6 decimal
   places; an amount is rounded to 2 decimal places, half away from zero.
-- Quantities are exact decimals sent as JSON numbers: at most 6 decimal places and 15 significant digits;
+- Quantities are exact decimals sent as JSON numbers: at most 6 decimal places (fewer where the tenant set
+  `quantity.decimals`) and 15 significant digits;
   a quoted number is a wrong type. Consumers compare numerically (`10` equals `10.000000`).
 
 ## 6. Error model (ADR-0004)
@@ -197,6 +200,10 @@ Every non-2xx response under `/api/v1` is `application/problem+json` (RFC 9457) 
 | 409 | `QUANTITY_EXCEEDS_ORDER` | Posting would take an order line above its ordered quantity. `errors` has `lines[i].quantity` for the lines linked to it. |
 | 413 | `PAYLOAD_TOO_LARGE` | The request body is larger than 1 048 576 bytes (1 MB), declared or counted while read. Refused before anything is parsed or applied; no `errors`. Checked after the credential and before routing, on `/api/v1` and on `/mcp` (review of open item 001/7). |
 | 500 | `INTERNAL_ERROR` | Unexpected. No stack trace or SQL in the body. |
+
+A refusal caused by a configurable rule (section 11) carries one more member, `rules`: an array of
+`{ "key", "value", "fields" }` naming every rule that refused, the value it had and the `errors` keys it
+produced. It is absent when the refusal is an invariant's. The `code` does not depend on configuration.
 
 `code` values are part of the contract: clients and tests branch on `code`, never on `detail` text.
 Specs add feature-specific codes; this table is the registry and is updated with them.
@@ -248,8 +255,8 @@ and are answered as HTTP problem documents, not as tool errors (ADR-0009).
   `(TenantId, <column>)` -> `ApiKeys (TenantId, Id)` with `ON DELETE RESTRICT`: an actor can never belong to
   another tenant, and an API key that has written anything can be revoked but never deleted (ADR-0010).
 - Ledger tables (stock ledger from spec 005; journal lines later) are append-only: no `UPDATE`, no `DELETE`;
-  corrections are reversing entries (ADR-0007). Stock on hand always equals the sum of the stock ledger and is
-  never negative (ADR-0012); it is read from the stored balance (next point).
+  corrections are reversing entries (ADR-0007). Stock on hand always equals the sum of the stock ledger; by default
+  it is never negative (ADR-0012; rule `stock.negativeStock`); it is read from the stored balance (next point).
 - Stored projections (ADR-0018): `StockBalance` holds the quantity per (tenant, warehouse, article). The
   ledger is the truth and the balance its copy: written only together with ledger entries, in the same
   transaction and under the same per-tenant lock, and by the rebuild operation; read by everything that
@@ -313,3 +320,34 @@ raises it in `docs/questions/` instead of switching to a non-PostgreSQL test dat
 
 `compose.yaml` remains the way to run the system locally (`docker compose up --build`); the database port stays
 unpublished.
+
+## 11. Configurable rules (ADR-0020) — standing rule for every spec
+
+Owner, 2026-10-10: every validation and business rule is configurable per tenant; we ship the default.
+
+- A check that can refuse a write is either a **rule** — key, type, default, allowed values, a value per
+  tenant — or an **invariant** with a stated reason (security, integrity of the records, shape of the
+  contract, definition). `docs/rules.md` holds both lists; the invariants are approved by the owner.
+- **A spec introduces no rule without one of the two.** Every spec has a section "Rules" with a table: for
+  each new check, its key, type, default and allowed values, or the word *invariant*, the invariant of
+  `docs/rules.md` §2 it falls under (or a new one, for the owner) and one line of reason. A spec whose table
+  is missing a check is not ready for the tester. The same spec adds the rows to `docs/rules.md`.
+- **The default is the behaviour the spec describes.** Acceptance criteria state the behaviour at the default
+  and at one other value at least, for every rule the spec adds, and that a tenant which sets nothing behaves
+  as the default says.
+- **Code.** Rule definitions live in `Xerp.Domain`; a Domain check takes the rule's value as an argument;
+  Application reads values through one port (`IRules`), once per operation, after the per-tenant lock where
+  the operation holds it; Api and MCP read no rule. A literal that decides whether a write is accepted
+  appears only as a definition's default or as a bound of its allowed values. A review that finds another
+  one requires a change.
+- **Values** are stored per tenant only when set; read and changed over HTTP (`/rules`) and MCP (`rule_*`);
+  every change is attributed and kept; a change applies to operations that start after it and rewrites
+  nothing; a change takes the per-tenant lock.
+- **Errors** name the rule (section 6, `rules`).
+- **Keys are contract**, like error codes and tool names: never renamed or reused. The list of keys with
+  their defaults is pinned by an inventory test (section 9); the spec that adds a key approves the addition.
+- **Our defaults do not change under an existing tenant**: a release that changes a default first writes the
+  old one as each existing tenant's own value.
+- Until a rule's batch is merged (`docs/rules.md` §3) it remains a fixed check with the default's behaviour.
+  Moving it onto the registry changes no default behaviour; earlier tests pass unchanged.
+

@@ -205,6 +205,17 @@ outside this repository; they consume the HTTP API (ADR-0005 amendment).
   and protocol behaviour — authentication, strict bodies and query strings, the error document, the list
   envelope, MCP result mapping and tool metadata — is established by specs 001–003 and is *inherited*: a new
   spec states that it applies and carries one smoke criterion per kind, not a re-test of every case per route.
+- **Configurable rules (owner, 2026-10-10; ADR-0020, architecture §11).** For the architect, when writing a
+  spec: (1) list every check the spec adds that can refuse a write; (2) for each, decide *rule* or
+  *invariant* — an invariant only if switching it off breaks security, integrity of the records, the shape of
+  the contract or a definition, never because a setting is inconvenient; (3) give each rule its key
+  (`area.subject[.aspect]`), type, default and allowed values in the spec's "Rules" table and in
+  `docs/rules.md`; (4) write criteria for the default and for one other value, and for "errors name the
+  rule"; (5) put a new invariant before the owner in the spec's "defaults for the owner" section. When
+  reviewing: a literal limit or a policy `if` that is not a rule definition is a required change; so is a
+  rule read in `Api`, or read before the lock by an operation that holds it. If the other value of a rule is
+  behaviour that does not exist, say so and mark it *feature* in `docs/rules.md` — do not call it an
+  invariant.
 - The HTTP API is consumed by separately developed clients (CLI, web UI): no incompatible change within `/api/v1`.
 - The core stays jurisdiction-neutral: no country-specific tax, identifier or fiscalisation rules.
 - Every document type has a warehouse in its header; on create an omitted `warehouseId` means the tenant's
