@@ -91,7 +91,7 @@ No new tool; `tools/list` still returns exactly the 57 tools of spec 011.
     linked document it stays the order's).
   - `stock_document_list` — `partnerId` finds the receipts from a supplier and the issues to a customer,
     linked to an order or not.
-  - `partner_delete` — mentions the further `IN_USE` case.
+  - `partner_delete` — names the further `IN_USE` case in the words "stock document".
 
 ## 6. Business rules
 
@@ -151,7 +151,7 @@ Reversal
 - R14. The reversing document carries the original's partner — the same `partner`, or `null` when the
   original has none (006/R13 extended). Nothing is checked: an original whose partner is inactive or has
   lost the role since is reversed all the same (006/AC-65). The reverse body has no `partnerId`: it is an
-  unknown property (`400`).
+  unknown property (`400` with key `partnerId`, whatever its value).
 
 Effects on the partner
 - R15. A partner is **used** while a stock document — draft, posted or reversed, linked or not — names it:
@@ -161,7 +161,8 @@ Effects on the partner
 Reading
 - R16. `GET /stock-documents?partnerId=` filters by reference (002/R19): the documents whose partner is that
   partner, linked and unlinked, of every type and status; combined with the other filters by AND. A
-  malformed value -> `400` with key `partnerId`; an id that is no partner of the tenant -> an empty list.
+  malformed value -> `400` with key `partnerId`; an id that is no partner of the tenant -> an empty list;
+  an empty value (`?partnerId=`) is treated as absent (001/R15).
   Ordering and paging are unchanged.
 
 Existing data
@@ -215,6 +216,8 @@ articles `A` and `B`, warehouses `W1` and `W2`), partners `SUP` (supplier only) 
 - `SUP2` is a second supplier-only partner; `BOTH` a partner with both roles.
 - "Receipt(P)" / "Issue(P)" means: create a stock document of that type for `W1`, dated `2026-10-10`, with
   one line `{ articleId: A, quantity: 1 }` and `"partnerId": P`.
+- AC-24, AC-31, AC-33 to AC-35 and AC-40 to AC-45 name the receipt side; each holds mirrored for issue /
+  sales order / customer (`011a-q.md`, T-Q7).
 Unmarked criteria are black-box (tester).
 
 Structure
@@ -224,8 +227,9 @@ Structure
   2. tests pinning the exact input-schema properties of `stock_document_create`, `stock_document_update` or
      `stock_document_list` (they gain `partnerId`);
   3. `PUT /stock-documents/{id}` and `stock_document_update` requests for a **receipt or an issue** in
-     earlier tests gain `"partnerId": null` and nothing else; tests that enumerate the properties a replace
-     body must contain gain the case of AC-22;
+     earlier tests gain `"partnerId": null` and nothing else (a shared replace helper may send it for a
+     transfer or a count as well — R1 accepts it); tests that enumerate the properties a replace body must
+     contain gain the case of AC-22;
   4. tests of the stock document's foreign keys or migrations kept by the builder.
   No test of spec 004 changes: an unused partner is still deleted with `204`. No test that asserts a
   quantity, a number, a posting result, an order's progress or the tool list changes. One migration added.
@@ -273,7 +277,7 @@ Unlinked documents — posting and reversal
   `"partnerId": null` -> `200`, then post -> `200`.
 - AC-34 Reversal copies the partner: reverse a posted Receipt(SUP) -> `201`, the reversing document has
   `partner` `SUP`; the reversed original keeps it. Reverse a posted receipt without a partner ->
-  `partner == null`. `POST …/reverse` with `"partnerId"` in the body -> `400`.
+  `partner == null`. `POST …/reverse` with `"partnerId"` in the body -> `400` with key `partnerId`.
 - AC-35 Reversal checks nothing about the partner: post Receipt(SUP), deactivate `SUP` and (a second case)
   take a supplier role away from `BOTH` after posting Receipt(BOTH) -> both reversals `201` with the
   original's partner.
