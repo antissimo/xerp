@@ -375,7 +375,7 @@ public abstract class OrderDraftTests(XerpFixture app, OrderApi o)
         { "partner missing", """{ "$partner": "-" }""", ["$partner"] },
         { "partner malformed", """{ "$partner": "abc" }""", ["$partner"] },
         { "partner null", """{ "$partner": null }""", ["$partner"] },
-        { "warehouse missing", """{ "warehouseId": "-" }""", ["warehouseId"] },
+        // "warehouse missing" is the default warehouse since spec 011 (011/AC-30).
         { "warehouse malformed", """{ "warehouseId": "abc" }""", ["warehouseId"] },
         { "orderDate missing", """{ "orderDate": "-" }""", ["orderDate"] },
         { "orderDate not a date", """{ "orderDate": "2026-02-30" }""", ["orderDate"] },

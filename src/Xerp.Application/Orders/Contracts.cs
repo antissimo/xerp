@@ -104,9 +104,13 @@ public sealed record OrderAddressInput(string? Id = null, string? Number = null)
 public readonly record struct OrderLineRequest(Guid ArticleId, decimal Quantity, decimal UnitPrice, Guid? UnitId);
 
 /// <summary>Validated header and lines of an order of any kind. The references are well-formed, not yet known to exist.</summary>
+/// <param name="WarehouseOmitted">
+/// Spec 011, R8: a create named no warehouse (omitted or null). <c>WarehouseId</c> is then empty and the
+/// operation resolves it to the tenant's default warehouse before anything else.
+/// </param>
 public sealed record OrderValues(
     DateOnly OrderDate, DateOnly? DueDate, Guid PartnerId, Guid WarehouseId, string? Reference, string? Note,
-    IReadOnlyList<OrderLineRequest> Lines);
+    IReadOnlyList<OrderLineRequest> Lines, bool WarehouseOmitted = false);
 
 public sealed record OrderListQuery(
     OrderStatus? Status, FulfilmentStatus? Fulfilment, Guid? PartnerId, Guid? WarehouseId, string? Search, int Limit, int Offset);
@@ -202,9 +206,11 @@ public sealed record ListSalesOrdersInput(
 /// An order request of any kind, under the names every kind shares: what <see cref="OrderOperations{TOrder,TLine,TDto,TSummary}"/>
 /// works with. <c>DueDateGiven</c>, <c>ReferenceGiven</c> and <c>NoteGiven</c> are false when a replace omitted the field.
 /// </summary>
+/// <param name="WarehouseOptional">True for a create: <c>WarehouseId</c> omitted or null means the tenant's default warehouse (spec 011, R8).</param>
 public sealed record OrderInput(
     string? OrderDate, string? DueDate, string? PartnerId, string? WarehouseId, string? Reference, string? Note,
-    IReadOnlyList<OrderLineInput?>? Lines, bool DueDateGiven = true, bool ReferenceGiven = true, bool NoteGiven = true);
+    IReadOnlyList<OrderLineInput?>? Lines, bool DueDateGiven = true, bool ReferenceGiven = true, bool NoteGiven = true,
+    bool WarehouseOptional = false);
 
 /// <summary>The filters of an order list of any kind, as received.</summary>
 public sealed record OrderListInput(

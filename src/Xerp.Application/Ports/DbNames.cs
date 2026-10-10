@@ -17,6 +17,11 @@ public static class DbNames
     public const string ArticleCodeIndex = "IX_Articles_TenantId_CodeLower";
 
     public const string ArticleBaseUnitForeignKey = "FK_Articles_UnitsOfMeasure_TenantId_BaseUnitId";
+
+    /// <summary>Spec 011, R2: the partial unique index that allows one default warehouse per tenant.</summary>
+    public const string DefaultWarehouseIndex = "IX_Warehouses_TenantId_Default";
+    public const string DefaultWarehouseIsActiveCheck = "CK_Warehouses_DefaultIsActive";
+    public const string StockBalanceNotNegativeCheck = "CK_StockBalances_QuantityNotNegative";
 }
 
 /// <summary>Functions that are evaluated by the database, never in memory.</summary>

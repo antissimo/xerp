@@ -29,6 +29,18 @@ public class StockReversalImmutabilityTests(XerpFixture app)
         Assert.Equal(expected, await Stock.LedgerSumAsync(setup.Http, setup.A, setup.W1));
     }
 
+    /// <summary>
+    /// Since spec 011 stock on hand is the stored balance, which only Application's posting writes (011/R21, R23).
+    /// A test that adds ledger entries through the DbContext, behind Application, leaves the balance of that
+    /// one pair behind - exactly the defect verify exists to find - so it derives the balance from the ledger
+    /// with a rebuild before it reads stock. The quantities asserted are the ones asserted before spec 011.
+    /// </summary>
+    private static async Task RebuildBalanceAsync(StockSetup setup)
+    {
+        Assert.Equal(1, await Balance.DifferencesAsync(setup.Http));
+        Assert.Equal(1, (await Balance.RebuildAsync(setup.Http)).Corrected);
+    }
+
     [Fact]
     public async Task AC02_The_reversal_of_a_posted_document_is_accepted_and_changes_only_status_and_link()
     {
@@ -52,6 +64,7 @@ public class StockReversalImmutabilityTests(XerpFixture app)
         Assert.Equal(reversalId, after.GetProperty("reversedBy").GetProperty("id").GetGuid());
         foreach (var property in new[] { "number", "documentDate", "postedAt", "postedBy", "updatedAt", "updatedBy", "note", "lines" })
             McpAssert.JsonEqual(posted.GetProperty(property), after.GetProperty(property), $"The reversal changed '{property}' of the original");
+        await RebuildBalanceAsync(setup);
         await AssertStockIsAsync(setup, 0m);
         await Stock.AssertStockEqualsLedgerAsync(setup.Http);
     }
@@ -199,6 +212,7 @@ public class StockReversalImmutabilityTests(XerpFixture app)
 
         Assert.Equal(3, (await Stock.DocumentsAsync(setup.Http)).Total());
         Assert.Equal(3, (await Stock.LedgerAsync(setup.Http)).Total());
+        await RebuildBalanceAsync(setup);
         await AssertStockIsAsync(setup, 100m);
     }
 }

@@ -26,6 +26,12 @@ public interface IXerpDb
     /// <summary>Append-only: entries are added by posting and never changed or deleted (spec 005, S3).</summary>
     DbSet<StockLedgerEntry> StockLedgerEntries { get; }
 
+    /// <summary>
+    /// Derived (ADR-0018): the stored sum of the ledger per warehouse and article. Written only by
+    /// <c>StockBalances</c> - with the entries of a posting or a reversal, and by rebuild.
+    /// </summary>
+    DbSet<StockBalance> StockBalances { get; }
+
     DbSet<DocumentCounter> DocumentCounters { get; }
     DbSet<PurchaseOrder> PurchaseOrders { get; }
     DbSet<PurchaseOrderLine> PurchaseOrderLines { get; }
@@ -42,6 +48,13 @@ public interface IXerpDb
     /// everything committed before the lock was obtained.
     /// </summary>
     Task<T> SerializedPerTenantAsync<T>(Func<CancellationToken, Task<T>> work, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Runs the reads of <paramref name="work"/> against one snapshot of the database: every query in it sees
+    /// the same committed state, so a write in progress elsewhere is seen wholly or not at all. It takes no
+    /// lock and waits for nobody. For reads only.
+    /// </summary>
+    Task<T> AtOneMomentAsync<T>(Func<CancellationToken, Task<T>> work, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

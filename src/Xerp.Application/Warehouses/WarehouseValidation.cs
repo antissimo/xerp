@@ -31,6 +31,6 @@ public static class WarehouseValidation
         var offset = ListRules.Offset(errors, input.Offset);
         if (errors.Any)
             return errors.ToError();
-        return new WarehouseListQuery(search, input.IsActive, limit, offset);
+        return new WarehouseListQuery(search, input.IsActive, limit, offset, input.IsDefault);
     }
 }

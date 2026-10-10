@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Xerp.Application.Common;
 using Xerp.Application.Orders;
 using Xerp.Application.Ports;
+using Xerp.Application.Warehouses;
 using Xerp.Domain.Inventory;
 using Xerp.Domain.Orders;
 
@@ -28,7 +29,7 @@ namespace Xerp.Application.Stock;
 /// </summary>
 public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, IClock clock)
 {
-    private const string WarehouseField = "warehouseId";
+    private const string WarehouseField = DefaultWarehouseRules.WarehouseField;
     private const string ToWarehouseField = StockDocumentValidation.ToWarehouseField;
 
     public async Task<Result<PagedResult<StockDocumentSummaryDto>>> ListAsync(ListStockDocumentsInput input, CancellationToken cancellationToken = default)
@@ -106,11 +107,22 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
         if (!validated.IsSuccess)
             return validated.Error;
         var (type, values, link) = (validated.Value.Type, validated.Value.Values, validated.Value.Link);
+        var warehouseOmitted = validated.Value.WarehouseOmitted;
 
         try
         {
             return await db.SerializedPerTenantAsync<Result<StockDocumentDto>>(async ct =>
             {
+                // Spec 011, R8, R10: no warehouse named. It is resolved once, here, and from then on the
+                // document is exactly as if the caller had named it.
+                if (warehouseOmitted)
+                {
+                    var warehouseId = await ResolveWarehouseAsync(link, ct);
+                    if (!warehouseId.IsSuccess)
+                        return warehouseId.Error;
+                    values = values with { WarehouseId = warehouseId.Value };
+                    warehouseOmitted = false;
+                }
                 var lines = await CheckReferencesAsync(type, values, stored: null, link, ct);
                 if (!lines.IsSuccess)
                     return lines.Error;
@@ -265,8 +277,10 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
             }
 
             var number = await StockReads.NextNumberAsync(db, TenantId(), DocumentSeries.Of(document.Type), ct);
-            db.StockLedgerEntries.AddRange(
-                document.Post(number, converted.Value.Select(c => c.Factor).ToList(), clock.UtcNow, ActorKeyId()));
+            var entries = document.Post(number, converted.Value.Select(c => c.Factor).ToList(), clock.UtcNow, ActorKeyId());
+            db.StockLedgerEntries.AddRange(entries);
+            // Spec 011, R21: the balances move with the entries, in this transaction and under this lock.
+            await StockBalances.AddAsync(db, TenantId(), entries, ct);
             // R25: from the base quantities the lines were posted with.
             order?.Fulfil(document.Fulfilment);
             await db.SaveChangesAsync(ct);
@@ -317,6 +331,8 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
             var (reversal, reversing) = original.Reverse(entries, values.DocumentDate, values.Note, number, clock.UtcNow, ActorKeyId());
             db.StockDocuments.Add(reversal);
             db.StockLedgerEntries.AddRange(reversing);
+            // Spec 011, R21: a reversal is a posting too.
+            await StockBalances.AddAsync(db, TenantId(), reversing, ct);
             await db.SaveChangesAsync(ct);
             return await ToDtoAsync(reversal, ct);
         }, cancellationToken);
@@ -338,21 +354,32 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
         return result;
     }
 
-    /// <summary>Stock on hand of the given articles in the given warehouses: the sum of the ledger (R19). A pair without entries is absent.</summary>
-    private async Task<Dictionary<(Guid ArticleId, Guid WarehouseId), decimal>> OnHandAsync(
-        IEnumerable<Guid> articles, IEnumerable<Guid> warehouses, CancellationToken cancellationToken)
+    /// <summary>
+    /// Spec 011, R10: the warehouse of a new document that named none. The order a linked document names is
+    /// looked up first - an unknown one is REFERENCE_NOT_FOUND under the link field alone - and its warehouse
+    /// is the only one the link allows; an unlinked document goes to the tenant's default warehouse.
+    /// </summary>
+    private async Task<Result<Guid>> ResolveWarehouseAsync(OrderLink? link, CancellationToken cancellationToken)
     {
-        var articleIds = articles.Distinct().ToList();
-        var warehouseIds = warehouses.Distinct().ToList();
-        var sums = await db.StockLedgerEntries
-            .Where(e => warehouseIds.Contains(e.WarehouseId) && articleIds.Contains(e.ArticleId))
-            .GroupBy(e => new { e.ArticleId, e.WarehouseId })
-            .Select(g => new { g.Key.ArticleId, g.Key.WarehouseId, Quantity = g.Sum(e => e.Quantity) })
-            .ToListAsync(cancellationToken);
-        return sums.ToDictionary(x => (x.ArticleId, x.WarehouseId), x => x.Quantity);
+        Guid? orderWarehouseId = null;
+        if (link is { } orderLink)
+        {
+            if (await OrderReads.FactsAsync(db, orderLink, cancellationToken) is not { } order)
+                return AppError.ReferenceNotFound(OrderKind.Of(orderLink.Side).LinkField, orderLink.OrderId);
+            orderWarehouseId = order.WarehouseId;
+        }
+        return DefaultWarehouseRules.ForNewDocument(null, orderWarehouseId, await WarehouseReads.DefaultIdAsync(db, cancellationToken));
     }
 
-    /// <summary>Stock on hand of the given articles in one warehouse, per article. An article without entries is absent.</summary>
+    /// <summary>
+    /// Stock on hand of the given articles in the given warehouses: the stored balance (spec 011, R23), which
+    /// equals the sum of the ledger (R19, R20). A pair without a balance is absent and has none.
+    /// </summary>
+    private Task<Dictionary<(Guid ArticleId, Guid WarehouseId), decimal>> OnHandAsync(
+        IEnumerable<Guid> articles, IEnumerable<Guid> warehouses, CancellationToken cancellationToken) =>
+        StockBalances.OnHandAsync(db, articles, warehouses, cancellationToken);
+
+    /// <summary>Stock on hand of the given articles in one warehouse, per article. An article without a balance is absent.</summary>
     private async Task<Dictionary<Guid, decimal>> OnHandInAsync(Guid warehouseId, IEnumerable<Guid> articles, CancellationToken cancellationToken) =>
         (await OnHandAsync(articles, [warehouseId], cancellationToken)).ToDictionary(p => p.Key.ArticleId, p => p.Value);
 

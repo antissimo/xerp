@@ -93,10 +93,13 @@ public class StockDocumentValidationTests
     }
 
     [Fact]
-    public void R3_Warehouse_id_is_required_and_a_uuid()
+    public void R3_Warehouse_id_is_a_uuid_and_since_spec_011_may_be_omitted_on_create()
     {
-        AssertInvalid(StockDocumentValidation.Create(Receipt(Line(A, 1m)) with { WarehouseId = null }), "warehouseId");
+        // Until spec 011 a create without warehouseId was invalid here; 011/R8 makes it "the default warehouse"
+        // (the case moved to DefaultWarehouseRulesTests and to 011/AC-30). A malformed id is invalid as before.
+        Assert.True(StockDocumentValidation.Create(Receipt(Line(A, 1m)) with { WarehouseId = null }).Value!.WarehouseOmitted);
         AssertInvalid(StockDocumentValidation.Create(Receipt(Line(A, 1m)) with { WarehouseId = "abc" }), "warehouseId");
+        AssertInvalid(StockDocumentValidation.Create(Receipt(Line(A, 1m)) with { WarehouseId = "" }), "warehouseId");
     }
 
     [Fact]

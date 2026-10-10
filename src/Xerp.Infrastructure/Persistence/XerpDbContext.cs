@@ -29,6 +29,7 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
     public DbSet<StockDocument> StockDocuments => Set<StockDocument>();
     public DbSet<StockDocumentLine> StockDocumentLines => Set<StockDocumentLine>();
     public DbSet<StockLedgerEntry> StockLedgerEntries => Set<StockLedgerEntry>();
+    public DbSet<StockBalance> StockBalances => Set<StockBalance>();
     public DbSet<DocumentCounter> DocumentCounters => Set<DocumentCounter>();
     public DbSet<PurchaseOrder> PurchaseOrders => Set<PurchaseOrder>();
     public DbSet<PurchaseOrderLine> PurchaseOrderLines => Set<PurchaseOrderLine>();
@@ -175,6 +176,11 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
             e.Property<string>(DbNames.CodeLower).HasComputedColumnSql("lower(\"Code\")", stored: true);
             e.HasIndex(nameof(Warehouse.TenantId), DbNames.CodeLower).IsUnique();
             e.HasAlternateKey(w => new { w.TenantId, w.Id });
+            // Spec 011, R2 / ADR-0019: at most one default warehouse per tenant, and it is active - the second
+            // barrier behind the rules in Application. (That there is at least one is kept by provisioning and
+            // by the rules that refuse to deactivate or delete it.)
+            e.HasIndex([nameof(Warehouse.TenantId)], DbNames.DefaultWarehouseIndex).IsUnique().HasFilter("\"IsDefault\"");
+            e.ToTable(t => t.HasCheckConstraint(DbNames.DefaultWarehouseIsActiveCheck, "NOT \"IsDefault\" OR \"IsActive\""));
             e.HasOne<ApiKey>().WithMany()
                 .HasForeignKey(w => new { w.TenantId, w.CreatedBy })
                 .HasPrincipalKey(k => new { k.TenantId, k.Id })
@@ -299,7 +305,7 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
             e.ToTable("StockLedgerEntries");
             e.Property(x => x.Id).ValueGeneratedNever();
             e.Property(x => x.Quantity).HasPrecision(18, QuantityRules.DecimalPlaces);
-            // Stock on hand is a sum over this index.
+            // The sum of a pair - what its stored balance must equal (spec 011, R20) - is a sum over this index.
             e.HasIndex(x => new { x.TenantId, x.ArticleId, x.WarehouseId });
             e.HasIndex(x => new { x.TenantId, x.DocumentId, x.LineNo });
             e.HasOne<Article>().WithMany()
@@ -317,6 +323,24 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
             e.HasOne<ApiKey>().WithMany()
                 .HasForeignKey(x => new { x.TenantId, x.PostedBy })
                 .HasPrincipalKey(k => new { k.TenantId, k.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Spec 011 / ADR-0018: one number per (tenant, warehouse, article), derived from the ledger. No id of
+        // its own and no audit columns; both references include TenantId and restrict deletes.
+        modelBuilder.Entity<StockBalance>(e =>
+        {
+            e.ToTable("StockBalances", t => t.HasCheckConstraint(DbNames.StockBalanceNotNegativeCheck, "\"Quantity\" >= 0"));
+            e.HasKey(b => new { b.TenantId, b.WarehouseId, b.ArticleId });
+            e.Property(b => b.Quantity).HasPrecision(18, QuantityRules.DecimalPlaces);
+            e.HasOne<Warehouse>().WithMany()
+                .HasForeignKey(b => new { b.TenantId, b.WarehouseId })
+                .HasPrincipalKey(w => new { w.TenantId, w.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            // Its index (TenantId, ArticleId) also serves "stock of this article across warehouses".
+            e.HasOne<Article>().WithMany()
+                .HasForeignKey(b => new { b.TenantId, b.ArticleId })
+                .HasPrincipalKey(a => new { a.TenantId, a.Id })
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -361,6 +385,14 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
         var result = await work(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return result;
+    }
+
+    public async Task<T> AtOneMomentAsync<T>(Func<CancellationToken, Task<T>> work, CancellationToken cancellationToken = default)
+    {
+        // REPEATABLE READ in PostgreSQL is snapshot isolation: every statement of the transaction reads the
+        // snapshot of its first one. Nothing is written, so there is nothing to commit and nothing can conflict.
+        await using var transaction = await Database.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, cancellationToken);
+        return await work(cancellationToken);
     }
 
     private static void MapOrder<TOrder, TLine>(

@@ -23,6 +23,7 @@ public static class ErrorCodes
     public const string OrderNotOpen = "ORDER_NOT_OPEN";
     public const string OrderMismatch = "ORDER_MISMATCH";
     public const string QuantityExceedsOrder = "QUANTITY_EXCEEDS_ORDER";
+    public const string DefaultWarehouse = "DEFAULT_WAREHOUSE";
     public const string PayloadTooLarge = "PAYLOAD_TOO_LARGE";
     public const string InternalError = "INTERNAL_ERROR";
 }

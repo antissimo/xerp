@@ -17,6 +17,12 @@ public enum ToolKind
 
     /// <summary>Reversing a posted document (spec 006, section 5): permanent like a posting, with the same annotations.</summary>
     Reverse,
+
+    /// <summary>
+    /// A write that destroys nothing and may be repeated with the same result (spec 011, section 5): making a
+    /// warehouse the default, rebuilding the stock balances.
+    /// </summary>
+    Repeatable,
 }
 
 /// <summary>Runs a tool: binds the arguments, calls one Application operation, maps its result.</summary>
@@ -85,6 +91,7 @@ public sealed record XerpTool(
                 ToolKind.Read => new ToolAnnotations { ReadOnlyHint = true, OpenWorldHint = false },
                 ToolKind.Create => new ToolAnnotations { ReadOnlyHint = false, DestructiveHint = false, IdempotentHint = false, OpenWorldHint = false },
                 ToolKind.Update => new ToolAnnotations { ReadOnlyHint = false, DestructiveHint = true, IdempotentHint = true, OpenWorldHint = false },
+                ToolKind.Repeatable => new ToolAnnotations { ReadOnlyHint = false, DestructiveHint = false, IdempotentHint = true, OpenWorldHint = false },
                 ToolKind.Delete or ToolKind.Post or ToolKind.Reverse => new ToolAnnotations { ReadOnlyHint = false, DestructiveHint = true, IdempotentHint = false, OpenWorldHint = false },
                 _ => throw new ArgumentOutOfRangeException(nameof(Kind)),
             },

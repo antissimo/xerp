@@ -30,7 +30,8 @@ public static class Problems
             or ErrorCodes.InsufficientStock or ErrorCodes.ArticleNotStocked
             or ErrorCodes.UnitIsBaseUnit or ErrorCodes.UnitNotOnArticle or ErrorCodes.QuantityNotConvertible
             or ErrorCodes.CountOutdated or ErrorCodes.PartnerRoleMissing or ErrorCodes.OrderNotOpen
-            or ErrorCodes.OrderMismatch or ErrorCodes.QuantityExceedsOrder => StatusCodes.Status409Conflict,
+            or ErrorCodes.OrderMismatch or ErrorCodes.QuantityExceedsOrder
+            or ErrorCodes.DefaultWarehouse => StatusCodes.Status409Conflict,
         ErrorCodes.PayloadTooLarge => StatusCodes.Status413PayloadTooLarge,
         _ => StatusCodes.Status500InternalServerError,
     };
