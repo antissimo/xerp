@@ -3,7 +3,7 @@
 Glavni pregled petlje arhitekt -> tester -> builder -> review -> merge. Redoslijed koraka dolazi iz
 `docs/roadmap.md` (piše ga arhitekt); ovaj dokument vodi orkestrator i ažurira ga nakon svakog koraka.
 
-Zadnje ažuriranje: 2026-10-10 02:55
+Zadnje ažuriranje: 2026-10-10 03:05
 
 ## Opseg MVP-a
 
@@ -40,8 +40,8 @@ Oznake: ✅ gotovo · 🔄 u tijeku · ⬜ nije započeto · — ne primjenjuje 
 | 009 | Narudžbe dobavljačima -> primka robe | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 010 | Prodajne narudžbe -> isporuka | ✅ | ✅ | ✅ | ✅ | ✅ |
 | | **— granica MVP-a (dovršen) — 011 je prva značajka nakon MVP-a, na zahtjev vlasnika; ostalo ispod čeka —** | | | | | |
-| 011 | Zadano (centralno) skladište, lager lista po skladištu, spremljeni saldo zaliha | ✅ | ✅ | 🔄 | ⬜ | ⬜ |
-| 011a | Partner u zaglavlju skladišnog dokumenta (primka: dobavljač, izdatnica: kupac) | ✅ | ✅ | ⬜ | ⬜ | ⬜ |
+| 011 | Zadano (centralno) skladište, lager lista po skladištu, spremljeni saldo zaliha | ✅ | ✅ | ✅ | 🔄 | ⬜ |
+| 011a | Partner u zaglavlju skladišnog dokumenta (primka: dobavljač, izdatnica: kupac) | ✅ | ✅ | 🔄 | ⬜ | ⬜ |
 | 012 | Vrednovanje zaliha | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 013 | Kontni plan + temeljnice | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 014 | Brojčane serije dokumenata | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -57,8 +57,8 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 
 ## Što tko trenutno radi
 
-- **Arhitekt:** odgovara na testerova pitanja za 011 i 011a; zatim review 011.
-- **Builder:** implementacija speca 011 (`feat/011-default-warehouse-stock-balance`).
+- **Arhitekt:** review speca 011.
+- **Builder:** implementacija speca 011a (`feat/011a-partner-on-stock-documents`).
 - **Tester:** zaustavljen; testovi za 011 i 011a napisani.
 
 ## Dnevnik
@@ -99,6 +99,7 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 - 2026-10-10 — pravilo o modelu dokumenta (zaglavlje i stavke) upisano u arhitekturu; dodan red 011a (partner u zaglavlju skladišnog dokumenta), spec se piše.
 - 2026-10-10 — limit potrošen u 00:04, nastavak nakon reseta u 02:27; testovi za 011 napisani (`3dd1932`); spec 011a napisan.
 - 2026-10-10 — testovi za 011a napisani (`cd7ed07`).
+- 2026-10-10 — kod za 011 gotov (`0f308c1`), na reviewu; arhitekt odgovorio na testerova pitanja za 011 i 011a (bez izmjena testova).
 
 ## Odluke vlasnika
 
