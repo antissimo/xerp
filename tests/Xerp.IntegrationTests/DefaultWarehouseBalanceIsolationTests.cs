@@ -43,8 +43,8 @@ public class DefaultWarehouseBalanceIsolationTests(XerpFixture app)
         Assert.Equal("CENTRAL", xDefault.Str("code"));
         Assert.Equal("CENTRAL", yDefault.Str("code"));
         Assert.NotEqual(xDefault.Id(), yDefault.Id());
-        Assert.Equal(x.S.Tenant.ApiKeyId, xDefault.GetProperty("createdBy").Id());
-        Assert.Equal(y.S.Tenant.ApiKeyId, yDefault.GetProperty("createdBy").Id());
+        Assert.Equal(x.S.Tenant.ApiKeyId, xDefault.GetProperty("createdBy").GetGuid());
+        Assert.Equal(y.S.Tenant.ApiKeyId, yDefault.GetProperty("createdBy").GetGuid());
         var id = xDefault.Id();
 
         using (var setDefault = await Balance.SendSetDefaultAsync(y.Http, id))
