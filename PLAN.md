@@ -3,7 +3,7 @@
 Glavni pregled petlje arhitekt -> tester -> builder -> review -> merge. Redoslijed koraka dolazi iz
 `docs/roadmap.md` (piše ga arhitekt); ovaj dokument vodi orkestrator i ažurira ga nakon svakog koraka.
 
-Zadnje ažuriranje: 2026-10-10 12:15
+Zadnje ažuriranje: 2026-10-10 12:35
 
 ## Opseg MVP-a
 
@@ -42,7 +42,7 @@ Oznake: ✅ gotovo · 🔄 u tijeku · ⬜ nije započeto · — ne primjenjuje 
 | | **— granica MVP-a (dovršen) — 011 je prva značajka nakon MVP-a, na zahtjev vlasnika; ostalo ispod čeka —** | | | | | |
 | 011 | Zadano (centralno) skladište, lager lista po skladištu, spremljeni saldo zaliha | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 011a | Partner u zaglavlju skladišnog dokumenta (primka: dobavljač, izdatnica: kupac) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 012 | Konfigurabilna pravila: registar, vrijednosti po tenantu, prvih 6 pravila (zalihe i narudžbe) | ✅ | 🔄 | ⬜ | ⬜ | ⬜ |
+| 012 | Konfigurabilna pravila (booleovi prekidači): registar, vrijednosti po tenantu, prvih 6 pravila | ✅ | ✅ | 🔄 | ⬜ | ⬜ |
 | 013 | Konfigurabilna pravila: matični podaci (formati, duljine, obavezna polja) | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 014 | Konfigurabilna pravila: dokumenti (datumi, partner, inventura, cijene, životni ciklus narudžbe) | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 015 | Vrednovanje zaliha | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -60,9 +60,9 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 
 ## Što tko trenutno radi
 
-- **Arhitekt:** usklađuje ADR-0020, `docs/rules.md` i spec 012 s odlukom da su pravila booleovi.
-- **Builder:** zaustavljen; nema otvorenog posla.
-- **Tester:** pauziran dok se spec 012 ne uskladi; zatim testovi za 012.
+- **Arhitekt:** zaustavljen; čekaju ga testerova pitanja za 012 i review 012.
+- **Builder:** implementacija speca 012 (`feat/012-configurable-rules`).
+- **Tester:** zaustavljen; testovi za 012 napisani (`07f0596`).
 
 ## Dnevnik
 
@@ -109,6 +109,7 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 - 2026-10-10 — vlasnik: svaka validacija i svako poslovno pravilo mora biti konfigurabilno po tenantu, uz naše zadane vrijednosti; pravilo upisano u `CLAUDE.md` i vrijedi za sve buduće specove. Arhitekt piše ADR, popis pravila i spec 012.
 - 2026-10-10 — `xerp-web` redizajniran (skill `frontend-design`), dodane lager lista i provjera salda; `xerp-cli` napravljen.
 - 2026-10-10 — ADR-0020 (konfigurabilna pravila), `docs/rules.md` (12 invarijanti, katalog pravila, popis svih pravila 001–011a), stalno pravilo u arhitekturi §11, spec 012 napisan.
+- 2026-10-10 — spec 012 prepravljen na booleove prekidače (`0249eb6`); testovi za 012 napisani (`07f0596`); builder krenuo.
 
 ## Odluke vlasnika
 
