@@ -23,8 +23,9 @@ public static class McpServerSetup
         + "and the actor your calls are attributed to. Records are referenced by their `id` (a UUID); a `code` is a "
         + "human-readable label used for lookup (`*_get` with `code`) and can change. Field names, rules and results "
         + "are identical to the HTTP API. A failed call returns a tool error whose text is JSON "
-        + "`{ \"code\", \"detail\", \"errors\"? }`: branch on `code` (stable), read `detail` for an explanation, and "
-        + "use the keys of `errors` to see which arguments to correct.";
+        + "`{ \"code\", \"detail\", \"errors\"?, \"rules\"? }`: branch on `code` (stable), read `detail` for an explanation, and "
+        + "use the keys of `errors` to see which arguments to correct. When `rules` is present, a business rule this company can "
+        + "switch refused the call: it names the rule's `key` and the `value` it has (see `rule_list`); when it is absent, no switch lifts the refusal.";
 
     private static readonly Dictionary<string, XerpTool> Tools = ToolCatalog.All.ToDictionary(t => t.Name, StringComparer.Ordinal);
 

@@ -203,12 +203,12 @@ public class StockTransferReversalValidationTests
         List<StockLineValues> lines = [new(A, 6m), new(B, 1m), new(A, 4m)];
         List<StockMovement> reversing = [new(A, W1, -6m), new(B, W1, -1m), new(A, W1, -4m)];
 
-        Assert.Null(StockLineChecks.ReversalSufficiency(lines, reversing, new Dictionary<(Guid, Guid), decimal> { [(A, W1)] = 10m, [(B, W1)] = 1m }));
-        var error = StockLineChecks.ReversalSufficiency(lines, reversing, new Dictionary<(Guid, Guid), decimal> { [(A, W1)] = 9.999999m, [(B, W1)] = 1m });
+        Assert.Null(StockLineChecks.ReversalSufficiency(lines, reversing, new Dictionary<(Guid, Guid), decimal> { [(A, W1)] = 10m, [(B, W1)] = 1m }, negativeStockAllowed: false));
+        var error = StockLineChecks.ReversalSufficiency(lines, reversing, new Dictionary<(Guid, Guid), decimal> { [(A, W1)] = 9.999999m, [(B, W1)] = 1m }, negativeStockAllowed: false);
         AssertError(error, ErrorCodes.InsufficientStock, "lines[0].quantity", "lines[2].quantity");
         Assert.Contains("9.999999", error!.Errors!["lines[0].quantity"][0]);
         // Nothing left at all.
-        AssertError(StockLineChecks.ReversalSufficiency(lines, reversing, new Dictionary<(Guid, Guid), decimal>()),
+        AssertError(StockLineChecks.ReversalSufficiency(lines, reversing, new Dictionary<(Guid, Guid), decimal>(), negativeStockAllowed: false),
             ErrorCodes.InsufficientStock, "lines[0].quantity", "lines[1].quantity", "lines[2].quantity");
     }
 
@@ -217,7 +217,7 @@ public class StockTransferReversalValidationTests
     {
         List<StockLineValues> lines = [new(A, 40m)];
 
-        Assert.Null(StockLineChecks.ReversalSufficiency(lines, [new(A, W1, 40m)], new Dictionary<(Guid, Guid), decimal>()));
+        Assert.Null(StockLineChecks.ReversalSufficiency(lines, [new(A, W1, 40m)], new Dictionary<(Guid, Guid), decimal>(), negativeStockAllowed: false));
     }
 
     [Fact]
@@ -228,8 +228,8 @@ public class StockTransferReversalValidationTests
         List<StockMovement> reversing = [new(A, W1, 30m), new(A, W2, -30m)];
 
         AssertError(
-            StockLineChecks.ReversalSufficiency(lines, reversing, new Dictionary<(Guid, Guid), decimal> { [(A, W1)] = 70m, [(A, W2)] = 20m }),
+            StockLineChecks.ReversalSufficiency(lines, reversing, new Dictionary<(Guid, Guid), decimal> { [(A, W1)] = 70m, [(A, W2)] = 20m }, negativeStockAllowed: false),
             ErrorCodes.InsufficientStock, "lines[0].quantity");
-        Assert.Null(StockLineChecks.ReversalSufficiency(lines, reversing, new Dictionary<(Guid, Guid), decimal> { [(A, W2)] = 30m }));
+        Assert.Null(StockLineChecks.ReversalSufficiency(lines, reversing, new Dictionary<(Guid, Guid), decimal> { [(A, W2)] = 30m }, negativeStockAllowed: false));
     }
 }

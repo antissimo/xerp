@@ -8,6 +8,7 @@ using Xerp.Domain.Common;
 using Xerp.Domain.Inventory;
 using Xerp.Domain.Orders;
 using Xerp.Domain.Partners;
+using Xerp.Domain.Rules;
 using Xerp.Domain.Tenancy;
 
 namespace Xerp.Infrastructure.Persistence;
@@ -35,6 +36,8 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
     public DbSet<PurchaseOrderLine> PurchaseOrderLines => Set<PurchaseOrderLine>();
     public DbSet<SalesOrder> SalesOrders => Set<SalesOrder>();
     public DbSet<SalesOrderLine> SalesOrderLines => Set<SalesOrderLine>();
+    public DbSet<RuleValue> RuleValues => Set<RuleValue>();
+    public DbSet<RuleChange> RuleChanges => Set<RuleChange>();
 
     private Guid? CurrentTenantId => tenant.TenantId;
 
@@ -332,10 +335,12 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
         });
 
         // Spec 011 / ADR-0018: one number per (tenant, warehouse, article), derived from the ledger. No id of
-        // its own and no audit columns; both references include TenantId and restrict deletes.
+        // its own and no audit columns; both references include TenantId and restrict deletes. The quantity
+        // has no check constraint: whether stock may go below zero is a tenant's rule (spec 012, section 3),
+        // and constraints remain for invariants only (ADR-0020).
         modelBuilder.Entity<StockBalance>(e =>
         {
-            e.ToTable("StockBalances", t => t.HasCheckConstraint(DbNames.StockBalanceNotNegativeCheck, "\"Quantity\" >= 0"));
+            e.ToTable("StockBalances");
             e.HasKey(b => new { b.TenantId, b.WarehouseId, b.ArticleId });
             e.Property(b => b.Quantity).HasPrecision(18, QuantityRules.DecimalPlaces);
             e.HasOne<Warehouse>().WithMany()
@@ -346,6 +351,35 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
             e.HasOne<Article>().WithMany()
                 .HasForeignKey(b => new { b.TenantId, b.ArticleId })
                 .HasPrincipalKey(a => new { a.TenantId, a.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Spec 012 / ADR-0020: the values a tenant has set for rules - one row per rule it has set, none for a
+        // rule at its default - and the history of its changes. The registry is code, so the key references
+        // nothing; the actor is a key of the same tenant.
+        modelBuilder.Entity<RuleValue>(e =>
+        {
+            e.ToTable("RuleValues");
+            e.HasKey(v => new { v.TenantId, v.Key });
+            e.Property(v => v.Key).HasMaxLength(RuleDefinition.KeyMaxLength);
+            e.HasOne<ApiKey>().WithMany()
+                .HasForeignKey(v => new { v.TenantId, v.UpdatedBy })
+                .HasPrincipalKey(k => new { k.TenantId, k.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<RuleChange>(e =>
+        {
+            e.ToTable("RuleChanges");
+            e.Property(c => c.Id).ValueGeneratedNever();
+            e.Property(c => c.Key).HasMaxLength(RuleDefinition.KeyMaxLength);
+            e.Property(c => c.Action).HasMaxLength(10).HasConversion(v => v.ToName(), v => RuleChangeActionNames.Parse(v));
+            // The history of a tenant newest first, and the newest change of one rule.
+            e.HasIndex(c => new { c.TenantId, c.Key, c.ChangedAt });
+            e.HasIndex(c => new { c.TenantId, c.ChangedAt });
+            e.HasOne<ApiKey>().WithMany()
+                .HasForeignKey(c => new { c.TenantId, c.ChangedBy })
+                .HasPrincipalKey(k => new { k.TenantId, k.Id })
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -559,6 +593,9 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
     {
         if (ChangeTracker.Entries<StockLedgerEntry>().Any(e => e.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Stock ledger entries are append-only: they cannot be changed or deleted.");
+        // Spec 012, R10, S2: so is the history of rule changes.
+        if (ChangeTracker.Entries<RuleChange>().Any(e => e.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Rule changes are append-only: they cannot be changed or deleted.");
 
         var documents = ChangeTracker.Entries<StockDocument>().ToDictionary(d => d.Entity.Id);
         foreach (var document in documents.Values)

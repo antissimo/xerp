@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Xerp.Application.Common;
+using Xerp.Application.Orders;
 using Xerp.Application.Ports;
 using Xerp.Domain.Catalog;
 using Xerp.Domain.Inventory;
@@ -20,7 +21,8 @@ public sealed class StockQueries(IXerpDb db)
     /// which equals the sum of its ledger entries. The incoming quantity is what the lines of confirmed
     /// purchase orders for the warehouse still expect; the reserved quantity what the lines of confirmed sales
     /// orders shipping from it still owe: ordered minus fulfilled, in base units. The three are put together
-    /// in one query, so total and paging count every pair once. Nothing here blocks a movement (ADR-0017).
+    /// in one query, so total and paging count every pair once. Nothing here blocks a movement: this is a read
+    /// (whether reserved stock may be taken is decided at posting, by the rule <c>sales.reservedStockProtected</c>).
     /// </summary>
     public async Task<Result<PagedResult<StockOnHandDto>>> OnHandAsync(ListStockOnHandInput input, CancellationToken cancellationToken = default)
     {
@@ -100,7 +102,8 @@ public sealed class StockQueries(IXerpDb db)
                 Quantity = (decimal?)p!.Quantity ?? 0m, Incoming = (decimal?)p!.Incoming ?? 0m, Reserved = (decimal?)p!.Reserved ?? 0m,
             };
         if (input.HasStock is { } hasStock)
-            listed = hasStock ? listed.Where(x => x.Quantity > 0) : listed.Where(x => x.Quantity == 0);
+            // Spec 012, R20: below zero - possible where the tenant allows negative stock - is no stock either.
+            listed = hasStock ? listed.Where(x => x.Quantity > 0) : listed.Where(x => x.Quantity <= 0);
 
         var total = await listed.CountAsync(cancellationToken);
         var rows = await (
@@ -182,6 +185,19 @@ public sealed class StockQueries(IXerpDb db)
         QuantityRules.Normalize(r.Quantity), QuantityRules.Normalize(r.Incoming), QuantityRules.Normalize(r.Reserved),
         QuantityRules.Normalize(StockAvailability.Available(r.Quantity, r.Reserved)));
 
+    /// <summary>What the lines of the confirmed orders of one kind have outstanding, for the article and the warehouse asked for.</summary>
+    private static IQueryable<OrderReads.OutstandingLine> Outstanding<TOrder, TLine>(
+        IQueryable<TOrder> orders, IQueryable<TLine> lines, Guid? articleId, Guid? warehouseId)
+        where TOrder : Order<TLine> where TLine : OrderLine
+    {
+        var outstanding = OrderReads.Outstanding<TOrder, TLine>(orders, lines);
+        if (articleId is { } article)
+            outstanding = outstanding.Where(l => l.ArticleId == article);
+        if (warehouseId is { } warehouse)
+            outstanding = outstanding.Where(l => l.WarehouseId == warehouse);
+        return outstanding;
+    }
+
     /// <summary>The quantities of a pair - and one row of the union they are summed from: a stored balance, or what a confirmed order line still expects or owes.</summary>
     private sealed class PairQuantities
     {
@@ -190,35 +206,6 @@ public sealed class StockQueries(IXerpDb db)
         public decimal Quantity { get; init; }
         public decimal Incoming { get; init; }
         public decimal Reserved { get; init; }
-    }
-
-    /// <summary>What one line of a confirmed order has outstanding, with its article and the order's warehouse.</summary>
-    private sealed class OutstandingLine
-    {
-        public Guid ArticleId { get; init; }
-        public Guid WarehouseId { get; init; }
-        public decimal Quantity { get; init; }
-    }
-
-    /// <summary>
-    /// What the lines of the confirmed orders of one kind have outstanding - the rule of
-    /// <see cref="OrderProgress.Outstanding"/>, asked of the database. The same query gives the incoming
-    /// quantity from purchase orders and the reserved quantity from sales orders.
-    /// </summary>
-    private static IQueryable<OutstandingLine> Outstanding<TOrder, TLine>(
-        IQueryable<TOrder> orders, IQueryable<TLine> lines, Guid? articleId, Guid? warehouseId)
-        where TOrder : Order<TLine> where TLine : OrderLine
-    {
-        var confirmed = orders.AsNoTracking().Where(o => o.Status == OrderStatus.Confirmed);
-        if (warehouseId is { } warehouse)
-            confirmed = confirmed.Where(o => o.WarehouseId == warehouse);
-        var ordered = lines.AsNoTracking();
-        if (articleId is { } article)
-            ordered = ordered.Where(l => l.ArticleId == article);
-        return
-            from l in ordered
-            join o in confirmed on l.OrderId equals o.Id
-            select new OutstandingLine { ArticleId = l.ArticleId, WarehouseId = o.WarehouseId, Quantity = l.BaseQuantity!.Value - l.FulfilledBaseQuantity };
     }
 
     /// <summary>

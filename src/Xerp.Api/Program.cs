@@ -9,6 +9,7 @@ using Xerp.Application.Identity;
 using Xerp.Application.Orders;
 using Xerp.Application.Partners;
 using Xerp.Application.Ports;
+using Xerp.Application.Rules;
 using Xerp.Application.Stock;
 using Xerp.Application.Tenants;
 using Xerp.Application.UnitsOfMeasure;
@@ -40,6 +41,7 @@ builder.Services.AddScoped<StockBalances>();
 builder.Services.AddScoped<PurchaseOrderOperations>();
 builder.Services.AddScoped<SalesOrderOperations>();
 builder.Services.AddScoped<ApiKeyOperations>();
+builder.Services.AddScoped<RuleOperations>();
 builder.Services.AddXerpMcpServer();
 
 var app = builder.Build();
@@ -71,6 +73,7 @@ v1.MapStockEndpoints();
 v1.MapPurchaseOrderEndpoints();
 v1.MapSalesOrderEndpoints();
 v1.MapApiKeyEndpoints();
+v1.MapRuleEndpoints();
 
 // One operation = one HTTP endpoint + one MCP tool; both call the same Application operations.
 app.MapMcp(ApiV1Middleware.McpPath);

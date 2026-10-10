@@ -90,8 +90,11 @@ public abstract class Order<TLine> : ITenantOwned, IFulfilledOrder where TLine :
     /// </summary>
     public DateOnly? DueDate { get; private set; }
 
-    /// <summary>The other party: the supplier of a purchase order, the customer of a sales order.</summary>
-    public Guid PartnerId { get; private set; }
+    /// <summary>
+    /// The other party: the supplier of a purchase order, the customer of a sales order. Null on an order
+    /// saved without one, where the tenant does not require a partner (spec 012, R34).
+    /// </summary>
+    public Guid? PartnerId { get; private set; }
 
     /// <summary>The warehouse the order is fulfilled in (ADR-0016, decision 8).</summary>
     public Guid WarehouseId { get; private set; }
@@ -131,7 +134,7 @@ public abstract class Order<TLine> : ITenantOwned, IFulfilledOrder where TLine :
 
     /// <summary>Makes this new instance a draft (R11).</summary>
     protected void Start(
-        DateOnly orderDate, DateOnly? dueDate, Guid partnerId, Guid warehouseId, string? reference, string? note,
+        DateOnly orderDate, DateOnly? dueDate, Guid? partnerId, Guid warehouseId, string? reference, string? note,
         IReadOnlyList<OrderLineEntry> lines, DateTime now, Guid actorKeyId)
     {
         Id = Guid.CreateVersion7();
@@ -147,7 +150,7 @@ public abstract class Order<TLine> : ITenantOwned, IFulfilledOrder where TLine :
     /// </summary>
     /// <exception cref="InvalidOperationException">The order is not a draft (R14).</exception>
     public IReadOnlyList<TLine> Replace(
-        DateOnly orderDate, DateOnly? dueDate, Guid partnerId, Guid warehouseId, string? reference, string? note,
+        DateOnly orderDate, DateOnly? dueDate, Guid? partnerId, Guid warehouseId, string? reference, string? note,
         IReadOnlyList<OrderLineEntry> lines, DateTime now, Guid actorKeyId)
     {
         EnsureDraft();
@@ -243,17 +246,21 @@ public abstract class Order<TLine> : ITenantOwned, IFulfilledOrder where TLine :
 
     /// <summary>
     /// Counts a posted fulfilment document (R25, R26): the fulfilled quantity of every order line it names
-    /// rises by the document's base quantities for that line. All of it or nothing.
+    /// rises by the document's base quantities for that line. All of it or nothing. A line goes above its
+    /// ordered quantity only where the tenant allows it (spec 012, R22).
     /// </summary>
-    /// <exception cref="InvalidOperationException">The order is not confirmed, a line is not a line of the order, or a line would go above its ordered quantity.</exception>
-    public void Fulfil(IReadOnlyList<LineFulfilment> documentLines)
+    /// <param name="overFulfilmentAllowed">The tenant's value of <c>purchase.overReceiptAllowed</c> or <c>sales.overDeliveryAllowed</c>.</param>
+    /// <exception cref="InvalidOperationException">The order is not confirmed, a line is not a line of the order, or a line would go above its ordered quantity although that is not allowed.</exception>
+    public void Fulfil(IReadOnlyList<LineFulfilment> documentLines, bool overFulfilmentAllowed)
     {
         if (Status != OrderStatus.Confirmed)
             throw new InvalidOperationException("Only a confirmed order can be fulfilled.");
         if (documentLines.Any(l => l.BaseQuantity <= 0))
             throw new ArgumentException("A fulfilment line has a base quantity greater than zero.", nameof(documentLines));
-        if (OrderProgress.ExceedingLines(documentLines, Outstanding).Count > 0)
-            throw new InvalidOperationException("The document would take an order line above its ordered quantity, or names a line the order does not have.");
+        if (documentLines.Any(l => _lines.All(line => line.LineNo != l.OrderLineNo)))
+            throw new InvalidOperationException("The document names a line the order does not have.");
+        if (OrderProgress.ExceedingLines(documentLines, Outstanding, overFulfilmentAllowed).Count > 0)
+            throw new InvalidOperationException("The document would take an order line above its ordered quantity.");
         foreach (var group in documentLines.GroupBy(l => l.OrderLineNo))
             Line(group.Key).Move(group.Sum(l => l.BaseQuantity));
     }
@@ -331,8 +338,8 @@ public abstract class OrderLine : ITenantOwned
 
     /// <summary>
     /// Progress (R25): the sum of the base quantities of the stock document lines that name this line on
-    /// posted, not reversed, documents - received, for a purchase order; delivered, for a sales order. Always between zero and
-    /// <see cref="BaseQuantity"/> (R27).
+    /// posted, not reversed, documents - received, for a purchase order; delivered, for a sales order. Never below zero; above
+    /// <see cref="BaseQuantity"/> only where the tenant allowed more than ordered (spec 012, R23).
     /// </summary>
     public decimal FulfilledBaseQuantity { get; private set; }
 
@@ -361,8 +368,8 @@ public abstract class OrderLine : ITenantOwned
     internal void Move(decimal delta)
     {
         var fulfilled = FulfilledBaseQuantity + delta;
-        if (BaseQuantity is not { } ordered || fulfilled < 0 || fulfilled > ordered)
-            throw new InvalidOperationException("The fulfilled quantity of an order line stays between zero and its ordered quantity.");
+        if (BaseQuantity is null || fulfilled < 0)
+            throw new InvalidOperationException("Only a confirmed order line is fulfilled, and its fulfilled quantity is never below zero.");
         FulfilledBaseQuantity = fulfilled;
     }
 }
@@ -376,7 +383,7 @@ public sealed class PurchaseOrder : Order<PurchaseOrderLine>
     private PurchaseOrder() { }
 
     public static PurchaseOrder Create(
-        DateOnly orderDate, DateOnly? expectedDate, Guid supplierId, Guid warehouseId, string? reference, string? note,
+        DateOnly orderDate, DateOnly? expectedDate, Guid? supplierId, Guid warehouseId, string? reference, string? note,
         IReadOnlyList<OrderLineEntry> lines, DateTime now, Guid actorKeyId)
     {
         var order = new PurchaseOrder();
@@ -405,7 +412,7 @@ public sealed class SalesOrder : Order<SalesOrderLine>
     private SalesOrder() { }
 
     public static SalesOrder Create(
-        DateOnly orderDate, DateOnly? requestedDate, Guid customerId, Guid warehouseId, string? reference, string? note,
+        DateOnly orderDate, DateOnly? requestedDate, Guid? customerId, Guid warehouseId, string? reference, string? note,
         IReadOnlyList<OrderLineEntry> lines, DateTime now, Guid actorKeyId)
     {
         var order = new SalesOrder();

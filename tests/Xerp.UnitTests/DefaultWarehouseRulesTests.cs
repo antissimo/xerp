@@ -224,7 +224,7 @@ public class DefaultWarehouseRulesTests
 
     private static Result<OrderValues> Order(OrderKind kind, string? warehouseId, bool warehouseOptional) =>
         OrderValidation.Values(
-            kind, "2026-10-10", null, Partner, warehouseId, null, null, [new OrderLineInput(A.ToString(), 1m, 1m)],
+            kind, true, "2026-10-10", null, Partner, warehouseId, null, null, [new OrderLineInput(A.ToString(), 1m, 1m)],
             warehouseOptional: warehouseOptional);
 
     [Fact]

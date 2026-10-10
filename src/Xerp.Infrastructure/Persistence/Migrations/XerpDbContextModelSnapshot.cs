@@ -162,10 +162,7 @@ namespace Xerp.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("TenantId", "ArticleId");
 
-                    b.ToTable("StockBalances", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_StockBalances_QuantityNotNegative", "\"Quantity\" >= 0");
-                        });
+                    b.ToTable("StockBalances", (string)null);
                 });
 
             modelBuilder.Entity("Xerp.Domain.Inventory.StockDocument", b =>
@@ -561,7 +558,7 @@ namespace Xerp.Infrastructure.Persistence.Migrations
                     b.Property<DateOnly>("OrderDate")
                         .HasColumnType("date");
 
-                    b.Property<Guid>("PartnerId")
+                    b.Property<Guid?>("PartnerId")
                         .HasColumnType("uuid")
                         .HasColumnName("SupplierId");
 
@@ -694,7 +691,7 @@ namespace Xerp.Infrastructure.Persistence.Migrations
                     b.Property<DateOnly>("OrderDate")
                         .HasColumnType("date");
 
-                    b.Property<Guid>("PartnerId")
+                    b.Property<Guid?>("PartnerId")
                         .HasColumnType("uuid")
                         .HasColumnName("CustomerId");
 
@@ -882,6 +879,72 @@ namespace Xerp.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId", "UpdatedBy");
 
                     b.ToTable("Partners", (string)null);
+                });
+
+            modelBuilder.Entity("Xerp.Domain.Rules.RuleChange", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<DateTime>("ChangedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ChangedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<bool>("NewValue")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("OldValue")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "ChangedAt");
+
+                    b.HasIndex("TenantId", "ChangedBy");
+
+                    b.HasIndex("TenantId", "Key", "ChangedAt");
+
+                    b.ToTable("RuleChanges", (string)null);
+                });
+
+            modelBuilder.Entity("Xerp.Domain.Rules.RuleValue", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Key")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("Value")
+                        .HasColumnType("boolean");
+
+                    b.HasKey("TenantId", "Key");
+
+                    b.HasIndex("TenantId", "UpdatedBy");
+
+                    b.ToTable("RuleValues", (string)null);
                 });
 
             modelBuilder.Entity("Xerp.Domain.Tenancy.ApiKey", b =>
@@ -1299,8 +1362,7 @@ namespace Xerp.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("TenantId", "PartnerId")
                         .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("Xerp.Domain.Tenancy.ApiKey", null)
                         .WithMany()
@@ -1378,8 +1440,7 @@ namespace Xerp.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("TenantId", "PartnerId")
                         .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("Xerp.Domain.Tenancy.ApiKey", null)
                         .WithMany()
@@ -1438,6 +1499,38 @@ namespace Xerp.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("TenantId", "CreatedBy")
                         .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Xerp.Domain.Tenancy.ApiKey", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "UpdatedBy")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Xerp.Domain.Rules.RuleChange", b =>
+                {
+                    b.HasOne("Xerp.Domain.Tenancy.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Xerp.Domain.Tenancy.ApiKey", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "ChangedBy")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Xerp.Domain.Rules.RuleValue", b =>
+                {
+                    b.HasOne("Xerp.Domain.Tenancy.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 

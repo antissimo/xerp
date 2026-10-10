@@ -21,12 +21,18 @@ namespace Xerp.Application.Orders;
 /// while the draft is being saved.
 /// </para>
 /// <para>
+/// Whether an order needs a partner is the tenant's rule (<see cref="OrderKind.PartnerRequired"/>; spec 012,
+/// R33-R37). It judges the body of a create and of a replace, and nothing else: it is read once, with the
+/// validation of the body, and not again - confirm, close and reopen never ask for it, so an order saved
+/// without a partner while that was allowed lives on whatever the rule says later.
+/// </para>
+/// <para>
 /// An order never writes the stock ledger. What a stock document posted against it changes is the fulfilled
 /// quantity of its lines, written by <see cref="StockDocumentOperations"/> in the posting and reversal
 /// transactions.
 /// </para>
 /// </summary>
-public abstract class OrderOperations<TOrder, TLine, TDto, TSummary>(IXerpDb db, ITenantContext context, IClock clock, OrderKind kind)
+public abstract class OrderOperations<TOrder, TLine, TDto, TSummary>(IXerpDb db, ITenantContext context, IClock clock, IRules rules, OrderKind kind)
     where TOrder : Order<TLine>
     where TLine : OrderLine
     where TDto : notnull
@@ -72,12 +78,13 @@ public abstract class OrderOperations<TOrder, TLine, TDto, TSummary>(IXerpDb db,
         {
             FulfilmentStatus.None => orders.Where(o =>
                 !orderLines.Any(l => l.OrderId == o.Id && l.FulfilledBaseQuantity > 0)),
+            // Spec 012, R23: a line fulfilled above its ordered quantity is fulfilled in full.
             FulfilmentStatus.Full => orders.Where(o =>
                 o.Status != OrderStatus.Draft
-                && !orderLines.Any(l => l.OrderId == o.Id && l.FulfilledBaseQuantity != l.BaseQuantity)),
+                && !orderLines.Any(l => l.OrderId == o.Id && l.FulfilledBaseQuantity < l.BaseQuantity)),
             FulfilmentStatus.Partial => orders.Where(o =>
                 orderLines.Any(l => l.OrderId == o.Id && l.FulfilledBaseQuantity > 0)
-                && orderLines.Any(l => l.OrderId == o.Id && l.FulfilledBaseQuantity != l.BaseQuantity)),
+                && orderLines.Any(l => l.OrderId == o.Id && l.FulfilledBaseQuantity < l.BaseQuantity)),
             _ => orders,
         };
         if (query.Search is { } search)
@@ -123,7 +130,7 @@ public abstract class OrderOperations<TOrder, TLine, TDto, TSummary>(IXerpDb db,
 
     protected async Task<Result<TDto>> CreateAsync(OrderInput input, CancellationToken cancellationToken = default)
     {
-        var validated = Validate(input);
+        var validated = Validate(input, await rules.ReadAsync(cancellationToken));
         if (!validated.IsSuccess)
             return validated.Error;
         var values = validated.Value;
@@ -161,7 +168,7 @@ public abstract class OrderOperations<TOrder, TLine, TDto, TSummary>(IXerpDb db,
 
     protected async Task<Result<TDto>> ReplaceAsync(Guid id, OrderInput input, CancellationToken cancellationToken = default)
     {
-        var validated = Validate(input);
+        var validated = Validate(input, await rules.ReadAsync(cancellationToken));
         if (!validated.IsSuccess)
             return validated.Error;
         var values = validated.Value;
@@ -216,7 +223,8 @@ public abstract class OrderOperations<TOrder, TLine, TDto, TSummary>(IXerpDb db,
     /// transaction - or nothing at all. Order of checks: exists -> is a draft -> partner, warehouse and every
     /// article active (header keys together and alone, then the lines) -> the partner still has the role ->
     /// every line converts with the factors as they are now. Only then is the counter advanced, so a refused
-    /// confirmation consumes no number.
+    /// confirmation consumes no number. The partner is checked when the order has one; an order without a
+    /// partner is confirmed as it is, whatever the tenant's rule says now (spec 012, R35, R37).
     /// </summary>
     public Task<Result<TDto>> ConfirmAsync(Guid id, CancellationToken cancellationToken = default) =>
         db.SerializedPerTenantAsync<Result<TDto>>(async ct =>
@@ -227,14 +235,14 @@ public abstract class OrderOperations<TOrder, TLine, TDto, TSummary>(IXerpDb db,
             if (!order.IsDraft)
                 return NotADraft(order, "confirmed again");
 
-            var partner = await PartnerFacts(order.PartnerId).SingleAsync(ct);
+            var partner = order.PartnerId is { } partnerId ? await PartnerFacts(partnerId).SingleAsync(ct) : null;
             var warehouseIsActive = await db.Warehouses.AsNoTracking()
                 .Where(w => w.Id == order.WarehouseId)
                 .Select(w => w.IsActive)
                 .SingleAsync(ct);
             var inactiveHeader = new List<(string, Guid)>();
-            if (!partner.IsActive)
-                inactiveHeader.Add((kind.PartnerField, order.PartnerId));
+            if (partner is { IsActive: false })
+                inactiveHeader.Add((kind.PartnerField, order.PartnerId!.Value));
             if (!warehouseIsActive)
                 inactiveHeader.Add((WarehouseField, order.WarehouseId));
 
@@ -245,8 +253,8 @@ public abstract class OrderOperations<TOrder, TLine, TDto, TSummary>(IXerpDb db,
             if (StockLineChecks.ActiveMasters(inactiveHeader, lines, facts.Articles,
                     $"The {kind.PartnerWord}, the warehouse or an article of the order is inactive; reactivate it or change the draft, then confirm again. Nothing was confirmed.") is { } inactive)
                 return inactive;
-            if (!partner.HasRole)
-                return RoleMissing(order.PartnerId);
+            if (partner is { HasRole: false })
+                return RoleMissing(order.PartnerId!.Value);
 
             // A draft follows the current factor (R11), so a line that converted when it was saved may not convert any more.
             var converted = StockLineChecks.Convert(lines, facts, StockDocumentType.Receipt);
@@ -295,17 +303,21 @@ public abstract class OrderOperations<TOrder, TLine, TDto, TSummary>(IXerpDb db,
     /// R10: the partner first - exists, is active or already the order's partner, has the role - then the
     /// warehouse, then the lines by the kinds of a stock document line (spec 007, R16). Each stage answers
     /// alone. A reference the stored draft already has in that place may stay although inactive; the role is
-    /// asked for on every save. On success the lines to store, each with its unit.
+    /// asked for on every save. On success the lines to store, each with its unit. An order without a partner
+    /// has no partner stage: whether it may be without one was decided by validation (spec 012, R34).
     /// </summary>
     private async Task<Result<IReadOnlyList<OrderLineEntry>>> CheckReferencesAsync(OrderValues values, TOrder? stored, CancellationToken cancellationToken)
     {
-        var partner = await PartnerFacts(values.PartnerId).SingleOrDefaultAsync(cancellationToken);
-        if (partner is null)
-            return AppError.ReferenceNotFound(kind.PartnerField, values.PartnerId);
-        if (!partner.IsActive && stored?.PartnerId != values.PartnerId)
-            return AppError.ReferenceInactive(kind.PartnerField, values.PartnerId);
-        if (!partner.HasRole)
-            return RoleMissing(values.PartnerId);
+        if (values.PartnerId is { } partnerId)
+        {
+            var partner = await PartnerFacts(partnerId).SingleOrDefaultAsync(cancellationToken);
+            if (partner is null)
+                return AppError.ReferenceNotFound(kind.PartnerField, partnerId);
+            if (!partner.IsActive && stored?.PartnerId != partnerId)
+                return AppError.ReferenceInactive(kind.PartnerField, partnerId);
+            if (!partner.HasRole)
+                return RoleMissing(partnerId);
+        }
 
         var warehouseError = await ReferenceCheck.ValidateAsync(
             db.Warehouses.Where(w => w.Id == values.WarehouseId).Select(w => w.IsActive),
@@ -330,7 +342,7 @@ public abstract class OrderOperations<TOrder, TLine, TDto, TSummary>(IXerpDb db,
 
     private async Task<Related> RelatedAsync(IReadOnlyCollection<TOrder> orders, CancellationToken cancellationToken)
     {
-        var partnerIds = orders.Select(o => o.PartnerId).Distinct().ToList();
+        var partnerIds = orders.Where(o => o.PartnerId is not null).Select(o => o.PartnerId!.Value).Distinct().ToList();
         var partners = await db.Partners.AsNoTracking()
             .Where(p => partnerIds.Contains(p.Id))
             .Select(p => new ReferenceSummary(p.Id, p.Code, p.Name))
@@ -392,15 +404,15 @@ public abstract class OrderOperations<TOrder, TLine, TDto, TSummary>(IXerpDb db,
 
     private static OrderView View(TOrder order, Related related, IReadOnlyList<OrderLineView> lines) => new(
         order.Id, order.Status.ToName(), order.Number, order.OrderDate, order.DueDate,
-        related.Partners[order.PartnerId], related.Warehouses[order.WarehouseId], order.Reference, order.Note,
+        order.PartnerId is { } partnerId ? related.Partners[partnerId] : null, related.Warehouses[order.WarehouseId], order.Reference, order.Note,
         order.FulfilmentStatus.ToName(), lines, order.Lines.Count,
         QuantityRules.Normalize(OrderAmounts.Total(order.Lines.Select(l => l.LineAmount))),
         order.CreatedAt, order.UpdatedAt, order.CreatedBy, order.UpdatedBy,
         order.ConfirmedAt, order.ConfirmedBy, order.ClosedAt, order.ClosedBy);
 
-    private Result<OrderValues> Validate(OrderInput input) => OrderValidation.Values(
-        kind, input.OrderDate, input.DueDate, input.PartnerId, input.WarehouseId, input.Reference, input.Note, input.Lines,
-        input.DueDateGiven, input.ReferenceGiven, input.NoteGiven, input.WarehouseOptional);
+    private Result<OrderValues> Validate(OrderInput input, TenantRules tenantRules) => OrderValidation.Values(
+        kind, tenantRules[kind.PartnerRequired], input.OrderDate, input.DueDate, input.PartnerId, input.WarehouseId, input.Reference, input.Note, input.Lines,
+        input.DueDateGiven, input.ReferenceGiven, input.NoteGiven, input.WarehouseOptional, input.PartnerGiven);
 
     /// <summary>Whether the partner is active and has the role this kind of order asks for (R2; spec 010, R3: each kind checks only its own).</summary>
     private IQueryable<PartnerState> PartnerFacts(Guid partnerId) => PartnerChecks.State(db, partnerId, kind.Side);

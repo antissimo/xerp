@@ -150,7 +150,8 @@ public class StockCountRulesTests
 
         Assert.Throws<ArgumentException>(() => StockDocument.Create(StockDocumentType.Count, Day, W1, null, null, null, lines, T0, Actor));
         Assert.Throws<ArgumentException>(() => Count(lines, [1m]));
-        Assert.Throws<ArgumentException>(() => Count(lines, [1m, -1m]));
+        // Spec 012, R20: a book quantity below zero is stock on hand where the tenant allows negative stock.
+        Assert.Equal(-1m, Count(lines, [1m, -1m]).Lines[1].BookQuantity);
         Assert.Throws<ArgumentException>(() => Count(lines, [1m, 0.0000001m]));
         Assert.Throws<ArgumentException>(() =>
             StockDocument.Create(StockDocumentType.Receipt, Day, W1, null, null, null, lines, T0, Actor, [0m, 0m]));
@@ -343,9 +344,9 @@ public class StockCountRulesTests
         List<StockMovement> movements = [new(A, W1, 3m), new(B, W1, -4m)];
 
         Assert.Null(StockLineChecks.ReversalSufficiency(lines, movements,
-            new Dictionary<(Guid, Guid), decimal> { [(A, W1)] = 0m, [(B, W1)] = 4m }));
+            new Dictionary<(Guid, Guid), decimal> { [(A, W1)] = 0m, [(B, W1)] = 4m }, negativeStockAllowed: false));
         AssertError(
-            StockLineChecks.ReversalSufficiency(lines, movements, new Dictionary<(Guid, Guid), decimal> { [(B, W1)] = 3.999999m }),
+            StockLineChecks.ReversalSufficiency(lines, movements, new Dictionary<(Guid, Guid), decimal> { [(B, W1)] = 3.999999m }, negativeStockAllowed: false),
             ErrorCodes.InsufficientStock, "lines[1].quantity");
     }
 

@@ -88,7 +88,7 @@ public class StockDocumentRulesTests
     // ---- R15 sufficiency
 
     private static IReadOnlyList<int> Short(Dictionary<Guid, decimal> onHand, params (Guid, decimal)[] lines) =>
-        StockSufficiency.ShortLines(lines.Select(l => new StockLineValues(l.Item1, l.Item2)).ToList(), onHand);
+        StockTestSupport.ShortIssueLines(lines.Select(l => new StockLineValues(l.Item1, l.Item2)).ToList(), onHand);
 
     [Fact]
     public void R15_An_issue_within_stock_has_no_short_lines_also_for_exactly_the_stock()

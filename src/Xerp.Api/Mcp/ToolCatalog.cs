@@ -5,6 +5,7 @@ using Xerp.Application.Common;
 using Xerp.Application.Identity;
 using Xerp.Application.Orders;
 using Xerp.Application.Partners;
+using Xerp.Application.Rules;
 using Xerp.Application.Stock;
 using Xerp.Application.UnitsOfMeasure;
 using Xerp.Application.Warehouses;
@@ -16,7 +17,7 @@ namespace Xerp.Api.Mcp;
 public sealed record NoArguments;
 
 /// <summary>
-/// The complete list of MCP tools (spec 003, 5.3; spec 004, 5.1; specs 005 to 011, 5). Adding an operation means adding its tool here; the
+/// The complete list of MCP tools (spec 003, 5.3; spec 004, 5.1; specs 005 to 012, 5). Adding an operation means adding its tool here; the
 /// tool-list test holds the expected names literally.
 /// </summary>
 public static class ToolCatalog
@@ -164,19 +165,30 @@ public static class ToolCatalog
     ];
 
     /// <summary>The words in which the tools of one kind of order differ from those of the other (spec 010: the tools of spec 009 mirrored).</summary>
+    /// <param name="PartnerRule">The key of the rule that says whether an order of this kind needs a partner (spec 012).</param>
     private sealed record OrderWords(
         string Tool, string Partner, string PartnerId, string Role, string DueDate, string DueDateIs, string WarehouseIs, string ReferenceIs,
-        string LinkedDocument, string QuantityIs, string PriceIs);
+        string LinkedDocument, string QuantityIs, string PriceIs, string PartnerRule);
 
     private static readonly OrderWords Purchase = new(
         "purchase_order", "supplier", "supplierId", "isSupplier", "expectedDate", "When the goods are expected",
         "the goods are expected in; receipts against the order go into this warehouse", "The supplier's own number for the order, or your reference",
-        "A receipt", "Ordered quantity", "The price");
+        "A receipt", "Ordered quantity", "The price", OrderKind.Purchase.PartnerRequired.Key);
 
     private static readonly OrderWords Sales = new(
         "sales_order", "customer", "customerId", "isCustomer", "requestedDate", "When the customer wants the goods",
         "the goods ship from; deliveries against the order leave this warehouse", "The customer's own number for the order, or your reference",
-        "A delivery (an issue)", "Ordered quantity", "The selling price");
+        "A delivery (an issue)", "Ordered quantity", "The selling price", OrderKind.Sales.PartnerRequired.Key);
+
+    /// <summary>Spec 012, section 5: what the order tools say about the partner rule. The schema is the same whatever the rule's value.</summary>
+    private static string OrderPartnerRule(OrderWords o) =>
+        $"The {o.Partner} (`{o.PartnerId}`) is required unless the rule `{o.PartnerRule}` is false for this company (see `rule_get`): then `{o.PartnerId}` may be null and the order has no {o.Partner} (`{o.Partner}` is null). "
+        + $"While the rule is true, an order without a {o.Partner} is refused with `VALIDATION_FAILED` and `rules` names `{o.PartnerRule}`.";
+
+    /// <summary>Spec 012, section 5: how a refusal by a configurable rule shows.</summary>
+    private const string RulesNamed =
+        "A refusal by one of these rules carries `rules`: the `key` of the rule that refused, the `value` it has and the `errors` keys it produced (`fields`). "
+        + "Read the rule with `rule_get`; change it with `rule_set` only when the user wants the rule changed for the whole company, not to get one call through.";
 
     private static string OrderReferences(OrderWords o) =>
         $"`REFERENCE_NOT_FOUND`: `{o.PartnerId}`, `warehouseId` or a line's `articleId` or `unitId` names no record of this tenant (`errors` says which; find ids with `partner_list`, `warehouse_list`, `article_list`, `uom_list`). "
@@ -196,7 +208,9 @@ public static class ToolCatalog
         ("orderDate", Text("The date of the order as YYYY-MM-DD, for example 2026-10-09.")),
         (o.DueDate, NullableText($"{o.DueDateIs}, as YYYY-MM-DD; not earlier than `orderDate`."
             + (update ? " Required: pass null for no value." : " Optional."))),
-        (o.PartnerId, Uuid($"The `id` of the partner that is the {o.Partner} of the order; it must have `{o.Role}` = true (see `partner_list`). Not the code.")),
+        (o.PartnerId, NullableUuid($"The `id` of the partner that is the {o.Partner} of the order; it must have `{o.Role}` = true (see `partner_list`). Not the code. "
+            + (update ? "Required: an update always sends it; " : "Left out or null: an order without a " + o.Partner + "; ")
+            + $"null is accepted only while the rule `{o.PartnerRule}` is false.")),
         ("warehouseId", update
             ? Uuid($"The `id` of the warehouse {o.WarehouseIs} (see `warehouse_list`). Not the code. Required: an update always names the warehouse.")
             : NullableUuid($"The `id` of the warehouse {o.WarehouseIs} (see `warehouse_list`). Not the code. Optional: left out or null, the order is created on the tenant's default warehouse.")),
@@ -224,6 +238,9 @@ public static class ToolCatalog
     ];
 
     private static (string, System.Text.Json.Nodes.JsonObject) IdOf(string what) => ("id", Uuid($"The `id` of the {what}."));
+
+    private static (string, System.Text.Json.Nodes.JsonObject) RuleKeyOf(string what) =>
+        ("key", Text($"The `key` of the rule {what}, for example `stock.negativeStockAllowed` (see `rule_list`). Case-sensitive."));
 
     private static (string, System.Text.Json.Nodes.JsonObject) ArticleIdOf(string what) =>
         ("articleId", Uuid($"The `id` of the article {what} (see `article_list`). Not the code."));
@@ -463,7 +480,7 @@ public static class ToolCatalog
                 IdOf("warehouse whose stock to list"),
                 Search("the article's code or name"),
                 IsActiveFilter("articles"),
-                ("hasStock", Flag("true: only articles with `quantity` greater than 0 in this warehouse. false: only articles with `quantity` 0. Omit for all.")),
+                ("hasStock", Flag("true: only articles with `quantity` greater than 0 in this warehouse. false: only articles with `quantity` 0 (or below, where negative stock is allowed). Omit for all.")),
                 .. Paging,
             ]),
             (services, input, ct) => services.GetRequiredService<StockQueries>().WarehouseStockAsync(input, ct)),
@@ -568,18 +585,23 @@ public static class ToolCatalog
             + "`QUANTITY_NOT_CONVERTIBLE`: with the current factor a line converts to zero or to more than 999999999.999999 (`errors` names `lines[i].quantity`); correct the draft or the factor. "
             + "`INSUFFICIENT_STOCK`: an issue or a transfer would take more than is on hand in its (source) warehouse, counted in base units; `errors` names the short lines (`lines[0].quantity`). "
             + "Nothing was posted and the draft is unchanged: check `stock_on_hand_list`, then correct the draft with `stock_document_update` "
-            + "or receive stock first, and post again. A count never returns it. "
+            + "or receive stock first, and post again. A count never returns it. It is the rule `stock.negativeStockAllowed` (default false) that refuses: where it is true, stock may go below zero and this error is never returned. "
+            + "`STOCK_RESERVED`: only where the rule `sales.reservedStockProtected` is true (default false) - the document would take goods that confirmed sales orders reserve: afterwards something is still reserved in the warehouse, "
+            + "stock no longer covers it, and this document made that worse (`errors` names those lines, `lines[0].quantity`). Nothing was posted: check `availableQuantity` in `stock_on_hand_list`, take less, receive stock first, "
+            + "or deliver against the sales order instead - a delivery up to its order's outstanding quantity is never refused for this. A count never returns it. "
             + "`COUNT_OUTDATED`: stock of a counted article changed since the count was saved, so it no longer equals the line's `bookQuantity` (`errors` names those lines, `lines[0].quantity`). "
             + "Nothing was posted: read the document with `stock_document_get`, check the count, save it again with `stock_document_update` "
             + "(this takes the current book quantity) and post again. "
-            + "An unlinked issue or a transfer is judged against stock on hand only: it can take stock that is reserved for sales orders (`reservedQuantity`), and nothing warns about it. "
+            + "By default an unlinked issue or a transfer is judged against stock on hand only: it can take stock that is reserved for sales orders (`reservedQuantity`), and nothing warns about it. "
             + "A receipt linked to a purchase order raises the received quantity, and an issue linked to a sales order (a delivery) the delivered quantity, of the order lines it names. "
             + "A linked document is checked against its order before stock: "
             + "`ORDER_NOT_OPEN`: the order is closed (or a draft), `errors` names `purchaseOrderId` or `salesOrderId`; reopen it with `purchase_order_reopen` / `sales_order_reopen` or delete the draft document. "
             + "`QUANTITY_EXCEEDS_ORDER`: the document would take an order line above what was ordered, counted in base units over all its lines naming that order line "
             + "(`errors` names those lines, `lines[0].quantity`). Nothing was posted: read the order with `purchase_order_get` or `sales_order_get` - `outstandingBaseQuantity` of a line is what can still be received or delivered - "
-            + "lower the quantities with `stock_document_update` and post again. "
-            + "A delivery can fail with `INSUFFICIENT_STOCK` although its sales order is confirmed: confirming reserves nothing physically, and the goods must be on hand in the order's warehouse when the delivery is posted.",
+            + "lower the quantities with `stock_document_update` and post again. It is the rule `purchase.overReceiptAllowed` (for a receipt) or `sales.overDeliveryAllowed` (for a delivery) that refuses, both false by default: "
+            + "where the rule is true, more than ordered may be received or delivered, without limit, and the order line then has nothing outstanding. "
+            + "A delivery can fail with `INSUFFICIENT_STOCK` although its sales order is confirmed: confirming reserves nothing physically, and the goods must be on hand in the order's warehouse when the delivery is posted. "
+            + "Order of the checks a rule decides: the order's quantities, then stock, then reservation. " + RulesNamed,
             Input(["id"], IdOf("draft stock document to post")),
             (services, input, ct) => services.GetRequiredService<StockDocumentOperations>().PostAsync(input.Id, ct)),
 
@@ -595,7 +617,10 @@ public static class ToolCatalog
             + "`INVALID_STATE`: the document is a draft, is already reversed, or is itself a reversing document. "
             + "`INSUFFICIENT_STOCK`: the goods the original brought in have already left, so the reversal would make stock negative; `errors` names the original's lines (`lines[0].quantity`). "
             + "For a count this concerns lines that added stock (a surplus); reversing a count undoes its ledger entries and restores neither the counted nor the book quantity. "
-            + "Nothing was reversed: reverse the later documents that took the goods out first (see `stock_ledger_entry_list`), then reverse this one again.",
+            + "Nothing was reversed: reverse the later documents that took the goods out first (see `stock_ledger_entry_list`), then reverse this one again. "
+            + "It is the rule `stock.negativeStockAllowed` (default false) that refuses: where it is true this error is never returned. "
+            + "`STOCK_RESERVED`: only where the rule `sales.reservedStockProtected` is true (default false) - the reversal would take goods back out that confirmed sales orders reserve (`errors` names the original's lines); "
+            + "reversing an issue or a delivery never returns it. The quantities of an order are not judged at a reversal. " + RulesNamed,
             Input(["id", "documentDate"],
             [
                 IdOf("posted stock document to reverse"),
@@ -609,7 +634,8 @@ public static class ToolCatalog
             + "ordered by article code then warehouse code. `quantity` is what is in the warehouse now; `incomingQuantity` is what confirmed purchase orders for that warehouse "
             + "still expect (ordered minus received) - it is not stock and cannot be issued; `reservedQuantity` is what confirmed sales orders shipping from that warehouse still owe "
             + "(ordered minus delivered); `availableQuantity` is `quantity` minus `reservedQuantity` and is negative when more is promised than is there - `incomingQuantity` is not part of it. "
-            + "A reservation informs and blocks nothing: any issue or transfer may still take the stock. A pair that is not listed has none of them. Drafts and closed orders do not count. "
+            + "By default a reservation informs and blocks nothing: any issue or transfer may still take the stock (the rule `sales.reservedStockProtected` changes that). "
+            + "`quantity` is below zero only where the rule `stock.negativeStockAllowed` let stock go there. A pair that is not listed has none of them. Drafts and closed orders do not count. "
             + "For the complete list of one warehouse - every stock article, zero included - use `warehouse_stock_list`. " + Validation,
             Input([],
             [
@@ -664,15 +690,16 @@ public static class ToolCatalog
         XerpTool.For<CreatePurchaseOrderInput, PurchaseOrderDto>("purchase_order_create", ToolKind.Create,
             "Creates a purchase order as a draft and returns it with its `id`: goods ordered from one supplier into one warehouse. "
             + "A line's `unitPrice` is the price of one unit of the line (per box when the line is in boxes), in the tenant's currency, without tax; `lineAmount` is `quantity` × `unitPrice` rounded to 2 decimals. "
-            + "Only stock articles can be ordered. The supplier must be a partner with `isSupplier` = true. "
+            + "Only stock articles can be ordered. The supplier must be a partner with `isSupplier` = true. " + OrderPartnerRule(Purchase) + " "
             + "A draft orders nothing: it has no number, no incoming quantity and cannot be received against until confirmed with `purchase_order_confirm`. "
             + "Without `warehouseId` the order is created on the tenant's default warehouse; the result's `warehouse` shows which warehouse was taken. "
             + Validation + " " + OrderReferences(Purchase),
-            Input(["orderDate", "supplierId", "lines"], OrderFields(Purchase, update: false)),
+            Input(["orderDate", "lines"], OrderFields(Purchase, update: false)),
             (services, input, ct) => services.GetRequiredService<PurchaseOrderOperations>().CreateAsync(input, ct)),
 
         XerpTool.WithId<ReplacePurchaseOrderInput, PurchaseOrderDto>("purchase_order_update", ToolKind.Update,
-            "Replaces the dates, supplier, warehouse, reference, note and all lines of a draft purchase order; every argument is required (`expectedDate`, `reference` and `note` may be null). "
+            "Replaces the dates, supplier, warehouse, reference, note and all lines of a draft purchase order; every argument is required (`expectedDate`, `supplierId`, `reference` and `note` may be null). "
+            + OrderPartnerRule(Purchase) + " "
             + Validation + " `NOT_FOUND`: no such order in this tenant. " + OrderConfirmed(Purchase) + " " + OrderReferences(Purchase),
             Input(["id", "orderDate", "expectedDate", "supplierId", "warehouseId", "reference", "note", "lines"],
                 [IdOf("draft purchase order to replace"), .. OrderFields(Purchase, update: true)]),
@@ -741,15 +768,16 @@ public static class ToolCatalog
         XerpTool.For<CreateSalesOrderInput, SalesOrderDto>("sales_order_create", ToolKind.Create,
             "Creates a sales order as a draft and returns it with its `id`: goods one customer orders, shipped from one warehouse. "
             + "A line's `unitPrice` is the selling price of one unit of the line (per box when the line is in boxes), in the tenant's currency, without tax; `lineAmount` is `quantity` × `unitPrice` rounded to 2 decimals. "
-            + "Only stock articles can be ordered. The customer must be a partner with `isCustomer` = true. "
+            + "Only stock articles can be ordered. The customer must be a partner with `isCustomer` = true. " + OrderPartnerRule(Sales) + " "
             + "A draft is an offer: it has prices and a total, no number, reserves nothing and cannot be delivered until confirmed with `sales_order_confirm`. "
             + "Without `warehouseId` the order is created on the tenant's default warehouse; the result's `warehouse` shows which warehouse was taken. "
             + Validation + " " + OrderReferences(Sales),
-            Input(["orderDate", "customerId", "lines"], OrderFields(Sales, update: false)),
+            Input(["orderDate", "lines"], OrderFields(Sales, update: false)),
             (services, input, ct) => services.GetRequiredService<SalesOrderOperations>().CreateAsync(input, ct)),
 
         XerpTool.WithId<ReplaceSalesOrderInput, SalesOrderDto>("sales_order_update", ToolKind.Update,
-            "Replaces the dates, customer, warehouse, reference, note and all lines of a draft sales order; every argument is required (`requestedDate`, `reference` and `note` may be null). "
+            "Replaces the dates, customer, warehouse, reference, note and all lines of a draft sales order; every argument is required (`requestedDate`, `customerId`, `reference` and `note` may be null). "
+            + OrderPartnerRule(Sales) + " "
             + Validation + " `NOT_FOUND`: no such order in this tenant. " + OrderConfirmed(Sales) + " " + OrderReferences(Sales),
             Input(["id", "orderDate", "requestedDate", "customerId", "warehouseId", "reference", "note", "lines"],
                 [IdOf("draft sales order to replace"), .. OrderFields(Sales, update: true)]),
@@ -786,6 +814,58 @@ public static class ToolCatalog
             + "`NOT_FOUND`: no such order in this tenant. `INVALID_STATE`: the order is not closed (a draft, or already confirmed).",
             Input(["id"], IdOf("closed sales order to reopen")),
             (services, input, ct) => services.GetRequiredService<SalesOrderOperations>().ReopenAsync(input.Id, ct)),
+
+        // ---- configurable rules (spec 012, section 5)
+        XerpTool.For<ListRulesInput, PagedResult<RuleDto>>("rule_list", ToolKind.Read,
+            "Lists the business rules this company can switch on or off, ordered by `key`, with paging. Each rule is a statement (`name`) that is true or false: `value` is what holds for this company now, "
+            + "`default` what holds for a company that has set nothing, and `source` says which of the two it is (`tenant`: the company's own value; `default`). "
+            + "`updatedAt` / `updatedBy` say when and by which API key the company last changed the rule (null: never). "
+            + "Read a rule's `description` before changing it: it says which operations the rule judges and what true and false do. Every rule of the system is listed, set or not; "
+            + "a check that is not in this list cannot be switched. Filters combine with AND. " + Validation,
+            Input([],
+            [
+                Search("the key or the name"),
+                ("group", Text("Return only the rules of this group - the first part of the key: `stock`, `purchase`, `sales`. A group no rule has gives an empty list.")),
+                ("source", Text("`tenant`: only the rules the company has set itself. `default`: only the rules at their default.", RuleOperations.SourceDefault, RuleOperations.SourceTenant)),
+                .. Paging,
+            ]),
+            (services, input, ct) => services.GetRequiredService<RuleOperations>().ListAsync(input, ct)),
+
+        XerpTool.For<RuleKeyInput, RuleDto>("rule_get", ToolKind.Read,
+            "Returns one business rule by its `key`: its `name` and `description`, its `default`, the `value` in force for this company and who last changed it. "
+            + "`VALIDATION_FAILED`: `key` is missing. `NOT_FOUND`: no rule has this key (keys are case-sensitive; see `rule_list`).",
+            Input(["key"], RuleKeyOf("to read")),
+            (services, input, ct) => services.GetRequiredService<RuleOperations>().GetAsync(input.Key, ct)),
+
+        XerpTool.For<SetRuleByKeyInput, RuleDto>("rule_set", ToolKind.Repeatable,
+            "Switches a business rule on (`value` true: the statement in the rule's `name` holds) or off (false) and returns the rule. "
+            + "The change is for the whole company and for every user and agent of it, from the next operation on; existing data is not changed, re-checked or refused later - documents, orders and stock stay as they are. "
+            + "The change is recorded in the history (`rule_change_list`) with your API key. Setting the value the company already has changes nothing; setting the default's value makes it the company's own value. "
+            + "Do not change a rule only to get one refused operation through, unless the user asked for the rule to change: a rule is the company's policy, not an obstacle of this call. "
+            + "`VALIDATION_FAILED`: `key` or `value` is missing, or `value` is not the JSON boolean true or false (a string or a number is not a value). `NOT_FOUND`: no rule has this key.",
+            Input(["key", "value"],
+            [
+                RuleKeyOf("to change"),
+                ("value", Flag("The new value: true or false, as a JSON boolean. true means the statement in the rule's `name` holds.")),
+            ]),
+            (services, input, ct) => services.GetRequiredService<RuleOperations>().SetAsync(input, ct)),
+
+        XerpTool.For<RuleKeyInput, RuleDto>("rule_reset", ToolKind.Repeatable,
+            "Returns a business rule to its default: the company's own value is removed, `value` is the `default` again and `source` is `default`. Like `rule_set` it applies to the whole company from the next operation on, "
+            + "changes no existing data and is recorded in the history with your API key. Resetting a rule that is at its default changes nothing. "
+            + "`VALIDATION_FAILED`: `key` is missing. `NOT_FOUND`: no rule has this key.",
+            Input(["key"], RuleKeyOf("to reset")),
+            (services, input, ct) => services.GetRequiredService<RuleOperations>().ResetAsync(input.Key, ct)),
+
+        XerpTool.For<ListRuleChangesInput, PagedResult<RuleChangeDto>>("rule_change_list", ToolKind.Read,
+            "Lists the changes of the company's business rules, newest first, with paging: who changed which rule and when. Each item has the `key`, the `action` (`set` or `reset`), "
+            + "the value in force before (`oldValue`) and after (`newValue`), `changedAt` and `changedBy` (the `id` of the API key; see `api_key_get`). The history is permanent. " + Validation,
+            Input([],
+            [
+                ("key", Text("Return only the changes of the rule with exactly this key. A text that is no rule gives an empty list.")),
+                .. Paging,
+            ]),
+            (services, input, ct) => services.GetRequiredService<RuleOperations>().ListChangesAsync(input, ct)),
 
         // ---- API keys (creating a key is HTTP only: a secret never travels through a tool result, ADR-0010)
         XerpTool.For<ListApiKeysInput, PagedResult<ApiKeyDto>>("api_key_list", ToolKind.Read,

@@ -251,9 +251,9 @@ public class StockUnitLineRulesTests
         IReadOnlyList<StockLineValues> Base(params StockLineEntry[] lines) =>
             StockLineChecks.Convert(lines, Facts, StockDocumentType.Receipt).Value!.Select(c => c.BaseValues).ToList();
 
-        Assert.Null(StockLineChecks.Sufficiency(Base(new(A, Box, 2m), new(A, Pcs, 6m)), onHand));
-        Assert.Equal(["lines[0].quantity"], StockLineChecks.Sufficiency(Base(new StockLineEntry(A, Box, 3m)), onHand)!.Errors!.Keys);
-        Assert.Equal(["lines[0].quantity", "lines[1].quantity"], StockLineChecks.Sufficiency(Base(new(A, Box, 1m), new(A, Pcs, 20m)), onHand)!.Errors!.Keys.Order());
+        Assert.Null(StockTestSupport.IssueSufficiency(Base(new(A, Box, 2m), new(A, Pcs, 6m)), onHand));
+        Assert.Equal(["lines[0].quantity"], StockTestSupport.IssueSufficiency(Base(new StockLineEntry(A, Box, 3m)), onHand)!.Errors!.Keys);
+        Assert.Equal(["lines[0].quantity", "lines[1].quantity"], StockTestSupport.IssueSufficiency(Base(new(A, Box, 1m), new(A, Pcs, 20m)), onHand)!.Errors!.Keys.Order());
     }
 
     // ---- Application: input rules

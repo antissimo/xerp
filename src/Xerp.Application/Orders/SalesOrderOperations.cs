@@ -10,10 +10,10 @@ namespace Xerp.Application.Orders;
 /// Everything they do is <see cref="OrderOperations{TOrder,TLine,TDto,TSummary}"/> - the code purchase orders
 /// run too; here are only the names a sales order gives to its customer, its requested date and what was
 /// delivered. Confirming one is never refused for stock (R4): what it promises shows as the reserved quantity
-/// of stock on hand and blocks nothing (ADR-0017).
+/// of stock on hand and, by default, blocks nothing (ADR-0017; rule <c>sales.reservedStockProtected</c>, which never judges a confirmation: spec 012, R31).
 /// </summary>
-public sealed class SalesOrderOperations(IXerpDb db, ITenantContext context, IClock clock)
-    : OrderOperations<SalesOrder, SalesOrderLine, SalesOrderDto, SalesOrderSummaryDto>(db, context, clock, OrderKind.Sales)
+public sealed class SalesOrderOperations(IXerpDb db, ITenantContext context, IClock clock, IRules rules)
+    : OrderOperations<SalesOrder, SalesOrderLine, SalesOrderDto, SalesOrderSummaryDto>(db, context, clock, rules, OrderKind.Sales)
 {
     private readonly IXerpDb _db = db;
 
@@ -42,7 +42,8 @@ public sealed class SalesOrderOperations(IXerpDb db, ITenantContext context, ICl
 
     private static OrderInput Values(ReplaceSalesOrderInput input) => new(
         input.OrderDate, input.RequestedDate, input.CustomerId, input.WarehouseId, input.Reference, input.Note, input.Lines,
-        input.Has(nameof(input.RequestedDate)), input.Has(nameof(input.Reference)), input.Has(nameof(input.Note)));
+        input.Has(nameof(input.RequestedDate)), input.Has(nameof(input.Reference)), input.Has(nameof(input.Note)),
+        PartnerGiven: input.Has(nameof(input.CustomerId)));
 
     protected override SalesOrder NewOrder(OrderValues values, IReadOnlyList<OrderLineEntry> lines, DateTime now, Guid actorKeyId) =>
         SalesOrder.Create(

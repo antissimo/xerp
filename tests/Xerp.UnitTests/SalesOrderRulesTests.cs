@@ -3,6 +3,7 @@ using Xerp.Application.Orders;
 using Xerp.Application.Stock;
 using Xerp.Domain.Inventory;
 using Xerp.Domain.Orders;
+using Xerp.Domain.Rules;
 
 namespace Xerp.UnitTests;
 
@@ -62,23 +63,23 @@ public class SalesOrderRulesTests
         Assert.Equal(FulfilmentStatus.None, order.FulfilmentStatus);
 
         // 009/R25-R27 mirrored: delivered rises with a posted delivery, never above what was ordered.
-        order.Fulfil([new LineFulfilment(1, 25m)]);
+        order.Fulfil([new LineFulfilment(1, 25m)], overFulfilmentAllowed: false);
         Assert.Equal(FulfilmentStatus.Partial, order.FulfilmentStatus);
         Assert.Equal(15m, order.Outstanding[1]);
-        Assert.Throws<InvalidOperationException>(() => order.Fulfil([new LineFulfilment(1, 16m)]));
+        Assert.Throws<InvalidOperationException>(() => order.Fulfil([new LineFulfilment(1, 16m)], overFulfilmentAllowed: false));
         Assert.Equal(25m, order.Lines[0].FulfilledBaseQuantity);
 
         // 009/R15, R16 mirrored: closed, nothing is outstanding; reopened, the rest is again.
         order.Close(Now, Actor);
         Assert.Equal(0m, order.Outstanding[1]);
-        Assert.Throws<InvalidOperationException>(() => order.Fulfil([new LineFulfilment(1, 1m)]));
+        Assert.Throws<InvalidOperationException>(() => order.Fulfil([new LineFulfilment(1, 1m)], overFulfilmentAllowed: false));
         // R14: a delivery is reversed whatever the order's status.
         order.TakeBack([new LineFulfilment(1, 25m)]);
         Assert.Equal(OrderStatus.Closed, order.Status);
         order.Reopen();
         Assert.Equal(40m, order.Outstanding[1]);
 
-        order.Fulfil([new LineFulfilment(1, 40m), new LineFulfilment(2, 60m)]);
+        order.Fulfil([new LineFulfilment(1, 40m), new LineFulfilment(2, 60m)], overFulfilmentAllowed: false);
         Assert.Equal(FulfilmentStatus.Full, order.FulfilmentStatus);
     }
 
@@ -129,7 +130,7 @@ public class SalesOrderRulesTests
 
         var onHand = 100m;
         Assert.Equal(70m, StockAvailability.Available(onHand, Reserved()));
-        order.Fulfil([new LineFulfilment(1, 12m)]);
+        order.Fulfil([new LineFulfilment(1, 12m)], overFulfilmentAllowed: false);
         onHand -= 12m;
         Assert.Equal((88m, 18m, 70m), (onHand, Reserved(), StockAvailability.Available(onHand, Reserved())));
         // Closing frees the rest; reopening reserves it again.
@@ -239,7 +240,7 @@ public class SalesOrderRulesTests
     public void R1_Invalid_input_is_reported_under_the_names_of_a_sales_order()
     {
         var values = OrderValidation.Values(
-            OrderKind.Sales, "2026-10-09", "2026-10-08", "CUS", Warehouse.ToString(), null, null, [new OrderLineInput(A.ToString(), 1m, 1m)]);
+            OrderKind.Sales, true, "2026-10-09", "2026-10-08", "CUS", Warehouse.ToString(), null, null, [new OrderLineInput(A.ToString(), 1m, 1m)]);
         Assert.Equal(["customerId", "requestedDate"], values.Error!.Errors!.Keys.Order(StringComparer.Ordinal));
 
         var list = OrderValidation.List(OrderKind.Sales, null, "all", "x", null, null, null, null);
@@ -253,14 +254,14 @@ public class SalesOrderRulesTests
     {
         var order = Confirmed((5m, 1m, 1m));
         var fulfilment = new[] { new LineFulfilment(1, 20m) };
-        var exceeds = OrderLinkChecks.WithinOrder(fulfilment, order.Outstanding);
+        var exceeds = OrderLinkChecks.WithinOrder(fulfilment, order.Outstanding, RuleRegistry.OverDeliveryAllowed, overFulfilmentAllowed: false);
         Assert.Equal(ErrorCodes.QuantityExceedsOrder, exceeds!.Code);
         Assert.Equal(["lines[0].quantity"], exceeds.Errors!.Keys);
         // Within the order, stock decides alone - what is reserved plays no part (R9).
-        Assert.Null(OrderLinkChecks.WithinOrder([new LineFulfilment(1, 5m)], order.Outstanding));
-        var short_ = StockLineChecks.Sufficiency([new StockLineValues(A, 5m)], new Dictionary<Guid, decimal> { [A] = 4m });
+        Assert.Null(OrderLinkChecks.WithinOrder([new LineFulfilment(1, 5m)], order.Outstanding, RuleRegistry.OverDeliveryAllowed, overFulfilmentAllowed: false));
+        var short_ = StockTestSupport.IssueSufficiency([new StockLineValues(A, 5m)], new Dictionary<Guid, decimal> { [A] = 4m });
         Assert.Equal(ErrorCodes.InsufficientStock, short_!.Code);
-        Assert.Null(StockLineChecks.Sufficiency([new StockLineValues(A, 5m)], new Dictionary<Guid, decimal> { [A] = 5m }));
+        Assert.Null(StockTestSupport.IssueSufficiency([new StockLineValues(A, 5m)], new Dictionary<Guid, decimal> { [A] = 5m }));
 
         Assert.Equal(["salesOrderId"], OrderLinkChecks.Open(OrderKind.Sales.LinkField, OrderStatus.Closed)!.Errors!.Keys);
     }
