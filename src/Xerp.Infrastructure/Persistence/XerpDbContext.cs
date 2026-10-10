@@ -252,6 +252,11 @@ public sealed class XerpDbContext(DbContextOptions<XerpDbContext> options, ITena
                 .HasForeignKey(d => new { d.TenantId, d.SalesOrderId })
                 .HasPrincipalKey(o => new { o.TenantId, o.Id })
                 .OnDelete(DeleteBehavior.Restrict);
+            // Spec 011a: the supplier of a receipt or the customer of an issue; its index also serves "documents by partner".
+            e.HasOne<Partner>().WithMany()
+                .HasForeignKey(d => new { d.TenantId, d.PartnerId })
+                .HasPrincipalKey(p => new { p.TenantId, p.Id })
+                .OnDelete(DeleteBehavior.Restrict);
             e.Ignore(d => d.Fulfilment);
             e.Ignore(d => d.Link);
         });

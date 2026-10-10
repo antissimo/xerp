@@ -25,6 +25,7 @@ public static class StockDocumentValidation
 
     public const string ToWarehouseField = "toWarehouseId";
     public const string UnitField = "unitId";
+    public const string PartnerField = StockPartnerChecks.PartnerField;
     private const string OrderLineField = StockLineChecks.OrderLineField;
 
     public static string LineKey(int index, string field) => $"lines[{index}].{field}";
@@ -58,7 +59,11 @@ public static class StockDocumentValidation
         // except for a transfer, which names both of its warehouses.
         var values = Values(
             errors, type, linked, input.DocumentDate, input.WarehouseId, input.ToWarehouseId, input.Reference, input.Note, input.Lines,
-            warehouseOptional: errors.Has("type") || type != StockDocumentType.Transfer);
+            warehouseOptional: errors.Has("type") || type != StockDocumentType.Transfer, partnerId: input.PartnerId);
+        // Spec 011a, R1: only a known type can say that it has no partner. Omitted and null are equal on a create (R3).
+        if (!errors.Has("type") && !errors.Has(PartnerField)
+            && StockPartnerChecks.OfType(type, values.PartnerId, given: true) is { } partnerMessage)
+            errors.Add(PartnerField, partnerMessage);
         var warehouseOmitted = input.WarehouseId is null;
         // Only for a known type can the destination be judged (spec 006, R2, R3).
         if (!errors.Has("type") && !errors.Has(ToWarehouseField)
@@ -82,10 +87,13 @@ public static class StockDocumentValidation
         }
         // The body has neither a type nor a link, so what depends on them (spec 008, R3, R4; spec 009, R20)
         // waits for the stored document: OfType.
-        var values = Values(errors, type: null, linked: null, input.DocumentDate, input.WarehouseId, input.ToWarehouseId, input.Reference, input.Note, input.Lines);
+        var values = Values(
+            errors, type: null, linked: null, input.DocumentDate, input.WarehouseId, input.ToWarehouseId, input.Reference, input.Note, input.Lines,
+            partnerId: input.PartnerId);
         if (errors.Any)
             return errors.ToError();
-        return values;
+        // Whether partnerId had to be sent depends on the type too (spec 011a, R3): OfType.
+        return values with { PartnerGiven = input.Has(nameof(input.PartnerId)) };
     }
 
     /// <summary>
@@ -95,6 +103,8 @@ public static class StockDocumentValidation
     /// for a zero on a document that is not a count, <c>lines[i].articleId</c> for a repeated article on a count.
     /// The link to an order is decided by the stored document too (spec 009, R19, R20): <c>lines[i].orderLineNo</c>
     /// for a line without one on a linked document and for a line with one on an unlinked document.
+    /// So is the partner (spec 011a, R1, R3): <c>partnerId</c> for one named on a transfer or a count, and for
+    /// a receipt or an issue whose replace left the property out.
     /// </summary>
     /// <param name="linked">Whether the stored document is linked to an order.</param>
     public static AppError? OfType(StockDocumentType type, StockDocumentValues values, bool linked = false)
@@ -102,6 +112,8 @@ public static class StockDocumentValidation
         var errors = new ValidationErrors();
         if (DestinationMessage(type, values.WarehouseId, values.ToWarehouseId) is { } message)
             errors.Add(ToWarehouseField, message);
+        if (StockPartnerChecks.OfType(type, values.PartnerId, values.PartnerGiven) is { } partnerMessage)
+            errors.Add(PartnerField, partnerMessage);
         for (var i = 0; i < values.Lines.Count; i++)
         {
             if (!QuantityRules.IsValidOn(type, values.Lines[i].Quantity))
@@ -218,9 +230,10 @@ public static class StockDocumentValidation
     /// <param name="type">The type of the document; null when the request does not say (a replace): then a quantity of 0 passes here and <see cref="OfType"/> decides.</param>
     /// <param name="linked">Whether the request links the document to an order; null when it does not say (a replace).</param>
     /// <param name="warehouseOptional">Whether <c>warehouseId</c> may be omitted or null (spec 011, R8): the returned <c>WarehouseId</c> is then empty until it is resolved.</param>
+    /// <param name="partnerId">Only the form here (spec 011a, R3): a UUID or null. Whether the type can have a partner is decided by <see cref="StockPartnerChecks.OfType"/>.</param>
     private static StockDocumentValues Values(
         ValidationErrors errors, StockDocumentType? type, bool? linked, string? documentDate, string? warehouseId, string? toWarehouseId, string? reference, string? note,
-        IReadOnlyList<StockLineInput?>? lines, bool warehouseOptional = false)
+        IReadOnlyList<StockLineInput?>? lines, bool warehouseOptional = false, string? partnerId = null)
     {
         var date = Date(errors, documentDate);
         var warehouse = DefaultWarehouseRules.Named(errors, warehouseId, warehouseOptional) ?? default;
@@ -230,6 +243,13 @@ public static class StockDocumentValidation
         {
             if (Guid.TryParse(toWarehouseId, out var parsed)) toWarehouse = parsed;
             else errors.Add(ToWarehouseField, "toWarehouseId must be the id (UUID) of a warehouse, not its code.");
+        }
+
+        Guid? partner = null;
+        if (partnerId is not null)
+        {
+            if (Guid.TryParse(partnerId, out var parsed)) partner = parsed;
+            else errors.Add(PartnerField, "partnerId must be the id (UUID) of a partner, not its code; leave it out or pass null for a document without a partner.");
         }
 
         if (!OptionalTextRules.TryNormalize(reference, StockDocument.ReferenceMaxLength, out var normalizedReference))
@@ -274,7 +294,7 @@ public static class StockDocumentValidation
             if (type is { } known)
                 Repeats(errors, known, articleIds);
         }
-        return new StockDocumentValues(date, warehouse, toWarehouse, normalizedReference, normalizedNote, lineValues);
+        return new StockDocumentValues(date, warehouse, toWarehouse, normalizedReference, normalizedNote, lineValues, partner);
     }
 
     public static Result<StockDocumentListQuery> List(ListStockDocumentsInput input)
@@ -295,12 +315,13 @@ public static class StockDocumentValidation
         var warehouseId = OptionalId(errors, input.WarehouseId, "warehouseId");
         var purchaseOrderId = OptionalId(errors, input.PurchaseOrderId, OrderKind.Purchase.LinkField);
         var salesOrderId = OptionalId(errors, input.SalesOrderId, OrderKind.Sales.LinkField);
+        var partnerId = OptionalId(errors, input.PartnerId, PartnerField);
         var search = ListRules.Search(errors, input.Search);
         var limit = ListRules.Limit(errors, input.Limit);
         var offset = ListRules.Offset(errors, input.Offset);
         if (errors.Any)
             return errors.ToError();
-        return new StockDocumentListQuery(type, status, warehouseId, search, limit, offset, purchaseOrderId, salesOrderId);
+        return new StockDocumentListQuery(type, status, warehouseId, search, limit, offset, purchaseOrderId, salesOrderId, partnerId);
     }
 
     public static Result<StockOnHandQuery> OnHand(ListStockOnHandInput input)

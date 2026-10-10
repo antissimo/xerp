@@ -7,7 +7,8 @@ namespace Xerp.Application.Stock;
 
 /// <summary>What a stock document linked to an order needs to know about that order, read under the tenant's lock.</summary>
 /// <param name="LineArticles">The article of every line of the order, by line number.</param>
-public sealed record LinkedOrderFacts(Guid Id, OrderStatus Status, Guid WarehouseId, IReadOnlyDictionary<int, Guid> LineArticles);
+/// <param name="PartnerId">The order's supplier or customer: the partner of every document linked to it (spec 011a, R8).</param>
+public sealed record LinkedOrderFacts(Guid Id, OrderStatus Status, Guid WarehouseId, IReadOnlyDictionary<int, Guid> LineArticles, Guid PartnerId);
 
 /// <summary>
 /// The checks the link to an order adds to saving and posting a stock document (ADR-0016; spec 009, R21, R24,
@@ -44,12 +45,17 @@ public static class OrderLinkChecks
     /// <summary>
     /// R21, step 4: null when the document agrees with its order, otherwise ORDER_MISMATCH with every
     /// applicable key - <c>warehouseId</c> when the document is for another warehouse than the order,
-    /// <c>lines[i].articleId</c> when a line's article is not the article of the order line it names.
+    /// <c>lines[i].articleId</c> when a line's article is not the article of the order line it names,
+    /// <c>partnerId</c> when the request names a partner other than the order's (spec 011a, R9). The partner is
+    /// only compared: whatever else the named id is - unknown, inactive, without the role - the answer is the same.
     /// </summary>
     /// <param name="lines">The lines of the document; every <c>OrderLineNo</c> is a line of the order.</param>
-    public static AppError? Agreement(Guid documentWarehouseId, IReadOnlyList<StockLineEntry> lines, LinkedOrderFacts order)
+    /// <param name="partnerId">The partner the request names; null when it names none, which is the order's partner (spec 011a, R8).</param>
+    public static AppError? Agreement(Guid documentWarehouseId, IReadOnlyList<StockLineEntry> lines, LinkedOrderFacts order, Guid? partnerId = null)
     {
         var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        if (partnerId is { } named && named != order.PartnerId)
+            errors[StockPartnerChecks.PartnerField] = ["A document linked to an order has the order's partner; leave partnerId out or pass null."];
         if (documentWarehouseId != order.WarehouseId)
             errors[WarehouseField] = [$"The order is for the warehouse with id '{order.WarehouseId}'."];
         for (var i = 0; i < lines.Count; i++)
@@ -62,8 +68,8 @@ public static class OrderLinkChecks
         return errors.Count == 0
             ? null
             : new AppError(ErrorCodes.OrderMismatch,
-                "The document disagrees with the order it is linked to: an order is fulfilled in its own warehouse, and each line must name "
-                + "the article of the order line it fulfils. Nothing was saved. Read the order and correct `warehouseId`, `articleId` or `orderLineNo`.",
+                "The document disagrees with the order it is linked to: an order is fulfilled in its own warehouse and for its own partner, and each line must name "
+                + "the article of the order line it fulfils. Nothing was saved. Read the order and correct `warehouseId`, `partnerId`, `articleId` or `orderLineNo`.",
                 errors);
     }
 

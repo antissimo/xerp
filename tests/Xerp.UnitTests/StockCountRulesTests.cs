@@ -406,7 +406,7 @@ public class StockCountRulesTests
     {
         var replace = new ReplaceStockDocumentInput
         {
-            DocumentDate = "2026-10-09", WarehouseId = W1.ToString(), Reference = null, Note = null,
+            DocumentDate = "2026-10-09", WarehouseId = W1.ToString(), Reference = null, Note = null, PartnerId = null,
             Lines = [new(A.ToString(), 0m), new(B.ToString(), 1m), new(A.ToString(), 2m)],
         };
 

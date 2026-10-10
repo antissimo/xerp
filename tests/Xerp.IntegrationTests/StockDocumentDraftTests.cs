@@ -141,7 +141,7 @@ public class StockDocumentDraftTests(XerpFixture app)
         var draft = await Stock.CreateAsync(s.Http, "issue", s.W1, (s.A, 1), (s.A, 2), (s.B, 3));
         var body = new JsonObject
         {
-            ["documentDate"] = "2026-11-30", ["warehouseId"] = s.W2.ToString(), ["reference"] = "DN-4711",
+            ["documentDate"] = "2026-11-30", ["warehouseId"] = s.W2.ToString(), ["partnerId"] = null, ["reference"] = "DN-4711",
             ["note"] = "Line one\nline two", ["lines"] = Stock.Lines((s.B, 7)),
         };
 
@@ -182,6 +182,7 @@ public class StockDocumentDraftTests(XerpFixture app)
     [Theory]
     [InlineData("documentDate")]
     [InlineData("warehouseId")]
+    [InlineData("partnerId")] // spec 011a, R3 / AC-22
     [InlineData("reference")]
     [InlineData("note")]
     [InlineData("lines")]

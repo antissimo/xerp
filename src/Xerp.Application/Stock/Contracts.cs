@@ -27,7 +27,9 @@ public sealed record OrderLinkDto(Guid Id, string Number);
 /// <c>ToWarehouse</c> is null unless the document is a transfer; <c>ReversalOf</c> is set on a reversing
 /// document and <c>ReversedBy</c> on a reversed one (spec 006, 4.1); <c>PurchaseOrder</c> is set on a receipt
 /// linked to a purchase order (spec 009, 4.2) and <c>SalesOrder</c> on an issue linked to a sales order (spec
-/// 010, 4.2). All five are always present.
+/// 010, 4.2). <c>Partner</c> is the supplier of a receipt or the customer of an issue, with its current code
+/// and name (spec 011a, section 4): the order's partner on a linked document, null where none was named and
+/// on every transfer and count. All six are always present.
 /// </summary>
 public sealed record StockDocumentDto(
     Guid Id,
@@ -41,6 +43,7 @@ public sealed record StockDocumentDto(
     StockDocumentLinkDto? ReversedBy,
     OrderLinkDto? PurchaseOrder,
     OrderLinkDto? SalesOrder,
+    ReferenceSummary? Partner,
     string? Reference,
     string? Note,
     IReadOnlyList<StockDocumentLineDto> Lines,
@@ -64,6 +67,7 @@ public sealed record StockDocumentSummaryDto(
     StockDocumentLinkDto? ReversedBy,
     OrderLinkDto? PurchaseOrder,
     OrderLinkDto? SalesOrder,
+    ReferenceSummary? Partner,
     string? Reference,
     string? Note,
     int LineCount,
@@ -113,21 +117,25 @@ public readonly record struct StockLineRequest(Guid ArticleId, decimal Quantity,
 /// <param name="WarehouseId">Omitted or null on a receipt, an issue or a count: the tenant's default warehouse, or the linked order's warehouse (spec 011, R8, R10).</param>
 /// <param name="PurchaseOrderId">The purchase order a receipt fulfils; omitted or null for an unlinked document (spec 009, R18).</param>
 /// <param name="SalesOrderId">The sales order an issue delivers; omitted or null for an unlinked document (spec 010, R5, R6).</param>
+/// <param name="PartnerId">The supplier of a receipt or the customer of an issue; omitted and null are equal (spec 011a, R3).</param>
 public sealed record CreateStockDocumentInput(
     string? Type = null, string? DocumentDate = null, string? WarehouseId = null,
     IReadOnlyList<StockLineInput?>? Lines = null, string? Reference = null, string? Note = null, string? ToWarehouseId = null,
-    string? PurchaseOrderId = null, string? SalesOrderId = null);
+    string? PurchaseOrderId = null, string? SalesOrderId = null, string? PartnerId = null);
 
 /// <summary>
 /// All five fields must be present (R7); <c>Reference</c> and <c>Note</c> may be null but must have been given.
 /// There is no <c>type</c>: it never changes (R1). <c>ToWarehouseId</c> is needed for a transfer and must be
 /// absent or null for the other types (spec 006, 4.1), which only the stored document can tell. There is no
 /// <c>purchaseOrderId</c> or <c>salesOrderId</c> either: the link is set at creation and never changes (spec 009, R19).
+/// <c>PartnerId</c> must be present, possibly null, for a receipt and an issue - a partner is never dropped by
+/// omission - and absent or null for the other types (spec 011a, R1, R3), which again only the stored document can tell.
 /// </summary>
 public sealed record ReplaceStockDocumentInput : TrackedInput
 {
     private readonly string? _reference;
     private readonly string? _note;
+    private readonly string? _partnerId;
 
     public string? DocumentDate { get; init; }
     public string? WarehouseId { get; init; }
@@ -135,6 +143,7 @@ public sealed record ReplaceStockDocumentInput : TrackedInput
     public string? Reference { get => _reference; init => _reference = Given(value); }
     public string? Note { get => _note; init => _note = Given(value); }
     public IReadOnlyList<StockLineInput?>? Lines { get; init; }
+    public string? PartnerId { get => _partnerId; init => _partnerId = Given(value); }
 }
 
 /// <summary>The body of a reversal (spec 006, 4.2): the reversal's own date and note.</summary>
@@ -145,7 +154,7 @@ public sealed record StockReversalValues(DateOnly DocumentDate, string? Note);
 
 public sealed record ListStockDocumentsInput(
     string? Type = null, string? Status = null, string? WarehouseId = null, string? Search = null,
-    int? Limit = null, int? Offset = null, string? PurchaseOrderId = null, string? SalesOrderId = null);
+    int? Limit = null, int? Offset = null, string? PurchaseOrderId = null, string? SalesOrderId = null, string? PartnerId = null);
 
 /// <summary>How a client without a URL path names one document: by <c>id</c> or by <c>number</c>.</summary>
 public sealed record StockDocumentAddressInput(string? Id = null, string? Number = null);
@@ -163,8 +172,11 @@ public sealed record ListStockLedgerEntriesInput(
     string? ArticleId = null, string? WarehouseId = null, string? DocumentId = null, int? Limit = null, int? Offset = null);
 
 /// <summary>Validated header and lines of a document. The references are well-formed, not yet known to exist.</summary>
+/// <param name="PartnerId">The partner the request names; null when it names none (spec 011a, R3).</param>
+/// <param name="PartnerGiven">False when a replace left <c>partnerId</c> out, which a receipt and an issue may not.</param>
 public sealed record StockDocumentValues(
-    DateOnly DocumentDate, Guid WarehouseId, Guid? ToWarehouseId, string? Reference, string? Note, IReadOnlyList<StockLineRequest> Lines);
+    DateOnly DocumentDate, Guid WarehouseId, Guid? ToWarehouseId, string? Reference, string? Note, IReadOnlyList<StockLineRequest> Lines,
+    Guid? PartnerId = null, bool PartnerGiven = true);
 
 /// <summary>Validated input of a create: the type, the values and the order the document is linked to, if any.</summary>
 /// <param name="WarehouseOmitted">
@@ -175,7 +187,8 @@ public sealed record NewStockDocumentValues(
     StockDocumentType Type, StockDocumentValues Values, OrderLink? Link = null, bool WarehouseOmitted = false);
 
 public sealed record StockDocumentListQuery(
-    StockDocumentType? Type, StockDocumentStatus? Status, Guid? WarehouseId, string? Search, int Limit, int Offset, Guid? PurchaseOrderId = null, Guid? SalesOrderId = null);
+    StockDocumentType? Type, StockDocumentStatus? Status, Guid? WarehouseId, string? Search, int Limit, int Offset, Guid? PurchaseOrderId = null, Guid? SalesOrderId = null,
+    Guid? PartnerId = null);
 
 public sealed record StockOnHandQuery(Guid? ArticleId, Guid? WarehouseId, int Limit, int Offset);
 

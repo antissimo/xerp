@@ -110,10 +110,14 @@ public static class ToolCatalog
         + "`QUANTITY_NOT_CONVERTIBLE`: a line's quantity, converted to the article's base unit with the current factor, rounds to zero or exceeds 999999999.999999 (`errors` names `lines[i].quantity`). "
         + "Errors about a line are keyed by position, for example `lines[0].articleId`.";
 
+    private const string StockPartner =
+        "For `partnerId` on a document that is not linked to an order: `REFERENCE_NOT_FOUND` when it names no partner of this tenant, `REFERENCE_INACTIVE` when that partner is inactive and would be newly used, "
+        + "`PARTNER_ROLE_MISSING` when the partner of a receipt does not have `isSupplier`, or the partner of an issue `isCustomer` (find one with `partner_list`, or give the role with `partner_update`).";
+
     private const string OrderLink =
         "`REFERENCE_NOT_FOUND` also: `purchaseOrderId` names no purchase order, or `salesOrderId` no sales order, of this tenant, or a line's `orderLineNo` is not a line of that order (`errors` names `lines[i].orderLineNo`). "
         + "`ORDER_NOT_OPEN`: the order is a draft or closed (`errors` names `purchaseOrderId` or `salesOrderId`); confirm it with `purchase_order_confirm` / `sales_order_confirm` or reopen it with `purchase_order_reopen` / `sales_order_reopen`. "
-        + "`ORDER_MISMATCH`: the document disagrees with its order - `warehouseId` is not the order's warehouse, or a line's `articleId` is not the article of the order line it names (`errors` says which); read the order with `purchase_order_get` or `sales_order_get`.";
+        + "`ORDER_MISMATCH`: the document disagrees with its order - `warehouseId` is not the order's warehouse, `partnerId` is not the order's partner, or a line's `articleId` is not the article of the order line it names (`errors` says which); read the order with `purchase_order_get` or `sales_order_get`.";
 
     private const string DocumentPosted = "`INVALID_STATE`: the document is already posted (or reversed); a posted document is permanent and cannot be changed, deleted or posted again. "
         + "To correct one, use `stock_document_reverse` and create a new document.";
@@ -149,6 +153,11 @@ public static class ToolCatalog
                 + "- or, with `purchaseOrderId` or `salesOrderId`, on that order's warehouse. Required for a transfer.")),
         ("toWarehouseId", NullableUuid("Only for a transfer, where it is required: the `id` of the destination warehouse the goods arrive in. "
             + "It must differ from `warehouseId`, which is the source. For a receipt, an issue or a count leave it out or pass null.")),
+        ("partnerId", NullableUuid("Only for a receipt or an issue: the `id` of the partner the goods came from or went to (see `partner_list`); not the code. "
+            + "On a receipt it is the supplier (a partner with `isSupplier`), on an issue the customer (a partner with `isCustomer`). Not allowed on a transfer or a count. "
+            + (update
+                ? "Required when a receipt or an issue is updated: pass null for no partner. On a document linked to an order null keeps the order's partner, and another partner is refused."
+                : "Optional; left out or null, the document has no partner. On a document linked to an order leave it out: the order's partner is taken, and another one is refused."))),
         ("reference", NullableText("Your own reference, for example a delivery-note number; one line, at most 100 characters."
             + (update ? " Required: pass null for no value." : " Optional."))),
         ("note", NullableText("Free text, may have several lines, at most 2000 characters." + (update ? " Required: pass null for no value." : " Optional."))),
@@ -390,8 +399,9 @@ public static class ToolCatalog
             (services, id, input, ct) => services.GetRequiredService<PartnerOperations>().ReplaceAsync(id, input, ct)),
 
         XerpTool.For<RecordIdInput, PartnerDeleted>("partner_delete", ToolKind.Delete,
-            "Deletes a partner that no order names; returns `{ \"deleted\": true }`. `NOT_FOUND`: no such partner in this tenant. "
-            + "`IN_USE`: a purchase order names this partner as its supplier, or a sales order names it as its customer (draft, confirmed or closed); deactivate it with `partner_update` instead.",
+            "Deletes a partner that no order and no stock document names; returns `{ \"deleted\": true }`. `NOT_FOUND`: no such partner in this tenant. "
+            + "`IN_USE`: a purchase order names this partner as its supplier, or a sales order names it as its customer (draft, confirmed or closed), "
+            + "or a stock document - a receipt or an issue, draft, posted or reversed - names it as its `partner`; deactivate it with `partner_update` instead.",
             Input(["id"], IdOf("partner to delete")),
             (services, input, ct) => services.GetRequiredService<PartnerOperations>().DeleteAsync(input.Id, ct)),
 
@@ -475,6 +485,7 @@ public static class ToolCatalog
         // ---- stock documents, stock on hand, stock ledger
         XerpTool.For<ListStockDocumentsInput, PagedResult<StockDocumentSummaryDto>>("stock_document_list", ToolKind.Read,
             "Lists the tenant's stock documents (receipts, issues, transfers and counts), newest first, with paging; each item has `lineCount` instead of the lines. "
+            + "`partnerId` finds the receipts from a supplier and the issues to a customer, linked to an order or not. "
             + "A reversed document has status `reversed` and `reversedBy`; the document that reversed it has status `posted` and `reversalOf`. "
             + "Filters combine with AND. " + Validation,
             Input([],
@@ -484,6 +495,7 @@ public static class ToolCatalog
                 ("warehouseId", Uuid("Return only documents of the warehouse with this `id`: as the warehouse of the document or as the destination of a transfer.")),
                 ("purchaseOrderId", Uuid("Return only the documents linked to the purchase order with this `id`: its receipts, drafts and posted, and their reversals.")),
                 ("salesOrderId", Uuid("Return only the documents linked to the sales order with this `id`: its deliveries (issues), drafts and posted, and their reversals.")),
+                ("partnerId", Uuid("Return only the documents whose `partner` is the partner with this `id`: the receipts from a supplier and the issues to a customer, linked to an order or not.")),
                 Search("the document number or the reference"),
                 .. Paging,
             ]),
@@ -513,7 +525,9 @@ public static class ToolCatalog
             + "To receive goods of a purchase order, create a `receipt` with `purchaseOrderId` and `orderLineNo` on every line; "
             + "to deliver goods of a sales order, create an `issue` with `salesOrderId` and `orderLineNo` on every line - in both cases leave `warehouseId` out or give the order's warehouse. "
             + "The draft reserves nothing of the order either - quantities are compared with it when the document is posted. A document has at most one of the two links. "
-            + Validation + " " + StockReferences + " " + OrderLink,
+            + "`partnerId` is optional: the supplier of a receipt (a partner with `isSupplier`) or the customer of an issue (a partner with `isCustomer`); it is not allowed on a transfer or a count. "
+            + "On a document linked to an order leave it out - the order's partner is taken, and another one is refused. The result's `partner` shows the partner, or null. "
+            + Validation + " " + StockReferences + " " + StockPartner + " " + OrderLink,
             Input(["type", "documentDate", "lines"],
             [
                 ("type", Text("`receipt`: goods come into the warehouse. `issue`: goods leave it. `transfer`: goods move from `warehouseId` to `toWarehouseId`. `count`: stock in `warehouseId` is set to the counted quantities. Cannot be changed later.", "receipt", "issue", "transfer", "count")),
@@ -529,8 +543,9 @@ public static class ToolCatalog
         XerpTool.WithId<ReplaceStockDocumentInput, StockDocumentDto>("stock_document_update", ToolKind.Update,
             "Replaces the date, warehouse, reference, note and all lines of a draft; every argument is required (`reference` and `note` may be null), "
             + "except `toWarehouseId`, which is required for a transfer only (the destination; `warehouseId` is the source). "
+            + "A receipt or an issue must send `partnerId`: null removes the partner (on a document linked to an order it stays the order's partner); a transfer or a count leaves it out. "
             + "The type and the link to a purchase order or a sales order cannot change; on a linked document every line needs `orderLineNo`. Saving a count takes the current stock on hand as `bookQuantity` of every line anew. A line's `unitId` defaults to the article's base unit; stock is always kept in base units. "
-            + Validation + " `NOT_FOUND`: no such document in this tenant. " + DocumentPosted + " " + StockReferences + " " + OrderLink,
+            + Validation + " `NOT_FOUND`: no such document in this tenant. " + DocumentPosted + " " + StockReferences + " " + StockPartner + " " + OrderLink,
             Input(["id", "documentDate", "warehouseId", "reference", "note", "lines"],
                 [IdOf("draft stock document to replace"), .. StockDocumentFields(update: true)]),
             (services, id, input, ct) => services.GetRequiredService<StockDocumentOperations>().ReplaceAsync(id, input, ct)),
@@ -546,7 +561,9 @@ public static class ToolCatalog
             + "a transfer subtracts them from the source and adds them to the destination together, so total stock does not change, "
             + "a count writes the `differenceQuantity` of every line (nothing for a line without a difference), so stock of every counted article equals what was counted. "
             + "It either does all of this or nothing. `NOT_FOUND`: no such document in this tenant. " + DocumentPosted + " "
-            + "`REFERENCE_INACTIVE`: a warehouse or an article of the document is inactive (`errors` says which); reactivate it or change the draft. "
+            + "`REFERENCE_INACTIVE`: a warehouse or an article of the document, or the partner of a document that is not linked to an order, is inactive (`errors` says which); reactivate it or change the draft. "
+            + "`PARTNER_ROLE_MISSING`: the partner of a receipt that is not linked to an order is no longer a supplier, or of such an issue no longer a customer (`errors` names `partnerId`); "
+            + "give the role back with `partner_update` or change the draft's `partnerId`. The partner of a linked document is its order's and is not checked. "
             + "Lines in another unit are converted to the article's base unit with the factor as it is at this moment; the posted line keeps that `factor` and `baseQuantity` for good. "
             + "`QUANTITY_NOT_CONVERTIBLE`: with the current factor a line converts to zero or to more than 999999999.999999 (`errors` names `lines[i].quantity`); correct the draft or the factor. "
             + "`INSUFFICIENT_STOCK`: an issue or a transfer would take more than is on hand in its (source) warehouse, counted in base units; `errors` names the short lines (`lines[0].quantity`). "
@@ -571,7 +588,7 @@ public static class ToolCatalog
             + "A reversal is permanent and cannot itself be reversed. It cancels the whole document: the reversing document has the same type, warehouses and lines, "
             + "its own number from the same series, and ledger entries with the opposite sign, so stock is as if the original had never been posted; "
             + "the original gets status `reversed`. To correct a mistake, reverse and then create a new document with `stock_document_create`. "
-            + "It either does all of this or nothing. Inactive warehouses or articles do not prevent a reversal. "
+            + "It either does all of this or nothing. Inactive warehouses or articles do not prevent a reversal. The reversing document has the original's `partner`; nothing about the partner is checked. "
             + "Reversing a receipt linked to a purchase order or a delivery linked to a sales order gives its quantities back to the order lines, whatever the order's status, and does not change that status; "
             + "a reversed delivery brings the goods back into stock, and while the order is confirmed they are reserved again. "
             + Validation + " `documentDate` earlier than the original's is one of them. `NOT_FOUND`: no such document in this tenant. "

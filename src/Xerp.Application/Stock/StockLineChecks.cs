@@ -175,7 +175,7 @@ public static class StockLineChecks
         IReadOnlyList<(string Field, Guid Id)> inactiveWarehouses,
         IReadOnlyList<StockLineEntry> lines, IReadOnlyDictionary<Guid, ArticleFacts> articles) =>
         ActiveMasters(inactiveWarehouses, lines, articles,
-            "A warehouse or an article of the document is inactive; reactivate it or change the draft, then post again. Nothing was posted.");
+            "A warehouse, the partner or an article of the document is inactive; reactivate it or change the draft, then post again. Nothing was posted.");
 
     /// <summary>
     /// The rule behind <see cref="ActiveForPosting"/>, for any step that needs every master active (spec 005,
