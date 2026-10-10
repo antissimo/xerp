@@ -3,7 +3,7 @@
 Glavni pregled petlje arhitekt -> tester -> builder -> review -> merge. Redoslijed koraka dolazi iz
 `docs/roadmap.md` (piše ga arhitekt); ovaj dokument vodi orkestrator i ažurira ga nakon svakog koraka.
 
-Zadnje ažuriranje: 2026-10-10 03:30
+Zadnje ažuriranje: 2026-10-10 12:10
 
 ## Opseg MVP-a
 
@@ -57,7 +57,7 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 
 ## Što tko trenutno radi
 
-- **Arhitekt:** zaustavljen; 011 i 011a su spojeni, nema otvorenog posla.
+- **Arhitekt:** ADR o konfigurabilnim pravilima, popis svih postojećih pravila (konfigurabilno / invarijanta), spec 012.
 - **Builder:** zaustavljen; nema otvorenog posla.
 - **Tester:** zaustavljen; nema otvorenog posla.
 
@@ -103,6 +103,8 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 - 2026-10-10 — review 011: kod prihvaćen, 6 testerovih testova ispravljeno (`788a013`); ponovni review OK; orkestrator pokrenuo 571 unit + 1594 integracijska testa; 011 spojen u `main` i pushan.
 - 2026-10-10 — kod za 011a gotov (`1e198d6`), na reviewu.
 - 2026-10-10 — 011a prošao review (OK; arhitekt pokrenuo 591 unit + 1680 integracijskih testova), spojen u `main` i pushan. Vodič za početak dopunjen s 011 i 011a. Petlja staje: sljedeći specovi (012+) čekaju odluku vlasnika.
+- 2026-10-10 — vlasnik: svaka validacija i svako poslovno pravilo mora biti konfigurabilno po tenantu, uz naše zadane vrijednosti; pravilo upisano u `CLAUDE.md` i vrijedi za sve buduće specove. Arhitekt piše ADR, popis pravila i spec 012.
+- 2026-10-10 — `xerp-web` redizajniran (skill `frontend-design`), dodane lager lista i provjera salda; `xerp-cli` napravljen.
 
 ## Odluke vlasnika
 
