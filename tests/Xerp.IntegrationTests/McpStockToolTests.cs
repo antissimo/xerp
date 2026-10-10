@@ -148,7 +148,7 @@ public class McpStockToolTests(XerpFixture app)
         var arguments = new JsonObject
         {
             ["id"] = draft.Id().ToString(), ["documentDate"] = "2026-12-01", ["warehouseId"] = s.S.W2.ToString(),
-            ["reference"] = "DN-1", ["note"] = null, ["lines"] = Stock.Lines((s.S.B, 7), (s.S.A, 2.5m)),
+            ["partnerId"] = null, ["reference"] = "DN-1", ["note"] = null, ["lines"] = Stock.Lines((s.S.B, 7), (s.S.A, 2.5m)),
         };
 
         var updated = await s.Mcp.OkAsync("stock_document_update", arguments);

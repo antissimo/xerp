@@ -58,10 +58,13 @@ public static class Stock
         ["type"] = type, ["documentDate"] = Date, ["warehouseId"] = warehouse.ToString(), ["lines"] = Lines(lines),
     };
 
-    /// <summary>A replace body: all five properties present, <c>reference</c> and <c>note</c> null.</summary>
+    /// <summary>
+    /// A replace body: all properties present, <c>reference</c>, <c>note</c> and (spec 011a, R3: a receipt or
+    /// an issue must send it) <c>partnerId</c> null.
+    /// </summary>
     public static JsonObject Replacement(Guid warehouse, params (Guid Article, decimal Quantity)[] lines) => new()
     {
-        ["documentDate"] = Date, ["warehouseId"] = warehouse.ToString(), ["reference"] = null, ["note"] = null,
+        ["documentDate"] = Date, ["warehouseId"] = warehouse.ToString(), ["partnerId"] = null, ["reference"] = null, ["note"] = null,
         ["lines"] = Lines(lines),
     };
 
@@ -126,9 +129,9 @@ public static class Stock
     public static JsonObject Transfer(Guid from, Guid to, params (Guid Article, decimal Quantity)[] lines) =>
         Draft("transfer", from, lines).With("toWarehouseId", to.ToString());
 
-    /// <summary>A replace body of a transfer: the five properties of spec 005 and <c>toWarehouseId</c>.</summary>
+    /// <summary>A replace body of a transfer: the five properties of spec 005 and <c>toWarehouseId</c> (no <c>partnerId</c>).</summary>
     public static JsonObject TransferReplacement(Guid from, Guid to, params (Guid Article, decimal Quantity)[] lines) =>
-        Replacement(from, lines).With("toWarehouseId", to.ToString());
+        Replacement(from, lines).Without("partnerId").With("toWarehouseId", to.ToString());
 
     public static Task<JsonElement> CreateTransferAsync(HttpClient client, Guid from, Guid to, params (Guid Article, decimal Quantity)[] lines) =>
         CreateAsync(client, Transfer(from, to, lines));

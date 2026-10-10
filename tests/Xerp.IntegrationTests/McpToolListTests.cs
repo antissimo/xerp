@@ -65,14 +65,15 @@ public class McpToolListTests(XerpFixture app)
     ];
 
     // Spec 005, section 5, with the arguments spec 006, section 5, adds (toWarehouseId) and spec 009, section 5
-    // (purchaseOrderId on create and list) and spec 010, section 5 (salesOrderId on create and list).
+    // (purchaseOrderId on create and list) and spec 010, section 5 (salesOrderId on create and list) and spec 011a,
+    // section 5 (partnerId on create, update and list).
     private static readonly Expected[] Spec005Tools =
     [
-        new("stock_document_list", ["type", "status", "warehouseId", "purchaseOrderId", "salesOrderId", "search", "limit", "offset"], [], "read"),
+        new("stock_document_list", ["type", "status", "warehouseId", "partnerId", "purchaseOrderId", "salesOrderId", "search", "limit", "offset"], [], "read"),
         new("stock_document_get", ["id", "number"], [], "read"),
-        new("stock_document_create", ["type", "documentDate", "warehouseId", "toWarehouseId", "purchaseOrderId", "salesOrderId", "lines", "reference", "note"],
+        new("stock_document_create", ["type", "documentDate", "warehouseId", "toWarehouseId", "partnerId", "purchaseOrderId", "salesOrderId", "lines", "reference", "note"],
             ["type", "documentDate", "lines"], "create"),
-        new("stock_document_update", ["id", "documentDate", "warehouseId", "toWarehouseId", "reference", "note", "lines"],
+        new("stock_document_update", ["id", "documentDate", "warehouseId", "toWarehouseId", "partnerId", "reference", "note", "lines"],
             ["id", "documentDate", "warehouseId", "reference", "note", "lines"], "update"),
         new("stock_document_delete", ["id"], ["id"], "delete"),
         new("stock_document_post", ["id"], ["id"], "post"),
@@ -564,6 +565,70 @@ public class McpToolListTests(XerpFixture app)
         Assert.Contains("stock_on_hand_list", Description("warehouse_stock_list"), StringComparison.Ordinal);
         Assert.Contains("stock_balance_rebuild", Description("stock_balance_difference_list"), StringComparison.Ordinal);
         Assert.Contains("ledger", Description("stock_balance_rebuild"), StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ---- spec 011a, AC-11 and section 5 ----
+
+    [Theory]
+    [InlineData("stock_document_create", true)]
+    [InlineData("stock_document_update", true)]
+    [InlineData("stock_document_list", false)]
+    public async Task S011a_AC11_The_stock_document_tools_have_a_described_optional_partnerId(string toolName, bool nullable)
+    {
+        // Section 5: create and update gain "partnerId? (uuid or null)", list gains "partnerId? (uuid)"; the tool list is unchanged.
+        var tools = await ListToolsAsync();
+
+        Assert.Equal(57, tools.Count);
+        var schema = tools[toolName].InputSchema;
+        Assert.True(schema.GetProperty("properties").TryGetProperty("partnerId", out var property), $"{toolName} has no partnerId property.");
+        Assert.True(property.TryGetProperty("description", out var description) && !string.IsNullOrWhiteSpace(description.GetString()),
+            $"{toolName}.partnerId has no description.");
+        var types = SchemaTypes(property);
+        Assert.True(types.Contains("string"), $"{toolName}.partnerId must allow a string: {property}");
+        if (nullable)
+            Assert.True(types.Contains("null"), $"{toolName}.partnerId must allow null: {property}");
+        if (schema.TryGetProperty("required", out var required))
+            Assert.DoesNotContain("partnerId", required.EnumerateArray().Select(r => r.GetString()));
+        // R4: the partner is a header field — the line schema of spec 009 is pinned above and has no partnerId.
+    }
+
+    [Theory]
+    [InlineData("stock_document_get")]
+    [InlineData("stock_document_create")]
+    [InlineData("stock_document_update")]
+    [InlineData("stock_document_post")]
+    [InlineData("stock_document_reverse")]
+    [InlineData("stock_document_list")]
+    public async Task S011a_Section5_Every_tool_that_returns_a_stock_document_has_partner_in_its_output_schema(string toolName)
+    {
+        var tools = await ListToolsAsync();
+
+        Assert.True(tools.TryGetValue(toolName, out var tool), $"Tool '{toolName}' is not listed.");
+        Assert.True(tool!.OutputSchema is { ValueKind: JsonValueKind.Object }, $"{toolName}: no outputSchema.");
+        var output = tool.OutputSchema!.Value;
+        if (toolName == "stock_document_list")
+            // The summary is the item of the list: wherever its schema is declared, it names the property.
+            Assert.Contains("\"partner\"", output.GetRawText(), StringComparison.Ordinal);
+        else
+            Assert.True(output.GetProperty("properties").TryGetProperty("partner", out _), $"{toolName}: the outputSchema has no partner: {output}");
+    }
+
+    [Fact]
+    public async Task S011a_Section5_The_descriptions_say_what_the_spec_asks()
+    {
+        var tools = await ListToolsAsync();
+        string Description(string name) => tools.TryGetValue(name, out var tool) ? tool.Description ?? "" : "";
+
+        // Section 5, "Descriptions say": the names an agent has to act on.
+        foreach (var name in new[] { "stock_document_create", "stock_document_update", "stock_document_list" })
+            Assert.Contains("partnerId", Description(name), StringComparison.Ordinal);
+        Assert.Contains("isSupplier", Description("stock_document_create"), StringComparison.Ordinal);
+        Assert.Contains("isCustomer", Description("stock_document_create"), StringComparison.Ordinal);
+        // "stock_document_create and stock_document_update add PARTNER_ROLE_MISSING, stock_document_post adds PARTNER_ROLE_MISSING".
+        foreach (var name in new[] { "stock_document_create", "stock_document_update", "stock_document_post" })
+            Assert.Contains("PARTNER_ROLE_MISSING", Description(name), StringComparison.Ordinal);
+        Assert.Contains("IN_USE", Description("partner_delete"), StringComparison.Ordinal);
+        Assert.Contains("stock document", Description("partner_delete"), StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>Follows a local <c>$ref</c> (<c>#/$defs/Name</c>) inside the tool's input schema.</summary>
