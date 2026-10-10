@@ -16,6 +16,8 @@ namespace Xerp.IntegrationTests;
 /// Spec 010, AC-85: 53 tools; <c>stock_document_create</c> and <c>stock_document_list</c> gain <c>salesOrderId</c>.
 /// Spec 011, AC-70: 57 tools; <c>warehouse_list</c> gains <c>isDefault</c>; <c>warehouseId</c> leaves <c>required</c> of the
 /// three create tools of documents.
+/// Spec 012, AC-12: 62 tools (the five rule tools); <c>supplierId</c> / <c>customerId</c> leaves <c>required</c> of
+/// <c>purchase_order_create</c> / <c>sales_order_create</c> and is nullable there and on update.
 /// </summary>
 [Collection(XerpCollection.Name)]
 public class McpToolListTests(XerpFixture app)
@@ -103,7 +105,7 @@ public class McpToolListTests(XerpFixture app)
         new("purchase_order_list", ["status", "receiptStatus", "supplierId", "warehouseId", "search", "limit", "offset"], [], "read"),
         new("purchase_order_get", ["id", "number"], [], "read"),
         new("purchase_order_create", ["orderDate", "supplierId", "warehouseId", "lines", "expectedDate", "reference", "note"],
-            ["orderDate", "supplierId", "lines"], "create"),
+            ["orderDate", "lines"], "create"),
         new("purchase_order_update", ["id", "orderDate", "expectedDate", "supplierId", "warehouseId", "reference", "note", "lines"],
             ["id", "orderDate", "expectedDate", "supplierId", "warehouseId", "reference", "note", "lines"], "update"),
         new("purchase_order_delete", ["id"], ["id"], "delete"),
@@ -118,7 +120,7 @@ public class McpToolListTests(XerpFixture app)
         new("sales_order_list", ["status", "deliveryStatus", "customerId", "warehouseId", "search", "limit", "offset"], [], "read"),
         new("sales_order_get", ["id", "number"], [], "read"),
         new("sales_order_create", ["orderDate", "customerId", "warehouseId", "lines", "requestedDate", "reference", "note"],
-            ["orderDate", "customerId", "lines"], "create"),
+            ["orderDate", "lines"], "create"),
         new("sales_order_update", ["id", "orderDate", "requestedDate", "customerId", "warehouseId", "reference", "note", "lines"],
             ["id", "orderDate", "requestedDate", "customerId", "warehouseId", "reference", "note", "lines"], "update"),
         new("sales_order_delete", ["id"], ["id"], "delete"),
@@ -136,10 +138,20 @@ public class McpToolListTests(XerpFixture app)
         new("stock_balance_rebuild", [], [], "repeatable"),
     ];
 
-    // The complete list (spec 004, section 5.3; specs 005 to 011, section 5): a new tool must be added here by its spec.
+    // Spec 012, section 5. Set and reset change state, destroy nothing and may be repeated.
+    private static readonly Expected[] Spec012Tools =
+    [
+        new("rule_list", ["search", "group", "source", "limit", "offset"], [], "read"),
+        new("rule_get", ["key"], ["key"], "read"),
+        new("rule_set", ["key", "value"], ["key", "value"], "repeatable"),
+        new("rule_reset", ["key"], ["key"], "repeatable"),
+        new("rule_change_list", ["key", "limit", "offset"], [], "read"),
+    ];
+
+    // The complete list (spec 004, section 5.3; specs 005 to 012, section 5): a new tool must be added here by its spec.
     private static readonly Expected[] Tools =
         [.. Spec003Tools, .. Spec004Tools, .. Spec005Tools, .. Spec006Tools, .. Spec007Tools, .. Spec009Tools, .. Spec010Tools,
-            .. Spec011Tools];
+            .. Spec011Tools, .. Spec012Tools];
 
     private async Task<Dictionary<string, Tool>> ListToolsAsync(string? key = null)
     {
@@ -152,7 +164,7 @@ public class McpToolListTests(XerpFixture app)
     private static string[] Sorted(IEnumerable<string> values) => values.Order(StringComparer.Ordinal).ToArray();
 
     [Fact]
-    public async Task AC40_S004_AC90_S005_AC80_S006_AC80_S007_AC80_S009_AC85_S010_AC85_S011_AC70_Tool_list_is_exactly_the_57_tools_of_the_specs()
+    public async Task AC40_S004_AC90_S005_AC80_S006_AC80_S007_AC80_S009_AC85_S010_AC85_S011_AC70_S012_AC12_Tool_list_is_exactly_the_62_tools_of_the_specs()
     {
         var tools = await ListToolsAsync();
 
@@ -164,7 +176,8 @@ public class McpToolListTests(XerpFixture app)
         Assert.Equal(8, Spec009Tools.Length);
         Assert.Equal(8, Spec010Tools.Length);
         Assert.Equal(4, Spec011Tools.Length);
-        Assert.Equal(57, Tools.Length);
+        Assert.Equal(5, Spec012Tools.Length);
+        Assert.Equal(62, Tools.Length);
         Assert.Equal(Sorted(Tools.Select(t => t.Name)), Sorted(tools.Keys));
         Assert.DoesNotContain("api_key_create", tools.Keys);
         Assert.DoesNotContain(tools.Keys, name => name.StartsWith("tenant", StringComparison.OrdinalIgnoreCase));
@@ -316,8 +329,8 @@ public class McpToolListTests(XerpFixture app)
     {
         var tools = await ListToolsAsync();
 
-        // "No new tool; tools/list still returns exactly the 37 tools of spec 007" — 45 since spec 009, 53 since spec 010, 57 since spec 011.
-        Assert.Equal(57, Tools.Length);
+        // "No new tool; tools/list still returns exactly the 37 tools of spec 007" — 45 since spec 009, 53 since spec 010, 57 since spec 011, 62 since spec 012.
+        Assert.Equal(62, Tools.Length);
         Assert.Equal(Sorted(Tools.Select(t => t.Name)), Sorted(tools.Keys));
         Assert.DoesNotContain(tools.Keys, name => name.Contains("count", StringComparison.OrdinalIgnoreCase));
         // The one place where a criterion asks for words in a description (AC-80).
@@ -578,7 +591,7 @@ public class McpToolListTests(XerpFixture app)
         // Section 5: create and update gain "partnerId? (uuid or null)", list gains "partnerId? (uuid)"; the tool list is unchanged.
         var tools = await ListToolsAsync();
 
-        Assert.Equal(57, tools.Count);
+        Assert.Equal(62, tools.Count);
         var schema = tools[toolName].InputSchema;
         Assert.True(schema.GetProperty("properties").TryGetProperty("partnerId", out var property), $"{toolName} has no partnerId property.");
         Assert.True(property.TryGetProperty("description", out var description) && !string.IsNullOrWhiteSpace(description.GetString()),
@@ -629,6 +642,101 @@ public class McpToolListTests(XerpFixture app)
             Assert.Contains("PARTNER_ROLE_MISSING", Description(name), StringComparison.Ordinal);
         Assert.Contains("IN_USE", Description("partner_delete"), StringComparison.Ordinal);
         Assert.Contains("stock document", Description("partner_delete"), StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ---- spec 012, AC-12 and section 5 ----
+
+    [Fact]
+    public async Task S012_AC12_The_five_rule_tools_have_description_closed_input_schema_output_schema_and_annotations()
+    {
+        var tools = await ListToolsAsync();
+
+        // The literal list of AC-12: the 57 of spec 011 and these five.
+        foreach (var name in new[] { "rule_list", "rule_get", "rule_set", "rule_reset", "rule_change_list" })
+            Assert.Contains(name, tools.Keys);
+        Assert.Equal(62, tools.Count);
+        AssertMetadata(tools, Spec012Tools);
+        AssertAnnotations(tools, Spec012Tools);
+        // "rule_set, rule_reset not read-only, idempotent, not destructive."
+        foreach (var name in new[] { "rule_set", "rule_reset" })
+        {
+            var a = tools[name].Annotations!;
+            Assert.True(a.ReadOnlyHint == false && a.DestructiveHint == false && a.IdempotentHint == true && a.OpenWorldHint == false,
+                $"{name}: readOnly/destructive/idempotent/openWorld = {(a.ReadOnlyHint, a.DestructiveHint, a.IdempotentHint, a.OpenWorldHint)}.");
+        }
+        foreach (var name in new[] { "rule_list", "rule_get", "rule_change_list" })
+            Assert.True(tools[name].Annotations!.ReadOnlyHint == true && tools[name].Annotations!.OpenWorldHint == false, $"{name} is not read-only.");
+        // "value (boolean)": a rule is a yes/no switch — not a string, not a number, not null.
+        var value = SchemaTypes(tools["rule_set"].InputSchema.GetProperty("properties").GetProperty("value"));
+        Assert.True(value.SetEquals(["boolean"]), $"rule_set.value must be a JSON boolean only, is [{string.Join(", ", value)}].");
+        var key = SchemaTypes(tools["rule_set"].InputSchema.GetProperty("properties").GetProperty("key"));
+        Assert.True(key.Contains("string") && !key.Contains("null"), "rule_set.key must be a string.");
+    }
+
+    [Theory]
+    [InlineData("purchase_order_create", "supplierId", false)]
+    [InlineData("sales_order_create", "customerId", false)]
+    [InlineData("purchase_order_update", "supplierId", true)]
+    [InlineData("sales_order_update", "customerId", true)]
+    public async Task S012_Section5_The_partner_of_an_order_is_a_uuid_or_null_and_required_only_on_update(string toolName, string argument, bool required)
+    {
+        // "purchase_order_create: supplierId? (uuid or null) — no longer in required; … _update: stays required and may be null".
+        var tools = await ListToolsAsync();
+
+        Assert.True(tools.TryGetValue(toolName, out var tool), $"Tool '{toolName}' is not listed.");
+        var schema = tool!.InputSchema;
+        Assert.True(schema.GetProperty("properties").TryGetProperty(argument, out var property), $"{toolName} has no {argument}.");
+        var types = SchemaTypes(property);
+        Assert.True(types.Contains("string") && types.Contains("null"), $"{toolName}.{argument}: schema must allow string and null, is {property}");
+        var requiredNames = schema.TryGetProperty("required", out var names) ? names.EnumerateArray().Select(r => r.GetString()).ToArray() : [];
+        Assert.Equal(required, requiredNames.Contains(argument));
+    }
+
+    [Fact]
+    public async Task S012_Section5_The_descriptions_say_what_the_spec_asks()
+    {
+        var tools = await ListToolsAsync();
+        string Description(string name) => tools.TryGetValue(name, out var tool) ? tool.Description ?? "" : "";
+
+        // Section 5, "Descriptions say": the names an agent has to act on. No sentence is pinned.
+        foreach (var name in new[] { "stock_document_post", "stock_document_reverse" })
+        {
+            Assert.Contains("STOCK_RESERVED", Description(name), StringComparison.Ordinal);
+            Assert.Contains("stock.negativeStockAllowed", Description(name), StringComparison.Ordinal);
+            Assert.Contains("sales.reservedStockProtected", Description(name), StringComparison.Ordinal);
+            // "say that a refusal's rules names the rule".
+            Assert.Contains("rules", Description(name), StringComparison.Ordinal);
+        }
+        Assert.Contains("purchase.overReceiptAllowed", Description("stock_document_post"), StringComparison.Ordinal);
+        Assert.Contains("sales.overDeliveryAllowed", Description("stock_document_post"), StringComparison.Ordinal);
+        foreach (var name in new[] { "purchase_order_create", "purchase_order_update" })
+            Assert.Contains("purchase.partnerRequired", Description(name), StringComparison.Ordinal);
+        foreach (var name in new[] { "sales_order_create", "sales_order_update" })
+            Assert.Contains("sales.partnerRequired", Description(name), StringComparison.Ordinal);
+        Assert.Contains("default", Description("rule_list"), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("description", Description("rule_list"), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("default", Description("rule_reset"), StringComparison.OrdinalIgnoreCase);
+        // rule_set: "for the whole company … existing data is not changed … recorded with your key".
+        Assert.Contains("existing", Description("rule_set"), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("key", Description("rule_set"), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("purchase_order", "supplier")]
+    [InlineData("sales_order", "customer")]
+    public async Task S012_Section5_The_output_schema_of_every_tool_that_returns_an_order_allows_a_null_partner(string prefix, string partner)
+    {
+        var tools = await ListToolsAsync();
+
+        foreach (var operation in new[] { "get", "create", "update", "confirm", "close", "reopen" })
+        {
+            var name = $"{prefix}_{operation}";
+            Assert.True(tools.TryGetValue(name, out var tool) && tool!.OutputSchema is { ValueKind: JsonValueKind.Object }, $"{name}: no outputSchema.");
+            var output = tool!.OutputSchema!.Value;
+            Assert.True(output.GetProperty("properties").TryGetProperty(partner, out var property), $"{name}: the outputSchema has no {partner}: {output}");
+            var types = SchemaTypes(Resolve(output, property));
+            Assert.True(types.Contains("null"), $"{name}: the outputSchema's {partner} must allow null (an order without a partner), is {property}");
+        }
     }
 
     /// <summary>Follows a local <c>$ref</c> (<c>#/$defs/Name</c>) inside the tool's input schema.</summary>
