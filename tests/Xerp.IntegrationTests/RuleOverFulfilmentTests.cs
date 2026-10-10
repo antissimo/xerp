@@ -133,7 +133,7 @@ public class RuleOverFulfilmentTests(XerpFixture app)
         await Stock.AssertDraftAsync(http, draft);
 
         // R24: a reversal is not judged by this rule.
-        var reversing = await Stock.ReverseAsync(http, excess.Id());
+        var reversing = await Stock.ReverseAsync(http, excess.Id(), Stock.NextDay);
 
         Assert.Equal("posted", reversing.Str("status"));
         Assert.Equal((36m, 0m, "full"), await LineAsync(PO, http, order.Id()));

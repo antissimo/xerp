@@ -154,6 +154,11 @@ public static class Stock
         SendReverseAsync(client, id, ReverseBody(date, note));
 
     /// <summary>Reverses a posted document and asserts <c>201</c>; returns the reversing document.</summary>
+    /// <remarks>
+    /// The default <paramref name="date"/> is <see cref="Date"/>. A reversal dated before the document it reverses is
+    /// refused with <c>400 documentDate</c> (006/R12), so a document dated later — anything created by
+    /// <c>OrderApi.Document</c>, which is dated <see cref="NextDay"/> — must be reversed with its own date or later.
+    /// </remarks>
     public static async Task<JsonElement> ReverseAsync(HttpClient client, Guid id, string date = Date, string? note = null)
     {
         using var response = await SendReverseAsync(client, id, date, note);

@@ -151,7 +151,7 @@ public class RuleReservedStockTests(XerpFixture app)
         var delivery = await SO.FulfilAsync(http, order, 1, 8);
 
         // Reversing the delivery raises stock and the reservation alike; reversing the issue raises stock.
-        await Stock.ReverseAsync(http, delivery.Id());
+        await Stock.ReverseAsync(http, delivery.Id(), Stock.NextDay);
         await Stock.ReverseAsync(http, issue.Id());
 
         Assert.Equal((10m, 2m), (await Stock.QuantityAsync(http, s.A, s.W1), await Rules.AvailableAsync(http, s.A, s.W1)));

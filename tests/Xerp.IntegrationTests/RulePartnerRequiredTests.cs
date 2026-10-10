@@ -193,7 +193,7 @@ public abstract class RulePartnerRequiredTests(XerpFixture app, OrderApi o)
         Assert.Equal("confirmed", reopened.Str("status"));
         Rules.AssertNoPartner(o, reopened);
 
-        var reversing = await Stock.ReverseAsync(http, document.Id());
+        var reversing = await Stock.ReverseAsync(http, document.Id(), Stock.NextDay);
 
         // 011a/R14: the reversing document has the partner of the original — none.
         JsonBody.AssertNull(reversing, "partner");
@@ -316,7 +316,7 @@ public abstract class RulePartnerRequiredTests(XerpFixture app, OrderApi o)
         await o.AssertProgressAsync(http, confirmed.Id(), "confirmed", "partial", (4m, 6m));
         Assert.Equal("closed", (await o.CloseAsync(http, confirmed.Id())).Str("status"));
         Assert.Equal("confirmed", (await o.ReopenAsync(http, confirmed.Id())).Str("status"));
-        JsonBody.AssertNull(await Stock.ReverseAsync(http, document.Id()), "partner");
+        JsonBody.AssertNull(await Stock.ReverseAsync(http, document.Id(), Stock.NextDay), "partner");
 
         // Only a save is judged: replacing a draft without a partner with its own body, and a new order.
         using var replace = await o.PutAsync(http, keptDraft.Id(), o.NoPartnerReplacement(s, (s.B, 3, null, 1m)));
