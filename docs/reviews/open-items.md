@@ -18,13 +18,13 @@ Call: **before MVP** only for correctness, security or data integrity. Everythin
 
 | | Count |
 |---|---:|
-| Items looked at | 36 |
+| Items looked at | 38 |
 | Done | 10 |
 | No action (remarks) | 6 |
-| Open or partly open | 20 |
+| Open or partly open | 22 |
 | — of these, before MVP in the cleanup task | 0 |
 | — before MVP, checked in a review | 0 |
-| — after MVP | 20 |
+| — after MVP | 22 |
 
 **The cleanup task after spec 010 had one item, 001/7, a request body limit: done on `750c3f6` (review `cleanup-001-7.md`, OK). No before-MVP item is open.** The review added cleanup/1 (after MVP).
 005/2, the standing review check, is done for every MVP spec (review 010, `1230f27`). 006/2 is done (spec 008, `41d275b`); 004/4 and 005/3 are
@@ -62,7 +62,7 @@ done (spec 009, `12f33ff`).
 | 005/2 | Every later stock-relevant write takes the per-tenant lock (ADR-0012 amendment, condition 1) | 006: done on `db01f2c` (reversal runs under it). 007: done on `8312ef7` (set and delete of a conversion, delete of an article). 008: done on `41d275b` (create and replace of a count read the book quantity under it; posting compares under it). 009: done on `12f33ff` (create, replace, delete, confirm, close and reopen of an order run under it; posting and reversal read and write the order inside it). 010: **done** on `1230f27` (review 010): sales orders use the same operations as purchase orders, all inside the lock; a delivery reads the order and the stock inside it | was **before MVP**, in each review | Data integrity: "no negative stock", "never more than ordered" and gapless numbers rest on it. A standing review check, not a cleanup task. |
 | 005/3 | `DocumentCounter.Start` takes a `StockDocumentType`; orders need a document kind | **done** on `12f33ff` (review 009): `DocumentSeries` (key and prefix); `purchaseOrder` / `PO` is one, every stock document type has one; no order kind in `StockDocumentType` | was **before MVP**, in spec 009 | Spec 009 could not number `PO-` without it. Spec 010 adds a series for sales orders. |
 | 005/4 | Immutability of posted documents and the ledger is enforced in the application, not in the database | open | after MVP | By design (005/S3). The DbContext guard covers every write path of the application; a database-level guard belongs with row-level security (019). |
-| 005/5 | Deactivating a warehouse does not take the tenant lock | no action | — | It needs none; noted so nobody adds it. |
+| 005/5 | Deactivating a warehouse does not take the tenant lock | superseded by spec 011 (`0f308c1`): warehouse replace, delete and set-default run under the tenant lock so that the default-warehouse invariant holds (011/R28) | — | Keep the three together if the lock is narrowed. |
 | 006/2 | `StockDocument.Reverse` refuses an empty set of ledger entries | **done** on `41d275b` (review 008): a count is reversed with exactly as many entries as it has lines with a difference, none included; the other types still need one | was **before MVP**, in spec 008 | Correctness from spec 008 on: a count without differences posts with no entries and must be reversible (008/R17 and builder note). To be checked in review 008. |
 | 006/3 | `ReversalSufficiency` message names one warehouse per line | no action | — | Only one pair per article can be short when a receipt or a transfer is reversed. |
 | 007/1 | `GET /stock-documents/{id}` reads the document and then its masters (warehouses, articles, units, conversions) in separate statements, outside any lock; a replace of the draft plus the delete of a master it named, both committed in between, ends the read as `500` (007-q, B-Q4) | open since spec 005; reasoned from the code, not reproduced. Review 009: `GET /purchase-orders/{id}` of a draft has the same shape (order, then masters and current factors in separate statements) | after MVP | A read only: transient, a repeated `GET` is right, no data is wrong and no write is affected (writes run the same code under the tenant lock). Fix: a read-only snapshot around document reads, as a port on `IXerpDb`. |
@@ -70,6 +70,8 @@ done (spec 009, `12f33ff`).
 | 009/1 | `PurchaseOrderOperations.ListAsync` loads every line of the orders on the page (up to 200 items × 200 lines) to compute `lineCount`, `totalAmount` and `receiptStatus` | open on `12f33ff` | after MVP | Performance only; the values are right and paging and `total` are decided in SQL. Fix when order lists become large: aggregate in the query. |
 | 010/1 | `StockAvailability.Reserved` (Domain) is called by tests only — the stock-on-hand query states the rule in SQL; and the shared `OrderOperations` still passes `StockDocumentType.Receipt` to `StockLineChecks.References` / `Convert` to say "a quantity above zero that converts" (review 009, non-blocking 3) | open on `1230f27` | after MVP | Structure and naming only; both behave correctly and are tested through HTTP. |
 | cleanup/1 | The rest of a refused oversized body is discarded within Kestrel's defaults (30 MB, about 5 s), not a bound of ours | open | after MVP | Network and time only; nothing above 1 MB is buffered or parsed. Set `MaxRequestBodySize` a little above 1 MB as an outer bound together with rate limiting (020). |
+| 011/1 | Verify logs only the differences on the returned page (011/S5) | open on `0f308c1` | after MVP | Rebuild logs all. |
+| 011/2 | Rebuild answers `500` when a pair's ledger sum is negative (`StockBalance.CorrectTo` throws) | open on `0f308c1` | after MVP | Needs a corrupted ledger; the refusal is right, the answer could be clearer. |
 
 Merge notes in the reviews ("take `main`'s version of `NNN-q.md`") are instructions for the orchestrator at
 merge time, not open items, and are not listed.

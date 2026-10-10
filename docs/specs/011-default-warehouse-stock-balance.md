@@ -254,8 +254,8 @@ Verify and rebuild
   `differenceQuantity` = stored − ledger; ordered by article code, then warehouse code. It compares both
   sides as of one moment: a posting in progress is seen either wholly or not at all, so verification never
   reports a difference that a concurrent posting explains. It changes nothing.
-- R25. **Rebuild.** `POST /stock-balances/rebuild` replaces the stored balances of the caller's tenant by the
-  sums of the ledger, in one transaction under the per-tenant lock. It reads the ledger and writes only
+- R25. **Rebuild.** `POST /stock-balances/rebuild` makes the stored balances of the caller's tenant equal to
+  the sums of the ledger (which rows it writes to get there is not part of the contract), in one transaction under the per-tenant lock. It reads the ledger and writes only
   `StockBalance`: no document, entry, number or audit field changes. `pairs` is the number of pairs that have
   ledger entries; `corrected` the number of pairs whose stored quantity differed from the ledger before the
   rebuild. Immediately after it, verify has `total == 0`.
@@ -271,7 +271,8 @@ Migration
 - R29. Every tenant that exists when the migration runs gets a default warehouse: its **oldest active
   warehouse** (by `CreatedAt`, then `Id`) is marked `IsDefault`; a tenant with no active warehouse gets a new
   one as in R1 — code `CENTRAL`, or `CENTRAL-2`, `CENTRAL-3`, … if that code is taken — with `CreatedBy` the
-  tenant's oldest API key. *(default)*
+  tenant's oldest API key. A tenant without any API key — it cannot be created through the API — is
+  skipped. *(default)*
 - R30. `StockBalance` is filled for every tenant with the sum of the ledger per pair. After the migration
   R2 and R20 hold for every tenant.
 - R31. No existing document changes: every stock document and order already has a warehouse.
@@ -361,8 +362,12 @@ Structure
      or sales order whose `warehouseId` is missing or `null`, over HTTP or a tool (005/AC-26 and its
      successors), and tests pinning `warehouseId` in `required` of `stock_document_create`,
      `purchase_order_create`, `sales_order_create`. The case moves to AC-30. Tests of `PUT`, of transfers and
-     of a malformed `warehouseId` do not change;
-  5. the builder's unit tests of tenant provisioning.
+     of a malformed `warehouseId` do not change. The builder's unit test of the same case moves with it
+     (`011-q.md`, B-Q3);
+  5. the builder's unit tests of tenant provisioning;
+  6. the builder's tests that add ledger entries directly in the database, behind Application
+     (`StockReversalImmutabilityTests`, two tests): they call rebuild before reading stock and assert the
+     same quantities as before (`011-q.md`, B-Q2).
   No test that asserts a quantity, a number, a posting result or an order's progress changes. One migration
   added.
 - AC-02 *(builder, model)* The model tests of 001/AC-06 and 002/AC-04 pass with `StockBalance`; the table test
