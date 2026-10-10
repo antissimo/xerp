@@ -85,6 +85,6 @@ rules that keep it honest.
 - Stock as of a date, and any history of balances, still come from the ledger.
 
 ## Amendment (2026-10-10): the balance may be negative where the tenant allows it (ADR-0020)
-With `stock.negativeStock` = `allow` a balance can be below zero, so the check constraint `Quantity >= 0`
+With `stock.negativeStockAllowed` = `true` a balance can be below zero, so the check constraint `Quantity >= 0`
 (decision 2) is removed by spec 012. The invariant of this ADR is untouched: stored balance == sum of the
 ledger; verify and rebuild work for any sign.

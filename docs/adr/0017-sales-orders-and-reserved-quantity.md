@@ -53,5 +53,5 @@ asks for a "reserved (committed) quantity". It also lists an "optional quotation
 - Invoices (014) will be created from posted deliveries; cost of goods sold needs valuation (011).
 
 ## Amendment (2026-10-10): "informs, does not block" is a default (ADR-0020)
-`sales.reservation` (`inform` | `block`, default `inform`; spec 012) lets a tenant make reserved stock
+`sales.reservedStockProtected` (default `false`; spec 012) lets a tenant make reserved stock
 untouchable by other movements. The definitions of reserved and available quantity are unchanged.

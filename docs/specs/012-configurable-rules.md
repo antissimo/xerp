@@ -1,11 +1,14 @@
 # Spec 012 — Configurable rules: the mechanism and the stock and order policies
 
-Status: ready for the tester and the builder. Owner requirement of 2026-10-10: every validation and business
-rule is configurable per tenant; we ship the default (`CLAUDE.md`, ADR-0020, architecture §11).
+Status: ready for the tester and the builder. **Rewritten 2026-10-10 after the owner's decisions** (ADR-0020,
+"Owner's decisions"): a rule is a boolean switch. What changed against the first text: section 13.
+Owner requirement of 2026-10-10: every validation and business rule is configurable per tenant; we ship the
+default (`CLAUDE.md`, ADR-0020, architecture §11).
 Branches: `tests/012-configurable-rules` (tester), `feat/012-configurable-rules` (builder).
 Read first: **ADR-0020** (the mechanism — this spec is its contract), `docs/rules.md` (which rules and why),
-specs **005** and 006 (posting, negative stock, reversal), **009** and **010** (order quantities,
-reservation), 011 (stored balance, the per-tenant lock), 008 (count).
+specs **005** and 006 (posting, negative stock, reversal), **009** and **010** (orders, their partner, order
+quantities, reservation), **011a** (the partner of a linked document), 011 (stored balance, the per-tenant
+lock), 008 (count).
 Why this spec and why this number: `docs/roadmap.md` section 3, row 12.
 
 **Inherited, not re-specified** (roadmap §4): everything specs 001–011a established — transport, errors,
@@ -19,34 +22,39 @@ changed. Numbers are local; "009/R26" means rule R26 of spec 009.
 
 ## 1. Goal
 
-A tenant — a person or an agent — can see every configurable rule of the system with its meaning, its
-default and its current value, change it, put it back, and see who changed what. Six rules that until now
-were fixed are the first on it:
+A tenant — a person or an agent — can see every configurable rule of the system as a yes/no switch with a
+plain-language name, its default and its current value, switch it, put it back, and see who changed what.
+Six rules that until now were fixed are the first on it:
 
-- may stock go below zero (`stock.negativeStock`);
-- how much more than ordered may be received (`purchase.overReceiptPercent`) or delivered
-  (`sales.overDeliveryPercent`);
-- does reserved stock block other movements (`sales.reservation`);
-- how many decimals a quantity may have (`quantity.decimals`);
-- how many lines a document may have (`document.maxLines`).
+| Key | The switch | Default |
+|---|---|---|
+| `stock.negativeStockAllowed` | Stock may go below zero | no |
+| `purchase.overReceiptAllowed` | More than ordered may be received on a purchase order | no |
+| `sales.overDeliveryAllowed` | More than ordered may be delivered on a sales order | no |
+| `sales.reservedStockProtected` | Reserved stock is protected | no |
+| `purchase.partnerRequired` | Partner (supplier) required on a purchase order | yes |
+| `sales.partnerRequired` | Partner (customer) required on a sales order | yes |
 
 When one of them refuses an operation, the error says which.
 
 ## 2. Scope
 
 In scope
-1. The rule registry with rule types `choice`, `integer` and `decimal`; values per tenant; history of changes.
+1. The rule registry; a boolean value per tenant and rule; history of changes.
 2. Five operations over HTTP and five MCP tools: list, get, set, reset, list changes.
 3. The six rules of section 6.1, read by the existing checks instead of their constants.
 4. The `rules` member of the error document and of the MCP tool error; one new error code,
    `STOCK_RESERVED`.
-5. Removal of the check constraint `StockBalance.Quantity >= 0`.
+5. Removal of the check constraint `StockBalance.Quantity >= 0`; the partner of an order becomes nullable.
 
 Out of scope
 - Every other rule of `docs/rules.md` §3 (batches 013, 014, number series, permissions). They stay fixed
-  checks with their default's behaviour until their spec.
-- Rule types `boolean`, `text` and `pattern`: each arrives with the first rule that uses it (013).
-- Who may change rules: every tenant key, until permissions (roadmap 021). *(default)*
+  checks with their default's behaviour until their spec — among them "partner required on a receipt / an
+  issue that is not linked to an order" and the role of the partner (014).
+- **Any value that is not `true` or `false`** (owner's decision 2): no percentages, numbers, texts, choices.
+  The number of decimals of a quantity (6) and the number of lines of a document (200) are platform bounds
+  (`docs/rules.md` I10) and stay fixed checks; they are not rules.
+- Who may change rules: every tenant key (owner's decision 3), until permissions (roadmap 021).
 - Values per warehouse, article, partner or key; tenant-written rules; effective dates (ADR-0020, "What it
   cannot do").
 - Allocation of stock to a particular order; refusing the confirmation of an order (`docs/rules.md`, 014).
@@ -54,18 +62,22 @@ Out of scope
 
 ## 3. Data
 
-`RuleValue` (tenant-owned): `TenantId`, `Key` (text, max 100), `Value` (JSON), `UpdatedAt`, `UpdatedBy`.
+`RuleValue` (tenant-owned): `TenantId`, `Key` (text, max 100), `Value` (boolean), `UpdatedAt`, `UpdatedBy`.
 Primary key `(TenantId, Key)`. A row exists only for a rule the tenant has set; reset removes it.
 
 `RuleChange` (tenant-owned, append-only): `Id` uuid v7, `TenantId`, `Key`, `Action` (`set` | `reset`),
-`OldValue`, `NewValue` (JSON, the effective values before and after), `ChangedAt`, `ChangedBy`.
+`OldValue`, `NewValue` (booleans, the effective values before and after), `ChangedAt`, `ChangedBy`.
 
 `UpdatedBy` and `ChangedBy` are foreign keys `(TenantId, …)` -> `ApiKey (TenantId, Id)`, `ON DELETE RESTRICT`
 (architecture §8). No foreign key on `Key`: the registry is code.
 
 `StockBalance` loses its check constraint `Quantity >= 0` (011 §3).
 
-One migration. It adds the two tables, empty, and drops the constraint. No existing row changes.
+`PurchaseOrder.SupplierId` and `SalesOrder.CustomerId` become nullable (009 §3, 010 §3); their foreign keys
+and indexes stay.
+
+One migration. It adds the two tables, empty, drops the constraint and makes the two columns nullable. No
+existing row changes.
 
 ## 4. Operations — HTTP
 
@@ -75,53 +87,62 @@ All under `/api/v1`, tenant key required. Bodies, query strings and errors follo
 |---|---|---|
 | List rules | `GET /rules?search=&group=&source=&limit=&offset=` | `200` list envelope of rules |
 | Get rule | `GET /rules/{key}` | `200` rule |
-| Set rule | `PUT /rules/{key}` with body `{ "value": <JSON> }` | `200` rule |
+| Set rule | `PUT /rules/{key}` with body `{ "value": true \| false }` | `200` rule |
 | Reset rule | `POST /rules/{key}/reset`, no body | `200` rule |
 | List changes | `GET /rule-changes?key=&limit=&offset=` | `200` list envelope of changes |
 
-Rule (every property always present):
+Rule (exactly these nine properties, always present):
 
 ```json
-{ "key": "stock.negativeStock", "group": "stock", "name": "Negative stock",
-  "description": "Whether a posting or reversal may take stock on hand below zero. …",
-  "type": "choice", "allowed": { "values": ["refuse", "allow"] },
-  "default": "refuse", "value": "refuse", "source": "default",
+{ "key": "purchase.partnerRequired", "group": "purchase",
+  "name": "Partner (supplier) required on a purchase order",
+  "description": "When true, a purchase order cannot be saved without a supplier. When false, …",
+  "default": true, "value": true, "source": "default",
   "updatedAt": null, "updatedBy": null }
 ```
 
-- `type`: `"choice"`, `"integer"` or `"decimal"`.
-- `allowed`: for `choice` `{ "values": [strings] }`; for `integer` `{ "min", "max" }`; for `decimal`
-  `{ "min", "max", "decimals" }`.
-- `value` is the value in force for the tenant; `source` is `"tenant"` when the tenant has set it and
-  `"default"` otherwise (then `value == default`).
+- `default` and `value` are JSON booleans. `value` is the value in force for the tenant; `source` is
+  `"tenant"` when the tenant has set it and `"default"` otherwise (then `value == default`).
+- `true` means: the statement in `name` holds.
 - `updatedAt` / `updatedBy` (API key id) are those of the tenant's last set or reset of this rule; `null`
   while the tenant has never changed it.
 - `name` and `description` are English text for a reader; they are not contract and tests do not pin them.
+- There is no `type` and no `allowed`.
 
-Change: `{ "id", "key", "action": "set" | "reset", "oldValue", "newValue", "changedAt", "changedBy" }`.
+Change: `{ "id", "key", "action": "set" | "reset", "oldValue", "newValue", "changedAt", "changedBy" }`;
+`oldValue` and `newValue` are JSON booleans.
 
 Errors:
 
 | HTTP | `code` | When | `errors` keys |
 |---|---|---|---|
-| 400 | `VALIDATION_FAILED` | Body malformed, unknown property, `value` missing; value of the wrong JSON type or outside `allowed`; a bad query parameter | `body`, the property, `value`, the parameter |
+| 400 | `VALIDATION_FAILED` | Body malformed, unknown property, `value` missing; `value` not a JSON boolean; a bad query parameter | `body`, the property, `value`, the parameter |
 | 404 | `NOT_FOUND` | `{key}` is not a rule of the registry (any string) | — |
 
 New error code (registry: architecture §6):
 
 | HTTP | `code` | Meaning | `errors` keys |
 |---|---|---|---|
-| 409 | `STOCK_RESERVED` | With `sales.reservation` = `block`: the posting or reversal would take goods that confirmed sales orders reserve (R27). | `lines[i].quantity` |
+| 409 | `STOCK_RESERVED` | With `sales.reservedStockProtected` = `true`: the posting or reversal would take goods that confirmed sales orders reserve (R27). | `lines[i].quantity` |
 
 **The `rules` member** (architecture §6, ADR-0020 decision 9). A refusal caused by one of the six rules adds
 to the problem document:
 
 ```json
-"rules": [ { "key": "stock.negativeStock", "value": "refuse", "fields": ["lines[0].quantity"] } ]
+"rules": [ { "key": "stock.negativeStockAllowed", "value": false, "fields": ["lines[0].quantity"] } ]
 ```
 
-one element per rule that refused, `value` the value it had, `fields` the `errors` keys it produced (in the
+one element per rule that refused, `value` the boolean it had, `fields` the `errors` keys it produced (in the
 order they appear in `errors`). The member is absent when none of the six refused.
+
+**Changes to existing operations** (orders, 009 §4 and 010 §4; details in 6.7):
+
+| Operation | Change |
+|---|---|
+| Create purchase order / sales order | `supplierId` / `customerId` may be omitted or `null` (the two are equal). Whether an order without a partner is accepted is decided by the rule. |
+| Replace | `supplierId` / `customerId` must still be present; it may be `null`. |
+| Every representation and list summary of an order | `supplier` / `customer` is always present and is `null` for an order without a partner. |
+| Stock document linked to such an order | `partner` is `null` (011a/R8). |
 
 ## 5. Operations — MCP
 
@@ -132,46 +153,57 @@ Five new tools; `tools/list` returns exactly 62: the 57 of spec 011 and `rule_li
 |---|---|---|
 | `rule_list` | `search?`, `group?`, `source?`, `limit?`, `offset?` | as `GET /rules` |
 | `rule_get` | `key` | the rule |
-| `rule_set` | `key`, `value` (boolean, number, string or null — judged by the rule's type) | the rule |
+| `rule_set` | `key`, `value` (boolean) | the rule |
 | `rule_reset` | `key` | the rule |
 | `rule_change_list` | `key?`, `limit?`, `offset?` | as `GET /rule-changes` |
 
 - Mapping, attribution and errors as 003/R12–R17. `key` is the addressing argument: missing, `null` or not a
-  string -> `VALIDATION_FAILED` with key `key`; a string that is no rule -> `NOT_FOUND`.
+  string -> `VALIDATION_FAILED` with key `key`; a string that is no rule -> `NOT_FOUND`. `value` missing or
+  not a boolean -> `VALIDATION_FAILED` with key `value`.
 - A tool error carries `rules` exactly as the HTTP problem does: `{ "code", "detail", "errors"?, "rules"? }`.
 - Annotations: `rule_list`, `rule_get`, `rule_change_list` read-only; `rule_set`, `rule_reset` not read-only,
   idempotent, not destructive.
+- **Changed schemas of existing tools** — the same for every tenant, whatever the rules' values
+  (architecture §11: a rule never changes the shape of the contract):
+  - `purchase_order_create`: `supplierId?` (uuid or null) — no longer in `required`;
+    `sales_order_create`: `customerId?` likewise;
+  - `purchase_order_update` / `sales_order_update`: `supplierId` / `customerId` stays required and may be
+    `null`;
+  - the output schema of every tool that returns an order or its summary: `supplier` / `customer` nullable.
+    (`partner` of a stock document is nullable already, 011a.)
 - Descriptions say:
-  - `rule_list` — these are the business rules this company can change; each has a default; read
-    `description` and `allowed` before setting one.
+  - `rule_list` — these are the business rules this company can switch on or off; each is a statement that
+    is true or false and has a default; read `description` before changing one.
   - `rule_set` — changes the rule for the whole company and for every user and agent, from the next
     operation on; existing data is not changed; the change is recorded with your key. Do not change a rule
     only to get one refused operation through unless the user asked for the rule to change.
   - `rule_reset` — returns the rule to its default.
-  - `stock_document_post`, `stock_document_reverse` — name the rules that can refuse (`stock.negativeStock`,
-    `sales.reservation`, and for a linked document the order tolerance rule) and add `STOCK_RESERVED` to
-    their error codes; say that a refusal's `rules` names the rule.
-  - `stock_document_create` / `_update`, `purchase_order_create` / `_update`, `sales_order_create` /
-    `_update` — say that the number of lines and the decimals of `quantity` are limited by
-    `document.maxLines` and `quantity.decimals`.
+  - `stock_document_post`, `stock_document_reverse` — name the rules that can refuse
+    (`stock.negativeStockAllowed`, `sales.reservedStockProtected`, and for a linked document
+    `purchase.overReceiptAllowed` / `sales.overDeliveryAllowed`) and add `STOCK_RESERVED` to their error
+    codes; say that a refusal's `rules` names the rule.
+  - `purchase_order_create` / `_update`, `sales_order_create` / `_update` — say that the supplier / customer
+    is required unless `purchase.partnerRequired` / `sales.partnerRequired` is false.
 
 ## 6. Rules
 
 ### 6.1 Rules this spec introduces (architecture §11)
 
-| Key | Type | Default | Allowed | Replaces the fixed check |
-|---|---|---|---|---|
-| `stock.negativeStock` | choice | `refuse` | `refuse`, `allow` | 005/R15–R16, 006/R7, R16, 008/R18, 010/R9 |
-| `purchase.overReceiptPercent` | decimal | `0` | `min` 0, `max` 1000, `decimals` 2 | 009/R26 |
-| `sales.overDeliveryPercent` | decimal | `0` | `min` 0, `max` 1000, `decimals` 2 | 010/R7 (009/R26 mirrored) |
-| `sales.reservation` | choice | `inform` | `inform`, `block` | 010/R17 |
-| `quantity.decimals` | integer | `6` | `min` 0, `max` 6 | 005/R6 ("at most 6 decimal places") |
-| `document.maxLines` | integer | `200` | `min` 1, `max` 1000 | 005/R4, 008/R2, 009/R5 ("1 to 200") |
+| Key | Name | Default | Replaces the fixed check |
+|---|---|---|---|
+| `stock.negativeStockAllowed` | Stock may go below zero | `false` | 005/R15–R16, 006/R7, R16, 008/R18, 010/R9 |
+| `purchase.overReceiptAllowed` | More than ordered may be received on a purchase order | `false` | 009/R26 |
+| `sales.overDeliveryAllowed` | More than ordered may be delivered on a sales order | `false` | 010/R7 (009/R26 mirrored) |
+| `sales.reservedStockProtected` | Reserved stock is protected | `false` | 010/R17 |
+| `purchase.partnerRequired` | Partner (supplier) required on a purchase order | `true` | 009/R1 ("both are required", for the supplier) |
+| `sales.partnerRequired` | Partner (customer) required on a sales order | `true` | 010/R1 (009/R1 mirrored) |
 
-Checks this spec adds that are **invariants** (`docs/rules.md` §2, I12 — the mechanism itself): a value must
-be of the rule's type and within `allowed` (R6); a key must be a rule of the registry (R5); a change is
-attributed and kept (R10–R11). The ends of the allowed ranges are platform bounds (I10): 6 decimals of
-storage; 1000 lines within the 1 MB body.
+Checks this spec adds that are **invariants** (`docs/rules.md` §2, I12 — the mechanism itself): a value is a
+JSON boolean (R6); a key must be a rule of the registry (R4); a change is attributed and kept (R10–R11).
+
+Checks of earlier specs that this spec **leaves fixed, as invariants** (I10, platform bounds — the first text
+of this spec made them rules): a quantity has at most 6 decimal places (005/R6); a document or an order has
+at most 200 lines (005/R4, 008/R2, 009/R5). Their refusals carry no `rules` member.
 
 ### 6.2 The registry and its operations
 
@@ -183,16 +215,13 @@ storage; 1000 lines within the 1 MB body.
 - R3. A tenant that has set nothing: every rule has `value == default`, `source == "default"`,
   `updatedAt == null`, `updatedBy == null`. Creating a tenant writes no rule value.
 - R4. `{key}` addresses the rule and is compared exactly (case-sensitive). Anything that is not one of the
-  registry's keys — another case, an empty or over-long string, a key of a later batch — is `404 NOT_FOUND`.
+  registry's keys — another case, an empty or over-long string, a key of a later batch, a key of the first
+  text of this spec (`stock.negativeStock`, `quantity.decimals`, …) — is `404 NOT_FOUND`.
 - R5. **Set.** Order of checks: form of the body (`400`: malformed, unknown property, `value` missing) ->
   the rule exists (`404`) -> the value (`400`, key `value`). On success the tenant has that value:
   `source == "tenant"`, `updatedAt` = now, `updatedBy` = the acting key.
-- R6. **A value is valid** when it has the JSON type of the rule's type and lies within `allowed`:
-  - `choice`: a string equal to one of `values`, exactly (`"Refuse"` is invalid);
-  - `integer`: a JSON number without a fractional part (`6` and `6.0` are the same value), `min` ≤ v ≤ `max`;
-  - `decimal`: a JSON number with at most `decimals` decimal places, `min` ≤ v ≤ `max`;
-  - `null`, a quoted number, a boolean, an array or an object is the wrong type.
-  Otherwise `400` with key `value`; nothing changes.
+- R6. **A value is valid** when it is the JSON literal `true` or `false`. A string (`"true"`, `"yes"`), a
+  number (`1`, `0`), `null`, an array or an object -> `400` with key `value`; nothing changes.
 - R7. Setting a value equal to the default is a set like any other: the tenant then has its own value
   (`source == "tenant"`), which no later change of our default touches (ADR-0020, decision 7).
 - R8. Setting the value the tenant already has (`source == "tenant"`, same value) succeeds and changes
@@ -214,24 +243,25 @@ storage; 1000 lines within the 1 MB body.
 - R14. **One operation, one set of rules.** Under parallel requests every operation is judged entirely by
   the values before a change or entirely by the values after it. Set and reset take the per-tenant lock
   (ADR-0012 amendment); every operation that holds that lock reads the rules while holding it.
-- R15. **Nothing stored is touched by a change.** No document, line, ledger entry, balance, order quantity or
-  number changes, is re-checked or is refused later *for having been written* under another value. Reading
-  never applies a rule.
+- R15. **Nothing stored is touched by a change.** No document, line, ledger entry, balance, order, order
+  quantity or number changes, is re-checked or is refused later *for having been written* under another
+  value. Reading never applies a rule.
 - R16. Which operation applies which rule:
-  - `quantity.decimals` and `document.maxLines` judge the request body of **create and replace** of a stock
-    document, a purchase order and a sales order — nothing else. Posting, confirmation and reversal do not
-    look at them: a draft saved under a wider value posts as it is.
-  - `stock.negativeStock` and `sales.reservation` judge **posting and reversal** of stock documents.
-  - `purchase.overReceiptPercent` and `sales.overDeliveryPercent` judge **posting** of a linked receipt /
+  - `purchase.partnerRequired` and `sales.partnerRequired` judge the request body of **create and replace**
+    of a purchase order / a sales order — nothing else. Confirmation, closing, reopening and fulfilment do
+    not look at them: a draft saved without a partner while that was allowed confirms as it is.
+  - `stock.negativeStockAllowed` and `sales.reservedStockProtected` judge **posting and reversal** of stock
+    documents.
+  - `purchase.overReceiptAllowed` and `sales.overDeliveryAllowed` judge **posting** of a linked receipt /
     delivery.
 
-### 6.4 `stock.negativeStock`
+### 6.4 `stock.negativeStockAllowed`
 
 - R17. For a posting or a reversal, and for every (article, warehouse) pair it writes entries for, let Δ be
-  the sum of those entries and Q the pair's stock on hand before. With `refuse`, the operation is refused
+  the sum of those entries and Q the pair's stock on hand before. With `false`, the operation is refused
   with `409 INSUFFICIENT_STOCK` when for any pair **Δ < 0 and Q + Δ < 0**. Keys and everything else as
   005/R15, 006/R7 and R16, 008/R18, 010/R9. While no pair is negative this is exactly the rule as built.
-- R18. With `allow` there is no such check: `INSUFFICIENT_STOCK` is never answered. Stock on hand, the
+- R18. With `true` there is no such check: `INSUFFICIENT_STOCK` is never answered. Stock on hand, the
   stored balance and `availableQuantity` may be negative. Everything else about posting is unchanged —
   references, conversion, order checks, numbering, atomicity.
 - R19. Invariants that hold for either value (`docs/rules.md` I5): stock on hand == sum of the ledger ==
@@ -241,39 +271,39 @@ storage; 1000 lines within the 1 MB body.
   included (005/R20). In the stock list of a warehouse `hasStock=true` keeps `quantity > 0` and
   `hasStock=false` keeps `quantity <= 0`. A count's book quantity may be negative; its difference is counted
   − book (008/R7), and posting it brings the pair to the counted quantity (008/R12).
-- R21. After `allow` is changed back to `refuse`, negative pairs stay as they are (R15). By R17 a posting
+- R21. After `true` is changed back to `false`, negative pairs stay as they are (R15). By R17 a posting
   that raises such a pair is accepted even if it stays negative; one that lowers it is refused.
 
-### 6.5 `purchase.overReceiptPercent` and `sales.overDeliveryPercent`
+### 6.5 `purchase.overReceiptAllowed` and `sales.overDeliveryAllowed`
 
-Stated for purchasing with p = `purchase.overReceiptPercent`; it holds mirrored for deliveries against sales
-orders with `sales.overDeliveryPercent`.
+Stated for purchasing; it holds mirrored for deliveries against sales orders with `sales.overDeliveryAllowed`.
 
-- R22. The **limit** of an order line is `baseQuantity × (1 + p / 100)`, rounded to 6 decimal places, half
-  away from zero. Posting a linked receipt is refused with `409 QUANTITY_EXCEEDS_ORDER` when, for any order
-  line, `receivedBaseQuantity` before the posting plus the document's `baseQuantity` for that line exceeds
-  the limit. Keys, atomicity and place in the order of checks as 009/R26. With p = 0 this is 009/R26.
+- R22. With `false`, posting a linked receipt is refused with `409 QUANTITY_EXCEEDS_ORDER` when, for any
+  order line, `receivedBaseQuantity` before the posting plus the document's `baseQuantity` for that line
+  exceeds the line's `baseQuantity` — 009/R26 as built, with its keys, atomicity and place in the order of
+  checks. With `true` there is no such check: `QUANTITY_EXCEEDS_ORDER` is never answered for a receipt, and
+  **there is no upper limit** (a rule is yes or no; there is no tolerance percentage).
 - R23. `receivedBaseQuantity` is still the sum over posted, non-reversing documents (009/R25) and may now
   exceed `baseQuantity`. `outstandingBaseQuantity` is `max(0, baseQuantity − receivedBaseQuantity)` while
   the order is `confirmed` (otherwise 0): never negative. `receiptStatus` is `"full"` when every line has
   `receivedBaseQuantity >= baseQuantity`. `incomingQuantity` (009/R35) and `reservedQuantity` (010/R15) sum
   the outstanding quantities and are therefore never lowered by an excess.
-- R24. The value at posting decides. Lowering p afterwards changes no received quantity (R15); a further
-  receipt is judged against the new limit. A reversal is not judged by this rule (009/R34).
+- R24. The value at posting decides. Switching back to `false` changes no received quantity (R15); a further
+  receipt for a line that is already at or above its ordered quantity is refused. A reversal is not judged
+  by this rule (009/R34).
 - R25. A delivery is still judged for stock (R17) and reservation (R27) after the order's quantities
-  (010/R7): the tolerance allows more than ordered, not more than there is.
+  (010/R7): the rule allows more than ordered, not more than there is.
 
-### 6.6 `sales.reservation`
+### 6.6 `sales.reservedStockProtected`
 
-- R26. With `inform`, reserved quantity blocks nothing (010/R17, as built).
-- R27. With `block`: for a posting or a reversal, and for every pair with Δ < 0 (R17), let
+- R26. With `false`, reserved quantity blocks nothing (010/R17, as built).
+- R27. With `true`: for a posting or a reversal, and for every pair with Δ < 0 (R17), let
   `A_before` = `availableQuantity` of the pair before the operation and `A_after` the value it would have
   after it — quantity and reserved quantity both as they would then be. The operation is refused with
   `409 STOCK_RESERVED` when for any pair **the reserved quantity after it is above 0, `A_after < 0` and
   `A_after < A_before`**: something is still reserved, stock no longer covers it, and this operation made
-  that worse. `errors` keys are
-  `lines[i].quantity` for every line of the document with the article of such a pair (for a reversal: the
-  original's lines, as 006/R16).
+  that worse. `errors` keys are `lines[i].quantity` for every line of the document with the article of such
+  a pair (for a reversal: the original's lines, as 006/R16).
 - R28. What follows from R27:
   - an unlinked issue and a transfer out of a warehouse cannot take stock below what confirmed sales orders
     for that warehouse still await;
@@ -281,7 +311,8 @@ orders with `sales.overDeliveryPercent`.
     `reservedQuantity` alike, leaves `availableQuantity` unchanged, and is therefore **never** refused by
     this rule — whichever order it is for. Between orders the first delivery posted gets the goods; stock
     is not allocated to an order (out of scope);
-  - the part of a delivery above the outstanding quantity (R22) lowers availability and is judged;
+  - the part of a delivery above the outstanding quantity (possible with `sales.overDeliveryAllowed`) lowers
+    availability and is judged;
   - reversing a receipt, a transfer (at its destination) or a count that added stock lowers a pair and is
     judged; reversing an issue or a delivery never is.
 - R29. **Posting a count is never judged by this rule** (nor by R17; 008/R13): a count states what is
@@ -289,81 +320,94 @@ orders with `sales.overDeliveryPercent`.
 - R30. Order of checks on posting, extending 010/R7: … -> the order is `confirmed` -> the order's quantities
   (`QUANTITY_EXCEEDS_ORDER`) -> stock (`INSUFFICIENT_STOCK`) -> reservation (`STOCK_RESERVED`). On reversal:
   … -> stock -> reservation. Each stage answers alone. The two rules are independent: with
-  `stock.negativeStock` = `allow` and `sales.reservation` = `block`, R27 still applies.
+  `stock.negativeStockAllowed` = `true` and `sales.reservedStockProtected` = `true`, R27 still applies.
 - R31. Confirming, closing and reopening a sales order are not affected by this rule (010/R4): availability
   can still become negative by confirming orders; R27 then refuses whatever would lower it further.
 
-### 6.7 `quantity.decimals` and `document.maxLines`
+### 6.7 `purchase.partnerRequired` and `sales.partnerRequired`
 
-- R32. With `quantity.decimals` = d, a line's `quantity` on create or replace of a stock document (all four
-  types), a purchase order or a sales order may have at most d decimal places; otherwise `400` with key
-  `lines[i].quantity`. Decimal places are counted numerically: `1.50` has one. With d = 6 this is 005/R6.
-  All other bounds of a quantity (sign, maximum, JSON number) are unchanged and are not this rule's.
-- R33. The rule concerns the entered `quantity` only. `factor`, `unitPrice`, `baseQuantity` and every stored
-  or computed quantity keep six decimals (their rules: `docs/rules.md`, 014). A count's `bookQuantity` and
-  `differenceQuantity` are computed and not judged.
-- R34. With `document.maxLines` = n, `lines` on create or replace of a stock document, a purchase order or a
-  sales order may have at most n elements; otherwise `400` with key `lines`. With n = 200 this is 005/R4.
-  An empty or missing `lines` is refused as before, by an invariant (no `rules` member).
+Stated for purchase orders (`supplierId`, `supplier`, `purchase.partnerRequired`); it holds mirrored for
+sales orders (`customerId`, `customer`, `sales.partnerRequired`). The two rules are separate.
+
+- R32. **The shape, the same for every tenant** (an invariant, I9): `supplierId` is a uuid or `null`. On
+  create, omitted and `null` are equal and mean "no supplier". On replace the property must be present
+  (replace carries every field); it may be `null`. A value that is neither a uuid nor `null`, and a replace
+  body without the property, are `400` with key `supplierId` and **no** `rules` member — whatever the
+  rule's value.
+- R33. **With `true`** an order without a supplier is refused on create and on replace:
+  `400 VALIDATION_FAILED` with key `supplierId`, naming the rule (R38). It is part of validation: reported
+  together with every other invalid field of the body (009/R10, first stage). With a supplier given, the
+  order is judged exactly as in spec 009.
+- R34. **With `false`** an order without a supplier is accepted. Its `supplier` is `null`. An order *with* a
+  supplier is judged exactly as before: the supplier must exist, be active when newly assigned and have the
+  role (`REFERENCE_NOT_FOUND`, `REFERENCE_INACTIVE`, `PARTNER_ROLE_MISSING`, 009/R2, R10) — the rule makes
+  the partner optional, not unchecked. A replace may remove the supplier of a draft (`null`) and may give
+  one to a draft that had none.
+- R35. An order without a supplier is an order like any other: it is confirmed (the supplier checks of
+  009/R12 apply only when there is a supplier), numbered, closed and reopened; its outstanding quantities
+  count as `incomingQuantity` (sales: `reservedQuantity`); it is received against (R36). The list filter
+  `supplierId=` returns only orders with that supplier, so never this one; there is no filter for "without a
+  supplier" *(default)*.
+- R36. **A stock document linked to an order without a partner has no partner**: 011a/R8 reads "the
+  partner of a linked document is the order's partner — `null` when the order has none". `partnerId`
+  omitted or `null` gives `partner == null`; any non-null `partnerId` is `409 ORDER_MISMATCH` with key
+  `partnerId` (011a/R9, unchanged). Its reversing document has `partner == null` (011a/R14).
+- R37. **The rule judges saving, not the life of the order** (R16, ADR-0020 decision 7). After the rule is
+  `true` again, an order without a supplier that already exists is read, confirmed, received against,
+  closed and reopened as before; only a replace of it (a draft) must name a supplier. *(default)*
 
 ### 6.8 Errors name the rule
 
-- R35. Every refusal by R17, R22, R27, R32 or R34 carries `rules` with that rule's key, the value in force
+- R38. Every refusal by R17, R22, R27 or R33 carries `rules` with that rule's key, the value in force
   and, as `fields`, exactly the `errors` keys that rule produced:
 
-  | Refusal | `rules[].key` |
-  |---|---|
-  | `INSUFFICIENT_STOCK` | `stock.negativeStock` |
-  | `QUANTITY_EXCEEDS_ORDER` on a receipt / on a delivery | `purchase.overReceiptPercent` / `sales.overDeliveryPercent` |
-  | `STOCK_RESERVED` | `sales.reservation` |
-  | `VALIDATION_FAILED`, a quantity with too many decimals | `quantity.decimals` |
-  | `VALIDATION_FAILED`, too many lines | `document.maxLines` |
+  | Refusal | `rules[].key` | `value` |
+  |---|---|---|
+  | `INSUFFICIENT_STOCK` | `stock.negativeStockAllowed` | `false` |
+  | `QUANTITY_EXCEEDS_ORDER` on a receipt / on a delivery | `purchase.overReceiptAllowed` / `sales.overDeliveryAllowed` | `false` |
+  | `STOCK_RESERVED` | `sales.reservedStockProtected` | `true` |
+  | `VALIDATION_FAILED`, a purchase order / a sales order without a partner | `purchase.partnerRequired` / `sales.partnerRequired` | `true` |
 
-- R36. A `VALIDATION_FAILED` reports all invalid fields together as before. `rules` has one element per rule
-  that contributed, ordered by key; fields that an invariant refused (a negative quantity, an unknown
-  property) are in `errors` and in no element's `fields`. Whether individual lines are still judged when
-  there are too many of them stays as built. A response in which no rule refused has no `rules`
-  member — not an empty array.
-- R37. Error codes, statuses and `errors` keys of specs 001–011a are unchanged.
+- R39. A `VALIDATION_FAILED` reports all invalid fields together as before. `rules` has one element per rule
+  that contributed; fields that an invariant refused (a negative quantity, an unknown property, a quantity
+  with seven decimals, a 201st line) are in `errors` and in no element's `fields`. A response in which no
+  rule refused has no `rules` member — not an empty array.
+- R40. Error codes, statuses and `errors` keys of specs 001–011a are unchanged.
 
 ## 7. Edge cases
 
-- E1. `PUT /rules/stock.negativeStock` with `{}` -> `400`, key `value`; with `{ "value": "allow", "x": 1 }`
-  -> `400`, key `x`; with `{ "value": "Allow" }`, `"yes"`, `true`, `null`, `1` -> `400`, key `value`.
-- E2. `quantity.decimals`: `7`, `-1`, `2.5`, `"2"` -> `400`; `0`, `6`, `2.0` -> accepted (`2.0` is returned
-  as the number 2).
-- E3. `purchase.overReceiptPercent`: `-1`, `1000.01`, `2.345`, `"10"` -> `400`; `0`, `10`, `12.5`, `1000` ->
-  accepted.
-- E4. `PUT /rules/nope`, `PUT /rules/Stock.NegativeStock`, `PUT /rules/partner.role.required` (a later
-  batch) with a valid body -> `404`; with `{}` -> `400` (form first, R5).
-- E5. `DELETE /rules/{key}`, `POST /rules` -> `404` (001/E11). `GET /rules?foo=1` -> `400`, key `foo`;
+- E1. `PUT /rules/stock.negativeStockAllowed` with `{}` -> `400`, key `value`; with
+  `{ "value": true, "x": 1 }` -> `400`, key `x`; with `{ "value": v }` for v = `"true"`, `"yes"`, `"allow"`,
+  `1`, `0`, `null`, `[]`, `{}` -> `400`, key `value`. `true` and `false` -> `200`.
+- E2. `PUT /rules/nope`, `PUT /rules/Stock.NegativeStockAllowed`, `PUT /rules/stock.negativeStock`,
+  `PUT /rules/partner.roleRequired` (a later batch) with a valid body -> `404`; with `{}` -> `400` (form
+  first, R5).
+- E3. `DELETE /rules/{key}`, `POST /rules` -> `404` (001/E11). `GET /rules?foo=1` -> `400`, key `foo`;
   `?source=mine` -> `400`, key `source`; `?group=nope` -> `200`, empty.
-- E6. Set, reset, then set the same value again -> three changes in the history. Setting the same value
+- E4. Set, reset, then set the same value again -> three changes in the history. Setting the same value
   twice in a row -> one (R8).
-- E7. `quantity.decimals` = 2 and a line `quantity: 1.005` -> `400`; `1.00`, `1.5`, `3` -> accepted. With
-  `0`: `2` and `2.0` accepted, `0.5` refused.
-- E8. `quantity.decimals` = 0 and a line in boxes of an article with factor 0.5: `quantity: 3` is accepted
-  and its `baseQuantity` is `1.5` (R33).
-- E9. `quantity.decimals` = 2 and a body with an invalid `documentDate`, a line `quantity: 1.005` and a
-  line `quantity: -1` -> `400` with the three keys; `rules` has one element, `quantity.decimals`, with
-  `fields` naming the first of the two lines only (R36).
-- E10. `document.maxLines` = 1000 and a document of 1000 lines -> accepted (it is far below 1 MB).
-- E11. `purchase.overReceiptPercent` = 10, order line of 3 boxes of 12 (base 36): limit 39.6; receipts of 36
-  then 3.6 post; a further 0.000001 is refused. Rounding: a tolerance of 12.5 on a base quantity of
-  0.000004 gives 0.0000045, so the limit is 0.000005.
-- E12. Tolerance 10, 39 of 36 received, then the tolerance is set to 0: the order line still shows 39,
-  outstanding 0, status `full`; any further receipt for it is refused; reversing the receipt works.
-- E13. `block`: stock 10, a confirmed sales order for 8 (available 2). Unlinked issue of 2 -> posted
-  (available 0); of 3 -> `STOCK_RESERVED`. Delivery of 8 against the order -> posted.
-- E14. `block`: stock 10, orders SO1 for 10 and SO2 for 10 confirmed (available −10). Delivery of 10 for SO2
-  -> posted; delivery for SO1 -> `INSUFFICIENT_STOCK` (not `STOCK_RESERVED`: stock comes first, R30).
-- E15. `block`: available is −5 because orders were confirmed beyond stock; a receipt posts; an unlinked
+- E5. Over-receipt allowed, order line of 3 boxes of 12 (base 36): receipts of 36 and then 100 post;
+  received 136, outstanding 0, status `full`. The rule is switched off again: the line still shows 136; any
+  further receipt for it is refused; reversing the receipt of 100 works and leaves 36.
+- E6. Reserved stock protected: stock 10, a confirmed sales order for 8 (available 2). Unlinked issue of 2
+  -> posted (available 0); of 3 -> `STOCK_RESERVED`. Delivery of 8 against the order -> posted.
+- E7. Protected: stock 10, orders SO1 for 10 and SO2 for 10 confirmed (available −10). Delivery of 10 for
+  SO2 -> posted; delivery for SO1 -> `INSUFFICIENT_STOCK` (not `STOCK_RESERVED`: stock comes first, R30).
+- E8. Protected: available is −5 because orders were confirmed beyond stock; a receipt posts; an unlinked
   issue of any quantity is refused (it lowers availability further); a count that finds less posts (R29).
-- E16. `allow`: an issue of 5 from an empty pair -> posted; stock on hand lists the pair with `-5`; verify
-  is empty. A transfer of 5 out of an empty warehouse -> posted: −5 there, +5 at the destination.
-- E17. `refuse` again with a pair at −5: receipt of 3 -> posted (−2); issue of 1 -> refused; reversal of
-  the receipt of 3 -> refused; a count of 0 -> posts, the pair is 0.
-- E18. A rule set by a key that is revoked afterwards keeps its value; `updatedBy` still names that key.
+- E9. Negative stock allowed: an issue of 5 from an empty pair -> posted; stock on hand lists the pair with
+  `-5`; verify is empty. A transfer of 5 out of an empty warehouse -> posted: −5 there, +5 at the
+  destination.
+- E10. Negative stock refused again with a pair at −5: receipt of 3 -> posted (−2); issue of 1 -> refused;
+  reversal of the receipt of 3 -> refused; a count of 0 -> posts, the pair is 0.
+- E11. A rule set by a key that is revoked afterwards keeps its value; `updatedBy` still names that key.
+- E12. Partner required (default) and a body with an invalid `orderDate`, no `supplierId` and a line
+  `quantity: -1` -> `400` with the three keys; `rules` has one element, `purchase.partnerRequired`, with
+  `fields` `["supplierId"]` (R39).
+- E13. Partner not required: `supplierId` a random uuid -> `REFERENCE_NOT_FOUND`; a partner without the
+  supplier role -> `PARTNER_ROLE_MISSING` (R34); `"abc"` -> `400` without `rules` (R32).
+- E14. Partner not required, a draft order without a supplier; the rule is set to `true`; the draft confirms
+  and gets its number (R37); a new order without a supplier is refused.
 
 ## 8. Tenant isolation
 
@@ -377,14 +421,13 @@ orders with `sales.overDeliveryPercent`.
 ## 9. Security requirements
 
 - S1. All five operations require a tenant key (`401` / `403` as 001/S1–S4). Every tenant key, human or
-  agent, may read and change rules *(default; restrictable from roadmap 021)*.
+  agent, may read and change rules (owner's decision 3; restrictable from roadmap 021).
 - S2. Every change is attributable: the rule shows the last key and time, the history every change (R10).
   No operation edits or deletes history.
 - S3. Rule values are not secrets, but they are the tenant's: they appear only in that tenant's responses.
   Logs may record rule key, value, API key id and tenant id.
-- S4. No value can be stored that the checks cannot handle: validation (R6) is the only way in, and a value
-  read from storage that is no longer valid for its definition is treated as absent (the default applies) —
-  it never causes `500`.
+- S4. No value can be stored that the checks cannot handle: a value is a boolean, and validation (R6) is the
+  only way in. A stored row whose key is no rule of the registry is ignored — it never causes `500`.
 - S5. No input in `{key}` or `value` may cause `500` (001/R16).
 
 ## 10. Acceptance criteria
@@ -393,11 +436,13 @@ Conventions and setup as in specs 009 §10, 010 §10 and 011 §10: the standard 
 articles `A` and `B`, warehouses `W1` and `W2`), unit `box` with A / box = 12, partners `SUP` and `CUS`,
 "PO […]", "SO […]", "Receive n of A into W1", "Receive (k, n) against the order", "Deliver (k, n) against
 the order", "Stock(A, W)", "Available(A, W)", "Balanced". In addition:
-- "Set(key, v)" means `PUT /rules/{key}` with `{ "value": v }` answered `200`.
+- "Set(key, v)" means `PUT /rules/{key}` with `{ "value": v }` answered `200`; v is `true` or `false`.
 - "Issue n of A from W1" means: create an unlinked issue with one line and post it.
 - "refused by (CODE, key, v)" means: the response has that `code`, a non-empty `errors`, and `rules` with
   exactly one element whose `key` and `value` are those and whose `fields` equal the keys of `errors`.
 Each test uses its own tenant, so rules never leak between tests. Unmarked criteria are black-box (tester).
+Numbers that the first text of this spec used and that no longer exist are left unused (AC-45 onwards are
+not renumbered).
 
 Structure
 - AC-01 *(manual)* Build and tests exit 0; earlier tests pass unweakened. **No test of specs 001–011a that
@@ -405,178 +450,218 @@ Structure
   that set no rule (AC-40). The **only** earlier tests changed:
   1. the literal tool list and its count (57 -> 62);
   2. tests asserting the **exact member set** of a problem document or tool error for `INSUFFICIENT_STOCK`,
-     `QUANTITY_EXCEEDS_ORDER`, or `VALIDATION_FAILED` caused by a quantity of more than 6 decimals or by
-     more than 200 lines (they gain `rules`);
+     `QUANTITY_EXCEEDS_ORDER`, or `VALIDATION_FAILED` caused by a missing or `null` `supplierId` /
+     `customerId` on **create** of an order (they gain `rules`);
   3. tests pinning the error-code list in the description of `stock_document_post` or
      `stock_document_reverse` (they gain `STOCK_RESERVED`);
-  4. the builder's test that the database refuses a negative `StockBalance.Quantity` (011): removed; AC-52
-     takes its place.
+  4. tests pinning the input schema of `purchase_order_create` / `sales_order_create` (`supplierId` /
+     `customerId` leaves `required` and becomes nullable), of `purchase_order_update` / `sales_order_update`
+     (nullable), or the output schema of an order (`supplier` / `customer` nullable);
+  5. the builder's test that the database refuses a negative `StockBalance.Quantity` (011): removed; AC-52
+     takes its place. A builder's model test that `SupplierId` / `CustomerId` is not nullable, if one
+     exists: changed to nullable.
   One migration added.
 - AC-02 *(builder, model)* The model and table tests pass with `RuleValue` and `RuleChange`; both are
   tenant-owned and filtered.
-- AC-03 *(builder, unit)* Value validation (R6) for the three types, including the edge values of E1–E3;
-  the limit of R22 with its rounding; R17 and R27 as pure functions of Δ, Q, reserved and the rule value.
-- AC-04 *(manual)* The six constants are gone from the checks: each of the six behaviours is decided by a
-  value obtained through `IRules` and passed to a Domain function; `Api` reads no rule (architecture §11).
-- AC-05 *(builder)* A `RuleValue` row whose stored value is invalid for its definition (written directly) is
-  shown and applied as the default (S4).
-- AC-06 *(builder)* Migration: on a database at the previous migration with posted documents, afterwards
-  both tables exist and are empty, `StockBalance` has no check constraint on `Quantity`, and Balanced holds.
+- AC-03 *(builder, unit)* R17 and R27 as pure functions of Δ, Q, reserved and the rule's boolean; R22 as a
+  function of received, document and ordered quantity and the boolean.
+- AC-04 *(manual)* The six fixed decisions are gone from the checks: each of the six behaviours is decided
+  by a boolean obtained through `IRules` and passed to a Domain function; `Api` reads no rule
+  (architecture §11).
+- AC-05 *(builder)* A `RuleValue` row whose key is no rule of the registry (written directly) is ignored: it
+  is not listed, and nothing fails (S4).
+- AC-06 *(builder)* Migration: on a database at the previous migration with posted documents and orders,
+  afterwards both tables exist and are empty, `StockBalance` has no check constraint on `Quantity`,
+  `SupplierId` and `CustomerId` are nullable with every existing value kept, and Balanced holds.
 
 Inherited behaviour — smoke
 - AC-10 Each of the five routes without a credential -> `401`; with the admin key -> `403`.
-- AC-11 `GET /rules?foo=1` -> `400`, key `foo`; `PUT /rules/stock.negativeStock` with an unknown property ->
-  `400` with that property's key; `GET /rules?limit=0` -> `400`, key `limit`.
+- AC-11 `GET /rules?foo=1` -> `400`, key `foo`; `PUT /rules/stock.negativeStockAllowed` with an unknown
+  property -> `400` with that property's key; `GET /rules?limit=0` -> `400`, key `limit`.
 - AC-12 `tools/list` returns exactly 62 names (literal list).
 
 The registry
-- AC-20 In a new tenant `GET /rules` -> `200`, `total == 6`, keys in this order with these values
-  (literal — the inventory of rules): `document.maxLines` 200, `purchase.overReceiptPercent` 0,
-  `quantity.decimals` 6, `sales.overDeliveryPercent` 0, `sales.reservation` `"inform"`,
-  `stock.negativeStock` `"refuse"`. For each: `value == default`, `source == "default"`,
-  `updatedAt == null`, `updatedBy == null`, `type` and `allowed` as in 6.1, and non-empty `name` and
-  `description`.
-- AC-21 `GET /rules/sales.reservation` -> the same object as in the list. `GET /rules/nope`,
-  `/rules/Sales.Reservation` -> `404`.
-- AC-22 Filters: `group=sales` -> the two `sales.` rules; `source=tenant` -> empty in a new tenant, and
-  after one Set exactly that rule; `search=percent` -> the two percent rules; `group=nope` -> empty.
+- AC-20 In a new tenant `GET /rules` -> `200`, `total == 6`, keys in this order with these defaults
+  (literal — the inventory of rules): `purchase.overReceiptAllowed` `false`, `purchase.partnerRequired`
+  `true`, `sales.overDeliveryAllowed` `false`, `sales.partnerRequired` `true`,
+  `sales.reservedStockProtected` `false`, `stock.negativeStockAllowed` `false`. For each: `value == default`
+  (a JSON boolean), `source == "default"`, `updatedAt == null`, `updatedBy == null`, `group` equal to the
+  key's first segment, non-empty `name` and `description`, and exactly the nine properties of section 4
+  (no `type`, no `allowed`).
+- AC-21 `GET /rules/sales.reservedStockProtected` -> the same object as in the list. `GET /rules/nope`,
+  `/rules/Sales.ReservedStockProtected`, `/rules/sales.reservation` -> `404`.
+- AC-22 Filters: `group=sales` -> the three `sales.` rules; `source=tenant` -> empty in a new tenant, and
+  after one Set exactly that rule; `search=partnerRequired` -> the two partner rules; `group=nope` -> empty.
 
 Set, reset, history
-- AC-30 Set(`stock.negativeStock`, `"allow"`) -> `200` with `value == "allow"`, `source == "tenant"`,
-  `default == "refuse"`, `updatedBy` = the acting key's id, `updatedAt` set; `GET` shows the same.
-- AC-31 Invalid values (E1–E3) -> `400` with key `value`; the rule is unchanged and no change is recorded.
-- AC-32 Order of checks (E4): unknown key with `{}` -> `400`; unknown key with a valid body -> `404`.
-- AC-33 Setting the default's own value: Set(`quantity.decimals`, 6) in a new tenant -> `source ==
-  "tenant"`, `value == 6`; one change with `oldValue == 6`, `newValue == 6`.
+- AC-30 Set(`stock.negativeStockAllowed`, `true`) -> `200` with `value == true`, `source == "tenant"`,
+  `default == false`, `updatedBy` = the acting key's id, `updatedAt` set; `GET` shows the same.
+- AC-31 Invalid values (E1: `"true"`, `"yes"`, `1`, `0`, `null`, `[]`, `{}`, and a body without `value`) ->
+  `400` with key `value`; the rule is unchanged and no change is recorded.
+- AC-32 Order of checks (E2): unknown key with `{}` -> `400`; unknown key with a valid body -> `404`.
+- AC-33 Setting the default's own value: Set(`purchase.partnerRequired`, `true`) in a new tenant ->
+  `source == "tenant"`, `value == true`; one change with `oldValue == true`, `newValue == true`.
 - AC-34 Setting the same value twice: the second answers `200` with the same `updatedAt`; one change.
-- AC-35 `POST /rules/stock.negativeStock/reset` after AC-30 -> `value == "refuse"`, `source == "default"`,
-  `updatedAt` later than before, `updatedBy` the acting key. A second reset -> `200`, nothing changes.
-  Reset of an unknown key -> `404`.
-- AC-36 History: after Set to `"allow"` by key K1 and reset by key K2 (an `agent` key),
-  `GET /rule-changes?key=stock.negativeStock` -> two items, newest first: `{ action: "reset", oldValue:
-  "allow", newValue: "refuse", changedBy: K2 }`, `{ action: "set", oldValue: "refuse", newValue: "allow",
+- AC-35 `POST /rules/stock.negativeStockAllowed/reset` after AC-30 -> `value == false`,
+  `source == "default"`, `updatedAt` later than before, `updatedBy` the acting key. A second reset -> `200`,
+  nothing changes. Reset of an unknown key -> `404`.
+- AC-36 History: after Set to `true` by key K1 and reset by key K2 (an `agent` key),
+  `GET /rule-changes?key=stock.negativeStockAllowed` -> two items, newest first: `{ action: "reset",
+  oldValue: true, newValue: false, changedBy: K2 }`, `{ action: "set", oldValue: false, newValue: true,
   changedBy: K1 }`; `changedAt` of each equals the rule's `updatedAt` after that change. Without `key` the
   list has the changes of all rules; `key=nope` -> empty.
-- AC-37 Every rule accepts the ends of its range and its default: for each of the six, Set to `min` and
-  `max` (or to each of `values`) -> `200`.
+- AC-37 Every rule accepts both values: for each of the six, Set to `true` and Set to `false` -> `200`, and
+  `GET` shows the value.
 
 Defaults reproduce specs 001–011a
 - AC-40 In a tenant that sets nothing: an issue above stock -> `INSUFFICIENT_STOCK`; a receipt above its
   order -> `QUANTITY_EXCEEDS_ORDER`; a delivery above its order -> `QUANTITY_EXCEEDS_ORDER`; an unlinked
-  issue of goods a confirmed order reserves -> posted; a quantity `1.0000001` -> `400`; 201 lines -> `400`;
-  `1.000001` and 200 lines -> accepted.
-- AC-41 The same in a tenant in which each of the six rules was Set to another value and then reset.
+  issue of goods a confirmed order reserves -> posted; a purchase order without `supplierId` and a sales
+  order without `customerId` -> `400` with that key.
+- AC-41 The same in a tenant in which each of the six rules was Set to the other value and then reset.
 - AC-42 **Errors name the rule**: the five refusals of AC-40 are "refused by" (`INSUFFICIENT_STOCK`,
-  `stock.negativeStock`, `"refuse"`), (`QUANTITY_EXCEEDS_ORDER`, `purchase.overReceiptPercent`, 0),
-  (`QUANTITY_EXCEEDS_ORDER`, `sales.overDeliveryPercent`, 0), (`VALIDATION_FAILED`, `quantity.decimals`, 6),
-  (`VALIDATION_FAILED`, `document.maxLines`, 200).
+  `stock.negativeStockAllowed`, `false`), (`QUANTITY_EXCEEDS_ORDER`, `purchase.overReceiptAllowed`,
+  `false`), (`QUANTITY_EXCEEDS_ORDER`, `sales.overDeliveryAllowed`, `false`), (`VALIDATION_FAILED`,
+  `purchase.partnerRequired`, `true`), (`VALIDATION_FAILED`, `sales.partnerRequired`, `true`).
 - AC-43 A refusal no rule caused has no `rules` member: `VALIDATION_FAILED` for a negative quantity, for an
-  empty `lines`, for an unknown property; `REFERENCE_NOT_FOUND`; `INVALID_STATE`; `ORDER_NOT_OPEN`;
-  `COUNT_OUTDATED`.
-- AC-44 Mixed (E9): the response has the three `errors` keys, and `rules` has exactly one element,
-  `quantity.decimals`, whose `fields` is the one line with too many decimals.
+  empty `lines`, for an unknown property, for a quantity `1.0000001` (seven decimals), for 201 lines, for
+  `supplierId: "abc"` and for a replace body without `supplierId`; `REFERENCE_NOT_FOUND`; `INVALID_STATE`;
+  `ORDER_NOT_OPEN`; `COUNT_OUTDATED`; `PARTNER_ROLE_MISSING`. A quantity `1.000001` and 200 lines are
+  accepted, in every tenant.
+- AC-44 Mixed (E12): the response has the three `errors` keys, and `rules` has exactly one element,
+  `purchase.partnerRequired` with `value == true`, whose `fields` is `["supplierId"]`.
 
-`stock.negativeStock`
-- AC-50 Set to `"allow"`. Issue 5 of A from W1 (empty) -> posted; Stock(A, W1) == −5; the pair is listed by
+`stock.negativeStockAllowed`
+- AC-50 Set to `true`. Issue 5 of A from W1 (empty) -> posted; Stock(A, W1) == −5; the pair is listed by
   `GET /stock-on-hand` with `quantity == -5` and `availableQuantity == -5`; Balanced;
   `GET /stock-balance-differences` -> `total == 0`.
-- AC-51 `allow`: a transfer of 5 A from W1 (empty) to W2 -> posted; Stock(A, W1) == −5, Stock(A, W2) == 5.
+- AC-51 `true`: a transfer of 5 A from W1 (empty) to W2 -> posted; Stock(A, W1) == −5, Stock(A, W2) == 5.
   Reversing a receipt whose goods were issued since -> `201`. A delivery above stock (within its order) ->
   posted.
-- AC-52 `allow`, with negative pairs: `POST /stock-balances/rebuild` -> `corrected == 0`; verify empty; the
+- AC-52 `true`, with negative pairs: `POST /stock-balances/rebuild` -> `corrected == 0`; verify empty; the
   stock list of W1 with `hasStock=false` contains A, with `hasStock=true` does not.
-- AC-53 `allow`: a count of A in W1 at −5 shows `bookQuantity == -5`; counted 2 -> `differenceQuantity == 7`;
+- AC-53 `true`: a count of A in W1 at −5 shows `bookQuantity == -5`; counted 2 -> `differenceQuantity == 7`;
   posted; Stock(A, W1) == 2.
-- AC-54 Back to `refuse` (E17), pair at −5: Receive 3 -> posted, −2; Issue 1 -> refused by
-  (`INSUFFICIENT_STOCK`, `stock.negativeStock`, `"refuse"`); reversing the receipt of 3 ->
+- AC-54 Back to `false` (E10), pair at −5: Receive 3 -> posted, −2; Issue 1 -> refused by
+  (`INSUFFICIENT_STOCK`, `stock.negativeStockAllowed`, `false`); reversing the receipt of 3 ->
   `INSUFFICIENT_STOCK`; nothing stored changed when the rule changed (the documents, the ledger and the −5
   read the same before and after the Set); Balanced throughout.
 
 Over-receipt and over-delivery
-- AC-60 Set(`purchase.overReceiptPercent`, 10). PO [A, 3 box, price 1] (base 36). Receive (1, 36) -> posted;
-  Receive (1, 3.6) -> posted; Received(1) == 39.6, Outstanding(1) == 0, `receiptStatus == "full"`,
-  Incoming(A, W1) == 0. Receive (1, 0.000001) -> refused by (`QUANTITY_EXCEEDS_ORDER`,
-  `purchase.overReceiptPercent`, 10).
-- AC-61 One receipt of 40 against a fresh order as in AC-60 -> refused (nothing posted, no number consumed);
-  of 39.6 -> posted.
-- AC-62 Lowering the tolerance (E12): after AC-60, Set to 0 -> the order still shows Received(1) == 39.6 and
-  `full`; a further receipt of 1 is refused with value 0 in `rules`; reversing the receipt of 3.6 -> `201`,
-  Received(1) == 36.
-- AC-63 Partial then excess: tolerance 10, order line of base 100; Receive 50 -> Outstanding 50,
-  `partial`; Receive 60 -> posted, Received 110, Outstanding 0; Receive 1 -> refused.
-- AC-64 Mirrored for sales with `sales.overDeliveryPercent` = 10 and enough stock: SO [A, 100]; Deliver 110
-  -> posted; `deliveredBaseQuantity == 110`, outstanding 0, `deliveryStatus == "full"`,
-  `reservedQuantity` of the pair 0. Deliver 1 more -> refused by (`QUANTITY_EXCEEDS_ORDER`,
-  `sales.overDeliveryPercent`, 10).
-- AC-65 The two tolerances are separate: with only `purchase.overReceiptPercent` = 10, a delivery above its
-  sales order is still refused. A delivery within tolerance but above stock -> `INSUFFICIENT_STOCK` (R25).
+- AC-60 Set(`purchase.overReceiptAllowed`, `true`). PO [A, 3 box, price 1] (base 36). Receive (1, 36) ->
+  posted; Receive (1, 100) -> posted; Received(1) == 136, Outstanding(1) == 0, `receiptStatus == "full"`,
+  Incoming(A, W1) == 0.
+- AC-61 `true`: one receipt of 500 against a fresh order as in AC-60 -> posted (no limit). In a tenant at
+  the default: one receipt of 37 -> refused (nothing posted, no number consumed); of 36 -> posted.
+- AC-62 Switching back (E5): after AC-60, Set to `false` -> the order still shows Received(1) == 136 and
+  `full`; a further receipt of 1 is refused by (`QUANTITY_EXCEEDS_ORDER`, `purchase.overReceiptAllowed`,
+  `false`); reversing the receipt of 100 -> `201`, Received(1) == 36; a receipt of 1 is still refused (36
+  of 36).
+- AC-63 Partial then excess: `true`, order line of base 100; Receive 50 -> Outstanding 50, `partial`;
+  Receive 60 -> posted, Received 110, Outstanding 0, `full`.
+- AC-64 Mirrored for sales with `sales.overDeliveryAllowed` = `true` and enough stock: SO [A, 100]; Deliver
+  110 -> posted; `deliveredBaseQuantity == 110`, outstanding 0, `deliveryStatus == "full"`,
+  `reservedQuantity` of the pair 0. After Set to `false`, Deliver 1 more -> refused by
+  (`QUANTITY_EXCEEDS_ORDER`, `sales.overDeliveryAllowed`, `false`).
+- AC-65 The two rules are separate: with only `purchase.overReceiptAllowed` = `true`, a delivery above its
+  sales order is still refused. With `sales.overDeliveryAllowed` = `true`, a delivery above its order and
+  above stock -> `INSUFFICIENT_STOCK` (R25).
 
-`sales.reservation`
-- AC-70 Set to `"block"`. Receive 10 of A into W1; SO [A, 8] (Available == 2). Issue 3 of A from W1 ->
-  refused by (`STOCK_RESERVED`, `sales.reservation`, `"block"`), key `lines[0].quantity`; nothing posted, no
-  number consumed. Issue 2 -> posted, Available == 0.
+`sales.reservedStockProtected`
+- AC-70 Set to `true`. Receive 10 of A into W1; SO [A, 8] (Available == 2). Issue 3 of A from W1 ->
+  refused by (`STOCK_RESERVED`, `sales.reservedStockProtected`, `true`), key `lines[0].quantity`; nothing
+  posted, no number consumed. Issue 2 -> posted, Available == 0.
 - AC-71 After AC-70: Deliver (1, 8) against the order -> posted; Stock == 0.
 - AC-72 A transfer of 3 A from W1 to W2 in the state of AC-70 (before the issue of 2) -> `STOCK_RESERVED`;
   of 2 -> posted. Stock in W2 and orders for W2 play no part.
 - AC-73 Reversal: Receive 10 (document D), SO [A, 8], then reverse D -> `STOCK_RESERVED` with the keys of
   D's lines; D stays `posted`. After the order is closed, reversing D -> `201`.
-- AC-74 Between orders (E14): SO1 [A, 10] and SO2 [A, 10] with stock 10; Deliver 10 for SO2 -> posted;
-  Deliver 10 for SO1 -> `INSUFFICIENT_STOCK` with `rules` naming `stock.negativeStock`.
-- AC-75 Already negative (E15): Available −5 from orders beyond stock; Receive 1 -> posted; Issue 1 ->
+- AC-74 Between orders (E7): SO1 [A, 10] and SO2 [A, 10] with stock 10; Deliver 10 for SO2 -> posted;
+  Deliver 10 for SO1 -> `INSUFFICIENT_STOCK` with `rules` naming `stock.negativeStockAllowed`.
+- AC-75 Already negative (E8): Available −5 from orders beyond stock; Receive 1 -> posted; Issue 1 ->
   `STOCK_RESERVED`; a count of A in W1 with a lower counted quantity -> posted.
-- AC-76 With `inform` (after reset) the issue of 3 of AC-70 posts.
-- AC-77 Independent of negative stock: `stock.negativeStock` = `allow` and `sales.reservation` = `block`,
-  stock 0, SO [A, 5]: Issue 1 -> `STOCK_RESERVED`; after the order is closed, Issue 1 -> posted (stock −1).
-- AC-78 Confirming is unaffected: with `block` and stock 0, SO [A, 5] confirms.
+- AC-76 With `false` (after reset) the issue of 3 of AC-70 posts.
+- AC-77 Independent of negative stock: `stock.negativeStockAllowed` = `true` and
+  `sales.reservedStockProtected` = `true`, stock 0, SO [A, 5]: Issue 1 -> `STOCK_RESERVED`; after the order
+  is closed, Issue 1 -> posted (stock −1).
+- AC-78 Confirming is unaffected: with `true` and stock 0, SO [A, 5] confirms.
 
-`quantity.decimals` and `document.maxLines`
-- AC-80 Set(`quantity.decimals`, 2). Creating a receipt, a transfer, a count, a purchase order and a sales
-  order with a line `quantity: 1.005` -> each refused by (`VALIDATION_FAILED`, `quantity.decimals`, 2) with
-  key `lines[0].quantity`; with `1.5`, `1.50` and `3` -> accepted. The same on replace.
-- AC-81 Set to 0: `2` accepted, `0.5` refused. A line `3 box` of an article with factor 0.5 -> accepted,
-  `baseQuantity == 1.5` (E8). `unitPrice: 1.123456` on an order line and a conversion factor `0.333333` are
-  accepted whatever the rule's value (R33).
-- AC-82 Set(`document.maxLines`, 2): a stock document and an order with 3 lines -> refused by
-  (`VALIDATION_FAILED`, `document.maxLines`, 2) with key `lines`; with 2 -> accepted.
-- AC-83 Set(`document.maxLines`, 1000): a receipt of 1000 lines -> `201`, and it posts; 1001 -> `400`.
+`purchase.partnerRequired` and `sales.partnerRequired`
+- AC-80 Default (`true`): `POST /purchase-orders` without `supplierId`, and with `"supplierId": null` ->
+  each refused by (`VALIDATION_FAILED`, `purchase.partnerRequired`, `true`) with key `supplierId`; nothing
+  created. `PUT` of a draft with `"supplierId": null` -> the same; the draft is unchanged. The same three
+  for a sales order with `customerId` and `sales.partnerRequired`.
+- AC-81 Set(`purchase.partnerRequired`, `false`). `POST /purchase-orders` without `supplierId` -> `201`
+  with `supplier == null` (the property is present); with `"supplierId": null` -> `201` likewise; `GET` by
+  id and the list item show `supplier == null`. With `SUP` -> `201` with the supplier, as before.
+- AC-82 `false`, the partner is optional, not unchecked (E13): `supplierId` a random uuid -> `409`
+  `REFERENCE_NOT_FOUND`; `CUS` -> `409` `PARTNER_ROLE_MISSING`; an inactive supplier ->
+  `REFERENCE_INACTIVE`; all with key `supplierId` and without `rules`. `"abc"` -> `400` without `rules`. A
+  `PUT` without the property `supplierId` -> `400` with key `supplierId`, without `rules`.
+- AC-83 `false`, replace: a draft with `SUP` replaced with `"supplierId": null` -> `200`, `supplier ==
+  null`; replaced again with `SUP` -> `200` with the supplier.
+- AC-84 `false`, an order without a supplier lives (R35): PO [A, 10] without supplier; confirm -> `200`
+  with `number == "PO-000001"`; Incoming(A, W1) == 10; Receive (1, 10) against it -> posted, and the
+  receipt's `partner == null`; the order is `full`; close and reopen -> `200`. Reversing the receipt ->
+  `201`; the reversing document's `partner == null`.
+- AC-85 `false`, a linked document cannot name a partner the order does not have (R36): a receipt linked to
+  the confirmed order of AC-84 with `partnerId: SUP` -> `409` `ORDER_MISMATCH` with key `partnerId`; with
+  `partnerId: null` and without `partnerId` -> `201` with `partner == null`.
+- AC-86 `false`, lists: `GET /purchase-orders` contains the order without a supplier;
+  `GET /purchase-orders?supplierId=SUP` does not and contains the orders of `SUP`.
+- AC-87 Mirrored for sales: Set(`sales.partnerRequired`, `false`); SO [A, 5] without `customerId` -> `201`,
+  `customer == null`; confirm -> `200`; `reservedQuantity` of (A, W1) == 5; with stock, Deliver (1, 5) ->
+  posted, the delivery's `partner == null`.
+- AC-88 The two rules are separate: with only `purchase.partnerRequired` = `false`, a sales order without
+  `customerId` is still refused by (`VALIDATION_FAILED`, `sales.partnerRequired`, `true`); and the reverse.
+- AC-89 Back to `true` (E14, R37): a draft and a confirmed purchase order without a supplier exist; after
+  Set(`purchase.partnerRequired`, `true`) both read unchanged (`updatedAt` included); the draft confirms
+  (`200`, numbered); the confirmed one is received against, closed and reopened; replacing a draft without a
+  supplier with its own body -> refused by (`VALIDATION_FAILED`, `purchase.partnerRequired`, `true`); a new
+  order without a supplier -> refused likewise.
 
 Existing data
-- AC-90 A draft receipt with a line `quantity: 1.123456` and a draft with 3 lines exist; then
-  Set(`quantity.decimals`, 2) and Set(`document.maxLines`, 2). Both drafts read unchanged (`updatedAt`
-  included) and **post**; the posted quantity is `1.123456`. Replacing either with its own body -> `400`
-  naming the rule. A posted document with such a line can be reversed.
-- AC-91 After every Set and reset in AC-50 to AC-83, a document, order, ledger and stock-on-hand read before
+- AC-91 After every Set and reset in AC-50 to AC-89, a document, order, ledger and stock-on-hand read before
   the change is JSON-equal to the same read after it (checked for one Set of each rule).
 
 Timing and concurrency
-- AC-95 Read-your-writes: 20 times in a row — Set(`stock.negativeStock`, `"allow"`), post an issue of 1
-  from an empty pair (expect posted), Set to `"refuse"`, post an issue of 1 (expect `INSUFFICIENT_STOCK`).
+- AC-95 Read-your-writes: 20 times in a row — Set(`stock.negativeStockAllowed`, `true`), post an issue of 1
+  from an empty pair (expect posted), Set to `false`, post an issue of 1 (expect `INSUFFICIENT_STOCK`).
   No iteration differs.
-- AC-96 Stock 5; 10 issues of 1 posted in parallel while one request Sets `stock.negativeStock` to
-  `"allow"`: every issue is `200` or `INSUFFICIENT_STOCK` whose `rules` value is `"refuse"`; none is `500`;
+- AC-96 Stock 5; 10 issues of 1 posted in parallel while one request Sets `stock.negativeStockAllowed` to
+  `true`: every issue is `200` or `INSUFFICIENT_STOCK` whose `rules` value is `false`; none is `500`;
   Stock == 5 − (number posted); Balanced; verify empty; numbers of the posted issues are gapless.
-- AC-97 Two parallel Sets of one rule to different values: both `200`; the rule has one of the two values;
-  the history has both changes, and the newest one's `newValue` is the rule's `value`.
+- AC-97 Two parallel Sets of one rule in a new tenant, one to `true` and one to `false`: both `200`; the
+  rule has one of the two values; the history has both changes, and the newest one's `newValue` is the
+  rule's `value`.
 
 Tenant isolation
-- AC-100 Tenant X Sets all six rules. In tenant Y: `GET /rules` shows six defaults with `source ==
-  "default"`; `GET /rule-changes` -> empty; the five refusals of AC-40 still occur, their `rules` showing
-  the defaults.
+- AC-100 Tenant X Sets all six rules to the value that is not the default. In tenant Y: `GET /rules` shows
+  six defaults with `source == "default"`; `GET /rule-changes` -> empty; the five refusals of AC-40 still
+  occur, their `rules` showing the defaults.
 - AC-101 The same through tools: `rule_list` and `rule_change_list` with Y's key show nothing of X.
 
 MCP
 - AC-110 Through tools only, in a new tenant: `rule_list` -> 6 rules, JSON-equal to `GET /rules`;
-  `rule_get` `{ key: "sales.reservation" }` -> the rule; `rule_set` `{ key: "stock.negativeStock", value:
-  "allow" }` -> the rule with `source == "tenant"`, `updatedBy` the MCP request's key; `stock_document_post`
-  of an issue from an empty pair -> posted; `rule_reset` -> default; `rule_change_list` -> two changes.
-- AC-111 Tool errors: `rule_set` with value `"yes"` -> `VALIDATION_FAILED`, key `value`; `rule_get`
-  `{ key: "nope" }` -> `NOT_FOUND`; `rule_get` `{}` -> `VALIDATION_FAILED`, key `key`; `rule_set` with an
-  extra argument -> `VALIDATION_FAILED` with that argument's key.
+  `rule_get` `{ key: "sales.reservedStockProtected" }` -> the rule; `rule_set`
+  `{ key: "stock.negativeStockAllowed", value: true }` -> the rule with `source == "tenant"`, `updatedBy`
+  the MCP request's key; `stock_document_post` of an issue from an empty pair -> posted; `rule_reset` ->
+  default; `rule_change_list` -> two changes.
+- AC-111 Tool errors: `rule_set` with value `"yes"`, with value `1` and without `value` ->
+  `VALIDATION_FAILED`, key `value`; `rule_get` `{ key: "nope" }` -> `NOT_FOUND`; `rule_get` `{}` ->
+  `VALIDATION_FAILED`, key `key`; `rule_set` with an extra argument -> `VALIDATION_FAILED` with that
+  argument's key.
 - AC-112 A tool error carries `rules`: `stock_document_post` of an issue above stock -> error
   `INSUFFICIENT_STOCK` whose JSON has `rules` equal to the HTTP response's `rules` for the same case; with
-  `block`, -> `STOCK_RESERVED` likewise.
+  reserved stock protected, -> `STOCK_RESERVED` likewise; `purchase_order_create` without `supplierId` ->
+  `VALIDATION_FAILED` with key `supplierId` and `rules` naming `purchase.partnerRequired`.
 - AC-113 Parity: for one Set, one reset and one refused posting, the HTTP body and the tool result are
   JSON-equal (timestamps and ids aside).
+- AC-114 The partner through tools: after `rule_set` `{ key: "purchase.partnerRequired", value: false }`,
+  `purchase_order_create` without `supplierId` -> an order with `supplier == null`; `purchase_order_update`
+  without `supplierId` -> `VALIDATION_FAILED`, key `supplierId`, no `rules`. The input schema of
+  `purchase_order_create` and `sales_order_create` does not list `supplierId` / `customerId` in `required`,
+  before and after the `rule_set` (the schema does not depend on a rule).
 
 Unchanged
 - AC-120 After the criteria above, in every tenant used: Balanced, and verify is empty.
@@ -584,26 +669,30 @@ Unchanged
 ## 11. Notes for the tester and the builder
 
 Tester
-- The weight is on four things: defaults reproduce the built system (AC-40–AC-44); each rule at one other
-  value (AC-50–AC-83); a change touches nothing stored and applies at once (AC-90–AC-97); errors name the
+- **Restarting from the first text of this spec: read section 13 first.** Every rule key changed, every
+  value is now a boolean, two rules are gone and two are new.
+- The weight is on four things: defaults reproduce the built system (AC-40–AC-44); each rule at its other
+  value (AC-50–AC-89); a change touches nothing stored and applies at once (AC-89–AC-97); errors name the
   rule (AC-42, the "refused by" form everywhere).
 - One tenant per test is not a convenience here but a requirement: a rule set in a shared tenant changes
   other tests' results.
-- Do not pin `name` or `description` texts. Do pin keys, types, defaults and allowed values (AC-20): that
-  list is an inventory test (architecture §9) and later specs add to it.
+- Do not pin `name` or `description` texts. Do pin keys and defaults (AC-20): that list is an inventory
+  test (architecture §9) and later specs add to it.
 - The approved changes to earlier tests are exactly those of AC-01. If an earlier test fails for another
   reason, write it in `docs/questions/012-q.md` before changing it.
 - AC-02 to AC-06 are the builder's.
 
 Builder
-- Domain: rule definitions (key, group, texts, type, default, allowed) and a registry that lists them; value
-  validation; the six checks as functions that take the value. Application: the port `IRules` (typed read by
-  definition, for the current tenant) and the five operations. Infrastructure: the two tables, the port's
+- Domain: rule definitions (key, group, name, description, default) and a registry that lists them; the
+  six checks as functions that take the boolean. Application: the port `IRules` (the value of a definition
+  for the current tenant) and the five operations. Infrastructure: the two tables, the port's
   implementation — one query for all of a tenant's values per operation, no cache across requests
   (ADR-0020, decision 10).
+- Do not build value types. A rule's value is a `bool`; there is no `type`, no `allowed`, no validation
+  beyond "is a JSON boolean".
 - Read rules after the per-tenant lock in every operation that takes it; Set and reset take the lock. If an
-  operation validates its body before taking the lock, the two body rules (R32, R34) may be read then — R14
-  is about the operation seeing one consistent set, and those two are not read again later.
+  operation validates its body before taking the lock, the partner rule (R33) may be read then — R14 is
+  about the operation seeing one consistent set, and that rule is not read again later.
 - `AppError` gains the rules that refused; the HTTP mapping and the MCP mapping each write `rules` in one
   place. An error that names no rule serialises without the member.
 - R17 in the form "Δ < 0 and Q + Δ < 0" replaces the existing sufficiency comparison everywhere it is made
@@ -612,25 +701,79 @@ Builder
   reserved): use `max(0, …)` and `>=`; under the default nothing differs.
 - R27 needs the pair's reserved quantity before and after inside the posting transaction; the delivery's own
   effect on its order's outstanding quantity is part of "after".
-- Implement the three rule types this spec uses. Do not build `boolean`, `text` or `pattern` ahead of the
-  rule that needs them.
+- The partner of an order: the column and the navigation become nullable; the supplier / customer stage of
+  create, replace and confirm (009/R10, R12) runs only when there is one; a linked document copies the
+  order's partner, `null` included (011a/R8). The limits "6 decimals" and "200 lines" stay where they are —
+  they are platform bounds, not rules; do not move them onto the registry.
 - Anything unclear or contradictory: `docs/questions/012-q.md`, then continue with the rest.
 
-## 12. Architect's defaults for the owner
+## 12. Decisions behind this spec
 
-Each stands until the owner says otherwise; the rule that carries it is named. The wider decisions
-(invariants, order of the batches, what "however they want" covers) are in `docs/rules.md` §5.
+Owner's decisions (2026-10-10; ADR-0020): a rule is a boolean; every tenant key may change rules (S1, R10);
+negative stock is each tenant's own decision (6.4).
+
+Architect's defaults — each stands until the owner says otherwise; the rule that carries it is named.
 
 | # | Question | Default | Rule |
 |---|---|---|---|
-| 1 | Who may change a rule? | Every tenant key, agents included, until permissions exist; every change is recorded with its key | S1, R10 |
-| 2 | When does a change apply? | From the next operation; nothing stored is changed or re-checked | R13, R15 |
-| 3 | A draft saved under a wider rule | It still posts; only its next save is judged | R16 |
-| 4 | Negative stock allowed, then refused again | Negative balances stay; movements that raise them pass, movements that lower them are refused | R21 |
-| 5 | Over-receipt / over-delivery | A percentage of the ordered base quantity per line, 0–1000; no "unlimited" | R22 |
-| 6 | An order received above 100 % | Outstanding is 0, status `full`; it still has to be closed by hand | R23 |
-| 7 | What `block` protects | Reserved stock against manual issues, transfers and reversals — not one order against another; no allocation | R27, R28 |
-| 8 | Is a stock count blocked by reservation or by the negative-stock rule? | No — it states what is there | R29 |
-| 9 | Does `quantity.decimals` limit conversion results, prices or factors? | No — only the quantity the caller enters | R33 |
-| 10 | Most lines a tenant can allow | 1000 | 6.1 |
-| 11 | Setting a rule to the value of its default | Counts as the tenant's own value and is kept if we later change the default | R7 |
+| 1 | When does a change apply? | From the next operation; nothing stored is changed or re-checked | R13, R15 |
+| 2 | Negative stock allowed, then refused again | Negative balances stay; movements that raise them pass, movements that lower them are refused | R21 |
+| 3 | Over-receipt / over-delivery allowed | Without limit — a rule is yes or no | R22 |
+| 4 | An order received above 100 % | Outstanding is 0, status `full`; it still has to be closed by hand | R23 |
+| 5 | What "reserved stock is protected" protects | Reserved stock against manual issues, transfers and reversals — not one order against another; no allocation | R27, R28 |
+| 6 | Is a stock count blocked by reservation or by the negative-stock rule? | No — it states what is there | R29 |
+| 7 | Partner not required: is a partner that *is* named still checked? | Yes — existence, activity, role, as before | R34 |
+| 8 | A draft order without a partner, after the partner became required | It still confirms; only its next save is judged | R37 |
+| 9 | A receipt or delivery against an order without a partner | Has no partner; naming one is `ORDER_MISMATCH` | R36 |
+| 10 | Can orders without a partner be listed on their own? | No filter for it | R35 |
+| 11 | Decimals of a quantity (6) and lines per document (200) | Platform bounds, fixed; not rules | 6.1 |
+| 12 | Setting a rule to the value of its default | Counts as the tenant's own value and is kept if we later change the default | R7 |
+
+## 13. What changed against the first text of this spec (for the tester's restart)
+
+The first text (commit `67a8d96`) had typed rules (`choice`, `integer`, `decimal`). Everything below
+replaces it; tests written against the first text must be rewritten, not adjusted.
+
+**Rules**
+
+| First text | Now |
+|---|---|
+| `stock.negativeStock`: `"refuse"` (default) / `"allow"` | `stock.negativeStockAllowed`: `false` (default) / `true` |
+| `purchase.overReceiptPercent`: decimal 0–1000, default 0 | `purchase.overReceiptAllowed`: `false` (default) / `true`; `true` has **no limit** |
+| `sales.overDeliveryPercent`: decimal 0–1000, default 0 | `sales.overDeliveryAllowed`: `false` (default) / `true`; no limit |
+| `sales.reservation`: `"inform"` (default) / `"block"` | `sales.reservedStockProtected`: `false` (default) / `true` |
+| `quantity.decimals`: integer 0–6, default 6 | **removed** — six decimals is a fixed platform bound; its refusal has no `rules` |
+| `document.maxLines`: integer 1–1000, default 200 | **removed** — 200 lines is a fixed platform bound; its refusal has no `rules` |
+| — | **new** `purchase.partnerRequired`: `true` (default) / `false` |
+| — | **new** `sales.partnerRequired`: `true` (default) / `false` |
+
+Still six rules; `total == 6`; the literal order of AC-20 is new.
+
+**Value shapes**
+- Every `value`, `default`, `oldValue`, `newValue` and every `rules[].value` is a JSON boolean. Strings,
+  numbers and `null` are invalid values (`400`, key `value`).
+- The rule object lost `type` and `allowed`; it has exactly nine properties (section 4).
+- `rule_set`'s `value` argument is a boolean.
+
+**Endpoints and tools**
+- The five rule routes and the five rule tools are unchanged in path, method, name and count (62 tools).
+  `GET /rules` filters (`search`, `group`, `source`) and `GET /rule-changes` are unchanged.
+- **Changed existing operations** (new): create of a purchase / sales order accepts an omitted or `null`
+  `supplierId` / `customerId`; replace requires the property and accepts `null`; `supplier` / `customer` in
+  every order representation may be `null`; a stock document linked to such an order has `partner == null`.
+  Tool schemas change accordingly (section 5).
+- Error code `STOCK_RESERVED` and the `rules` member are unchanged in shape.
+
+**Rules of this spec**
+- 6.2–6.4 and 6.6: same behaviour, boolean values (R6 is new: only `true` / `false`).
+- 6.5: no percentage, no limit formula, no rounding (old R22, E11 are gone).
+- Old 6.7 (`quantity.decimals`, `document.maxLines`; R32–R34) is gone; new 6.7 is the partner rules
+  (R32–R37). "Errors name the rule" is now R38–R40.
+
+**Acceptance criteria**
+- Unchanged in substance, new keys and values: AC-10–AC-12, AC-21, AC-30, AC-32, AC-34–AC-36, AC-41,
+  AC-50–AC-54, AC-70–AC-78, AC-91, AC-95–AC-97, AC-100, AC-101, AC-110, AC-113, AC-120.
+- Rewritten: AC-01 (approved changes to earlier tests), AC-03, AC-05, AC-06, AC-20, AC-22, AC-31, AC-33,
+  AC-37, AC-40, AC-42, AC-43, AC-44, AC-60–AC-65, AC-111, AC-112.
+- Removed: old AC-80–AC-83 (decimals, maximum lines) and AC-90 (drafts under a narrower limit).
+- New: AC-80–AC-89 (partner required), AC-114.

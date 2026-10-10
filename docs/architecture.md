@@ -154,15 +154,17 @@ Rules:
   `reopen` switch it between `confirmed` and `closed`. Goods are received or delivered by a stock document
   linked to the order (`purchaseOrderId` / `salesOrderId` on the header, `orderLineNo` on each line); progress
   per order line is kept in base units and, by default, never exceeds the ordered quantity (rules
-  `purchase.overReceiptPercent`, `sales.overDeliveryPercent`).
+  `purchase.overReceiptAllowed`, `sales.overDeliveryAllowed`). By default an order names a partner (rules
+  `purchase.partnerRequired`, `sales.partnerRequired`); where a tenant switched that off, `supplier` /
+  `customer` may be `null`.
   Stock on hand shows, per (article, warehouse), `quantity` (the stored balance, equal to the ledger sum), `incomingQuantity` (outstanding
   on confirmed purchase orders), `reservedQuantity` (outstanding on confirmed sales orders) and
   `availableQuantity` (`quantity − reservedQuantity`, may be negative). By default reservation informs and blocks nothing
-  (ADR-0017; rule `sales.reservation`).
+  (ADR-0017; rule `sales.reservedStockProtected`).
 - Prices and amounts are exact decimals in the tenant's one currency: a unit price has at most 6 decimal
   places; an amount is rounded to 2 decimal places, half away from zero.
-- Quantities are exact decimals sent as JSON numbers: at most 6 decimal places (fewer where the tenant set
-  `quantity.decimals`) and 15 significant digits;
+- Quantities are exact decimals sent as JSON numbers: at most 6 decimal places and 15 significant digits
+  (platform bounds, `docs/rules.md` I10);
   a quoted number is a wrong type. Consumers compare numerically (`10` equals `10.000000`).
 
 ## 6. Error model (ADR-0004)
@@ -188,8 +190,8 @@ Every non-2xx response under `/api/v1` is `application/problem+json` (RFC 9457) 
 | 409 | `CANNOT_REVOKE_SELF` | An API key tried to revoke itself. |
 | 409 | `DEFAULT_WAREHOUSE` | The operation would leave the tenant without an active default warehouse: delete or deactivation of the default warehouse, or making an inactive warehouse the default (spec 011). `errors` has `isActive` except on delete. |
 | 409 | `INVALID_STATE` | Operation not allowed in the document's current status (e.g. replace, delete or post of a posted document; reversal of a draft, of a reversed or of a reversing document; replace of a confirmed order; close of a draft order). |
-| 409 | `INSUFFICIENT_STOCK` | Posting would take stock on hand below zero while `stock.negativeStock` is `refuse` (the default). `errors` has `lines[i].quantity` for the short lines. |
-| 409 | `STOCK_RESERVED` | With `sales.reservation` = `block`: a posting or reversal would take goods that confirmed sales orders reserve (spec 012). `errors` has `lines[i].quantity`. |
+| 409 | `INSUFFICIENT_STOCK` | Posting would take stock on hand below zero while `stock.negativeStockAllowed` is `false` (the default). `errors` has `lines[i].quantity` for the short lines. |
+| 409 | `STOCK_RESERVED` | With `sales.reservedStockProtected` = `true`: a posting or reversal would take goods that confirmed sales orders reserve (spec 012). `errors` has `lines[i].quantity`. |
 | 409 | `ARTICLE_NOT_STOCKED` | A stock document line names a `service` article. `errors` has `lines[i].articleId`. |
 | 409 | `UNIT_IS_BASE_UNIT` | A unit conversion was set for the article's own base unit (spec 007). `errors` has `unitId`. |
 | 409 | `UNIT_NOT_ON_ARTICLE` | A document line's unit is neither the base unit nor an alternative unit of its article. `errors` has `lines[i].unitId`. |
@@ -198,12 +200,12 @@ Every non-2xx response under `/api/v1` is `application/problem+json` (RFC 9457) 
 | 409 | `PARTNER_ROLE_MISSING` | The partner named on an order, or on an unlinked receipt or issue (011a), lacks the role the document needs (`isSupplier` / `isCustomer`). `errors` has `supplierId` / `customerId` / `partnerId`. |
 | 409 | `ORDER_NOT_OPEN` | A stock document is saved or posted against an order that is not `confirmed`. `errors` has `purchaseOrderId` / `salesOrderId`. |
 | 409 | `ORDER_MISMATCH` | A stock document linked to an order names another warehouse or (011a) another partner, or a line's article is not its order line's. `errors` has `warehouseId`, `partnerId` and/or `lines[i].articleId`. |
-| 409 | `QUANTITY_EXCEEDS_ORDER` | Posting would take an order line above its ordered quantity plus the tenant's tolerance (`purchase.overReceiptPercent` / `sales.overDeliveryPercent`, default 0). `errors` has `lines[i].quantity` for the lines linked to it. |
+| 409 | `QUANTITY_EXCEEDS_ORDER` | Posting would take an order line above its ordered quantity while `purchase.overReceiptAllowed` / `sales.overDeliveryAllowed` is `false` (the default). `errors` has `lines[i].quantity` for the lines linked to it. |
 | 413 | `PAYLOAD_TOO_LARGE` | The request body is larger than 1 048 576 bytes (1 MB), declared or counted while read. Refused before anything is parsed or applied; no `errors`. Checked after the credential and before routing, on `/api/v1` and on `/mcp` (review of open item 001/7). |
 | 500 | `INTERNAL_ERROR` | Unexpected. No stack trace or SQL in the body. |
 
 A refusal caused by a configurable rule (section 11) carries one more member, `rules`: an array of
-`{ "key", "value", "fields" }` naming every rule that refused, the value it had and the `errors` keys it
+`{ "key", "value", "fields" }` naming every rule that refused, the value it had (`true` or `false`) and the `errors` keys it
 produced. It is absent when the refusal is an invariant's. The `code` does not depend on configuration.
 
 `code` values are part of the contract: clients and tests branch on `code`, never on `detail` text.
@@ -257,7 +259,7 @@ and are answered as HTTP problem documents, not as tool errors (ADR-0009).
   another tenant, and an API key that has written anything can be revoked but never deleted (ADR-0010).
 - Ledger tables (stock ledger from spec 005; journal lines later) are append-only: no `UPDATE`, no `DELETE`;
   corrections are reversing entries (ADR-0007). Stock on hand always equals the sum of the stock ledger; by default
-  it is never negative (ADR-0012; rule `stock.negativeStock`); it is read from the stored balance (next point).
+  it is never negative (ADR-0012; rule `stock.negativeStockAllowed`); it is read from the stored balance (next point).
 - Stored projections (ADR-0018): `StockBalance` holds the quantity per (tenant, warehouse, article). The
   ledger is the truth and the balance its copy: written only together with ledger entries, in the same
   transaction and under the same per-tenant lock, and by the rebuild operation; read by everything that
@@ -324,26 +326,36 @@ unpublished.
 
 ## 11. Configurable rules (ADR-0020) — standing rule for every spec
 
-Owner, 2026-10-10: every validation and business rule is configurable per tenant; we ship the default.
+Owner, 2026-10-10: every validation and business rule is configurable per tenant; we ship the default. Only
+business logic is configurable, and **a rule is a boolean switch**: "Partner required on an order: True or
+False."
 
-- A check that can refuse a write is either a **rule** — key, type, default, allowed values, a value per
-  tenant — or an **invariant** with a stated reason (security, integrity of the records, shape of the
-  contract, definition). `docs/rules.md` holds both lists; the invariants are approved by the owner.
-- **A spec introduces no rule without one of the two.** Every spec has a section "Rules" with a table: for
-  each new check, its key, type, default and allowed values, or the word *invariant*, the invariant of
-  `docs/rules.md` §2 it falls under (or a new one, for the owner) and one line of reason. A spec whose table
-  is missing a check is not ready for the tester. The same spec adds the rows to `docs/rules.md`.
-- **The default is the behaviour the spec describes.** Acceptance criteria state the behaviour at the default
-  and at one other value at least, for every rule the spec adds, and that a tenant which sets nothing behaves
-  as the default says.
+- A check that can refuse a write is either a **rule** — a key, a plain-language name, a default, and a
+  value per tenant that is `true` or `false` — or an **invariant** with a stated reason (security, integrity
+  of the records, shape of the contract, definition, platform bound). `docs/rules.md` holds both lists; the
+  invariants are approved by the owner.
+- **A rule is a yes/no question a business owner would ask.** Its `name` is a statement in plain language
+  ("Stock may go below zero"); `true` means the statement holds. Its key is `area.statement` in lowerCamel
+  (`stock.negativeStockAllowed`, `purchase.partnerRequired`). There are no numeric, textual or multi-valued
+  rules and no rules a tenant writes. A check that needs a number is either the yes/no question behind the
+  number ("more than ordered may be received" — yes means without limit) or, when the number is a bound of
+  the platform and not a decision of a business (precision, length, size), an invariant under I10.
+- **A spec introduces no check without one of the two.** Every spec has a section "Rules" with a table: for
+  each new check, its key, name and default, or the word *invariant*, the invariant of `docs/rules.md` §2 it
+  falls under (or a new one, for the owner) and one line of reason. A spec whose table is missing a check is
+  not ready for the tester. The same spec adds the rows to `docs/rules.md`.
+- **The default is the behaviour the spec describes.** Acceptance criteria state the behaviour at `true` and
+  at `false` for every rule the spec adds, and that a tenant which sets nothing behaves as the default says.
 - **Code.** Rule definitions live in `Xerp.Domain`; a Domain check takes the rule's value as an argument;
   Application reads values through one port (`IRules`), once per operation, after the per-tenant lock where
-  the operation holds it; Api and MCP read no rule. A literal that decides whether a write is accepted
-  appears only as a definition's default or as a bound of its allowed values. A review that finds another
-  one requires a change.
-- **Values** are stored per tenant only when set; read and changed over HTTP (`/rules`) and MCP (`rule_*`);
-  every change is attributed and kept; a change applies to operations that start after it and rewrites
-  nothing; a change takes the per-tenant lock.
+  the operation holds it; Api and MCP read no rule. A business decision about accepting a write appears only
+  as a rule definition; a literal number in a check is a platform bound listed under I10. A review that
+  finds another one requires a change.
+- **The contract does not vary per tenant.** A rule decides whether a value is accepted, never the shape of
+  a request or response: a field a rule can make optional is nullable in the schema for every tenant.
+- **Values** are stored per tenant only when set; read and changed over HTTP (`/rules`) and MCP (`rule_*`)
+  by any tenant key; every change is attributed and kept; a change applies to operations that start after it
+  and rewrites nothing; a change takes the per-tenant lock.
 - **Errors** name the rule (section 6, `rules`).
 - **Keys are contract**, like error codes and tool names: never renamed or reused. The list of keys with
   their defaults is pinned by an inventory test (section 9); the spec that adds a key approves the addition.
@@ -351,4 +363,3 @@ Owner, 2026-10-10: every validation and business rule is configurable per tenant
   old one as each existing tenant's own value.
 - Until a rule's batch is merged (`docs/rules.md` §3) it remains a fixed check with the default's behaviour.
   Moving it onto the registry changes no default behaviour; earlier tests pass unchanged.
-

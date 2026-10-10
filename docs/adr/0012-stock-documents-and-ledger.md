@@ -111,8 +111,9 @@ duration. Revisit when a tenant's write volume makes this visible, or with row-l
 runtime role changes what can be locked.
 
 ## Amendment (2026-10-10): the rules of this ADR are defaults (ADR-0020)
-"Negative stock is always refused", six decimals and the fixed number patterns are business rules, not
-invariants: they become tenant-configurable rules with these values as defaults (`docs/rules.md`;
-`stock.negativeStock` and `quantity.decimals` with spec 012). What stays absolute: the ledger is append-only,
+"Negative stock is always refused" is a business rule, not an invariant: it becomes the tenant's switch
+`stock.negativeStockAllowed`, default `false` (spec 012; owner's decision of 2026-10-10: each tenant decides
+for itself). Six decimals are a platform bound and stay fixed (`docs/rules.md` I10: rules are booleans); the
+number patterns belong to the number-series spec. What stays absolute: the ledger is append-only,
 a posted document is immutable, stock on hand is the sum of the ledger. A change of a rule takes the
 per-tenant lock (condition 1).

@@ -79,7 +79,9 @@ differ, and what may still change once an order is agreed with the other party.
 - Partner, warehouse, article and unit of measure are `IN_USE` while an order names them.
 
 ## Amendment (2026-10-10): "never more than ordered" is a default (ADR-0020)
-Over-receipt and over-delivery become tenant-configurable tolerances (`purchase.overReceiptPercent`,
-`sales.overDeliveryPercent`, default 0; spec 012). Progress is still derived only from posted stock
-documents; with a tolerance above 0 it may exceed the ordered quantity, and the outstanding quantity is then
-0, never negative. The other choices of this ADR are classified in `docs/rules.md`.
+Over-receipt and over-delivery become tenant switches (`purchase.overReceiptAllowed`,
+`sales.overDeliveryAllowed`, default `false`; spec 012; allowed means without limit — rules are booleans, there
+is no tolerance percentage). Progress is still derived only from posted stock documents; where allowed it may
+exceed the ordered quantity, and the outstanding quantity is then 0, never negative. "An order has a partner"
+becomes a default too (`purchase.partnerRequired`, `sales.partnerRequired`, default `true`; spec 012): where a
+tenant switches it off an order may have no partner, and a document linked to it has none either. The other choices of this ADR are classified in `docs/rules.md`.
