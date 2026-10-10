@@ -177,6 +177,13 @@ public sealed class StockDocument : ITenantOwned
     /// </summary>
     public Guid? SalesOrderId { get; private set; }
 
+    /// <summary>
+    /// Whom the goods came from or went to (spec 011a): the supplier of a receipt, the customer of an issue.
+    /// A header field, optional on an unlinked document; on a document linked to an order it is that order's
+    /// partner. Always null on a transfer and a count. Which partner it may be is decided by the caller.
+    /// </summary>
+    public Guid? PartnerId { get; private set; }
+
     public string? Reference { get; private set; }
     public string? Note { get; private set; }
     public DateTime? PostedAt { get; private set; }
@@ -208,6 +215,9 @@ public sealed class StockDocument : ITenantOwned
     /// <summary>Whether the document fulfils an order: then every line names an order line (spec 009, R20).</summary>
     public bool IsLinked => Link is not null;
 
+    /// <summary>Spec 011a, R1: only a receipt and an issue can name a partner.</summary>
+    public static bool CanNamePartner(StockDocumentType type) => type is StockDocumentType.Receipt or StockDocumentType.Issue;
+
     /// <summary>The order the document fulfils, of either kind; null on an unlinked document (spec 010, R6).</summary>
     public OrderLink? Link =>
         PurchaseOrderId is { } purchaseOrderId ? new OrderLink(OrderSide.Purchase, purchaseOrderId)
@@ -225,7 +235,7 @@ public sealed class StockDocument : ITenantOwned
     public static StockDocument Create(
         StockDocumentType type, DateOnly documentDate, Guid warehouseId, Guid? toWarehouseId, string? reference, string? note,
         IReadOnlyList<StockLineEntry> lines, DateTime now, Guid actorKeyId, IReadOnlyList<decimal>? bookQuantities = null,
-        Guid? purchaseOrderId = null, Guid? salesOrderId = null)
+        Guid? purchaseOrderId = null, Guid? salesOrderId = null, Guid? partnerId = null)
     {
         if (purchaseOrderId is not null && type != OrderSide.Purchase.FulfilledBy())
             throw new ArgumentException("Only a receipt can be linked to a purchase order.", nameof(purchaseOrderId));
@@ -241,7 +251,7 @@ public sealed class StockDocument : ITenantOwned
             CreatedAt = now,
             CreatedBy = actorKeyId,
         };
-        document.Replace(documentDate, warehouseId, toWarehouseId, reference, note, lines, now, actorKeyId, bookQuantities);
+        document.Replace(documentDate, warehouseId, toWarehouseId, reference, note, lines, now, actorKeyId, bookQuantities, partnerId);
         return document;
     }
 
@@ -258,13 +268,20 @@ public sealed class StockDocument : ITenantOwned
     /// The link to an order is not replaced (spec 009, R19, R20): on a linked document every line names an
     /// order line, on an unlinked one none does.
     /// </para>
+    /// <para>
+    /// <paramref name="partnerId"/> replaces the partner like every other header field (spec 011a, R3): null
+    /// removes it. Only a receipt and an issue can have one (R1).
+    /// </para>
     /// </summary>
     /// <exception cref="InvalidOperationException">The document is posted (R11).</exception>
     public IReadOnlyList<StockDocumentLine> Replace(
         DateOnly documentDate, Guid warehouseId, Guid? toWarehouseId, string? reference, string? note,
-        IReadOnlyList<StockLineEntry> lines, DateTime now, Guid actorKeyId, IReadOnlyList<decimal>? bookQuantities = null)
+        IReadOnlyList<StockLineEntry> lines, DateTime now, Guid actorKeyId, IReadOnlyList<decimal>? bookQuantities = null,
+        Guid? partnerId = null)
     {
         EnsureDraft();
+        if (partnerId is not null && !CanNamePartner(Type))
+            throw new ArgumentException("Only a receipt and an issue can name a partner.", nameof(partnerId));
         if (!TransferRules.IsValidDestination(Type, warehouseId, toWarehouseId))
             throw new ArgumentException(
                 "A transfer needs a destination warehouse other than its source; other documents have none.", nameof(toWarehouseId));
@@ -291,6 +308,7 @@ public sealed class StockDocument : ITenantOwned
         DocumentDate = documentDate;
         WarehouseId = warehouseId;
         ToWarehouseId = toWarehouseId;
+        PartnerId = partnerId;
         Reference = newReference;
         Note = newNote;
         UpdatedAt = now;
@@ -361,7 +379,7 @@ public sealed class StockDocument : ITenantOwned
 
     /// <summary>
     /// Reverses this posted document (ADR-0013; spec 006, R11-R14): returns the reversing document - same type,
-    /// warehouses, lines and reference, already posted under <paramref name="number"/> - and its ledger
+    /// warehouses, partner (spec 011a, R14), lines and reference, already posted under <paramref name="number"/> - and its ledger
     /// entries, which are <paramref name="entries"/> with the opposite sign. The lines are copies of this
     /// document's posted lines - unit, quantity, factor and base quantity as posted - whatever the article's
     /// conversions are now (spec 007, R20), and on a count with the book quantity it was posted against (spec
@@ -401,6 +419,7 @@ public sealed class StockDocument : ITenantOwned
             ReversalOfId = Id,
             PurchaseOrderId = PurchaseOrderId,
             SalesOrderId = SalesOrderId,
+            PartnerId = PartnerId,
             Reference = Reference,
             Note = reversalNote,
             PostedAt = now,

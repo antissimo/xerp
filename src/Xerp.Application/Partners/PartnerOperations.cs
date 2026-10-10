@@ -108,7 +108,9 @@ public sealed class PartnerOperations(IXerpDb db, ITenantContext context, IClock
         if (partner is null)
             return NotFound();
         // Spec 009, R37: an order of any status - draft, confirmed or closed - names its partner for good.
-        if (await OrderReads.AnyForPartnerAsync(db, id, cancellationToken))
+        // Spec 011a, R15: so does a stock document - draft, posted or reversed, linked to an order or not.
+        if (await OrderReads.AnyForPartnerAsync(db, id, cancellationToken)
+            || await db.StockDocuments.AnyAsync(d => d.PartnerId == id, cancellationToken))
             return InUse();
         db.Partners.Remove(partner);
         try
@@ -117,7 +119,7 @@ public sealed class PartnerOperations(IXerpDb db, ITenantContext context, IClock
         }
         catch (ForeignKeyViolationException ex) when (ex.BlockedDelete)
         {
-            // An order started to name the partner after the check above: the foreign key is the authority.
+            // An order or a stock document started to name the partner after the check above: the foreign key is the authority.
             return InUse();
         }
         catch (DbUpdateConcurrencyException)
@@ -180,7 +182,7 @@ public sealed class PartnerOperations(IXerpDb db, ITenantContext context, IClock
     private static AppError NotFound() => AppError.NotFound(NotFoundDetail);
 
     private static AppError InUse() =>
-        AppError.InUse("The partner is named by orders and cannot be deleted. Deactivate it instead (isActive = false).");
+        AppError.InUse("The partner is named by orders or stock documents and cannot be deleted. Deactivate it instead (isActive = false).");
 
     private static AppError CodeTaken(string code) => AppError.CodeTaken($"A partner with code '{code}' already exists.");
 

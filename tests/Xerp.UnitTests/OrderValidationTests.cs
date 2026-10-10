@@ -138,7 +138,7 @@ public class OrderValidationTests
     // ---- what the link adds to saving and posting
 
     private static readonly LinkedOrderFacts Order =
-        new(Guid.CreateVersion7(), OrderStatus.Confirmed, Guid.Parse(Warehouse), new Dictionary<int, Guid> { [1] = A, [2] = B });
+        new(Guid.CreateVersion7(), OrderStatus.Confirmed, Guid.Parse(Warehouse), new Dictionary<int, Guid> { [1] = A, [2] = B }, Guid.CreateVersion7());
 
     [Fact]
     public void R21_A_document_is_saved_only_against_an_existing_confirmed_order()

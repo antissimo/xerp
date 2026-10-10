@@ -70,14 +70,14 @@ internal static class OrderReads
     {
         var order = await orders.AsNoTracking()
             .Where(o => o.Id == orderId)
-            .Select(o => new { o.Status, o.WarehouseId })
+            .Select(o => new { o.Status, o.WarehouseId, o.PartnerId })
             .SingleOrDefaultAsync(cancellationToken);
         if (order is null)
             return null;
         var lineArticles = await lines.AsNoTracking()
             .Where(l => l.OrderId == orderId)
             .ToDictionaryAsync(l => l.LineNo, l => l.ArticleId, cancellationToken);
-        return new LinkedOrderFacts(orderId, order.Status, order.WarehouseId, lineArticles);
+        return new LinkedOrderFacts(orderId, order.Status, order.WarehouseId, lineArticles, order.PartnerId);
     }
 
     private static Task<List<OrderLinkDto>> NumbersAsync<TOrder, TLine>(IQueryable<TOrder> orders, List<Guid> ids, CancellationToken cancellationToken)

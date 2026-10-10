@@ -402,16 +402,8 @@ public abstract class OrderOperations<TOrder, TLine, TDto, TSummary>(IXerpDb db,
         kind, input.OrderDate, input.DueDate, input.PartnerId, input.WarehouseId, input.Reference, input.Note, input.Lines,
         input.DueDateGiven, input.ReferenceGiven, input.NoteGiven, input.WarehouseOptional);
 
-    private sealed record PartnerState(bool IsActive, bool HasRole);
-
     /// <summary>Whether the partner is active and has the role this kind of order asks for (R2; spec 010, R3: each kind checks only its own).</summary>
-    private IQueryable<PartnerState> PartnerFacts(Guid partnerId)
-    {
-        var customer = kind.Side == OrderSide.Sales;
-        return db.Partners.AsNoTracking()
-            .Where(p => p.Id == partnerId)
-            .Select(p => new PartnerState(p.IsActive, customer ? p.IsCustomer : p.IsSupplier));
-    }
+    private IQueryable<PartnerState> PartnerFacts(Guid partnerId) => PartnerChecks.State(db, partnerId, kind.Side);
 
     private Guid ActorKeyId() =>
         context.ApiKeyId ?? throw new InvalidOperationException($"A {kind.Name} can only be written by a tenant API key.");
@@ -466,11 +458,7 @@ public abstract class OrderOperations<TOrder, TLine, TDto, TSummary>(IXerpDb db,
     private AppError NotFound() => AppError.NotFound(_notFoundDetail);
 
     /// <summary>R2: the partner exists and may be used, but does not have the role this kind of order needs.</summary>
-    private AppError RoleMissing(Guid partnerId) =>
-        new(ErrorCodes.PartnerRoleMissing,
-            $"The partner named by {kind.PartnerField} is not a {kind.PartnerWord}: a {kind.Name} needs a partner with {kind.PartnerRole} = true. "
-            + $"Choose a {kind.PartnerWord} (partner_list with {kind.PartnerRole} = true), or give this partner the role with partner_update.",
-            new Dictionary<string, string[]> { [kind.PartnerField] = [$"The partner with id '{partnerId}' does not have {kind.PartnerRole}."] });
+    private AppError RoleMissing(Guid partnerId) => PartnerChecks.RoleMissing(kind, kind.PartnerField, $"a {kind.Name}", partnerId);
 
     /// <summary>R14: a confirmed order is immutable, closed or not.</summary>
     private AppError NotADraft(TOrder order, string attempted) =>
