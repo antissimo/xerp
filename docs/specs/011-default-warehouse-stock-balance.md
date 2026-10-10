@@ -126,6 +126,9 @@ A difference:
 ```
 There is no operation that sets, changes or deletes a stored balance.
 
+Set-default and rebuild have no body: a body sent to either is not read and has no effect, as for the other
+"(no body)" operations (`003-q.md`; `011-q.md`, T-Q3). Their query strings follow 001/R15.
+
 ### 4.6 New error code (registry: architecture §6)
 
 | HTTP | `code` | When | `errors` keys |
@@ -186,7 +189,8 @@ The default warehouse
   the same transaction, the former default an ordinary warehouse. The target must be active, otherwise
   `409 DEFAULT_WAREHOUSE` with key `isActive`. On the warehouse that already is the default it succeeds and
   changes nothing (`updatedAt` included). Otherwise both warehouses get `updatedAt` / `updatedBy` of the
-  call. *(default: the tenant may change it)*
+  call — one timestamp, so the two `updatedAt` values are equal (`011-q.md`, T-Q2). *(default: the tenant
+  may change it)*
 - R7. A former default warehouse is ordinary again: it can be deactivated, and deleted if unused. Changing
   the default changes no existing document: a document keeps the warehouse it has.
 
@@ -345,7 +349,7 @@ Unmarked criteria are black-box (tester). Quantities are compared numerically.
 
 Structure
 - AC-01 *(manual)* Build and tests exit 0; earlier tests pass unweakened. The **only** earlier tests changed:
-  1. the literal tool list (57 names);
+  1. the literal tool list (57 names) and a count that repeats it;
   2. tests asserting the exact property set of a Warehouse representation or of a warehouse tool's
      `outputSchema` (they gain `isDefault`), and the exact input properties of `warehouse_list`;
   3. tests that rely on a new tenant having **no** warehouse — an empty `GET /warehouses` / `warehouse_list`,
@@ -388,7 +392,9 @@ Inherited behaviour — smoke
 - AC-11 `GET /warehouses/{DW}/stock?foo=1` -> `400` with key `foo`; `?hasStock=yes` -> `400` with key
   `hasStock`; `?limit=0` -> `400` with key `limit`; `GET /stock-balance-differences?warehouseId=…` -> `400`
   with key `warehouseId`; `GET /warehouses?isDefault=1` -> `400` with key `isDefault`;
-  `POST /warehouses` and `PUT /warehouses/{id}` with `"isDefault": true` in the body -> `400`.
+  `POST /warehouses` and `PUT /warehouses/{id}` with `"isDefault": true` in the body -> `400`;
+  `POST /warehouses/{id}/set-default?foo=1` and `POST /stock-balances/rebuild?tenantId=…` -> `400` with
+  that key.
 
 The default warehouse
 - AC-20 A tenant created with `POST /api/v1/admin/tenants` (response as 001/AC-11, unchanged): with its key,
@@ -409,7 +415,7 @@ The default warehouse
   was posted into it; `DW` still exists and is the default.
 - AC-25 `POST /warehouses/{W1}/set-default` -> `200`, body is W1 with `isDefault == true`, `updatedBy ==` the
   acting key. `GET /warehouses?isDefault=true` returns exactly W1; the former default has
-  `isDefault == false` and `updatedBy ==` the acting key. Then: `PUT` of W1 with `isActive: false` and
+  `isDefault == false`, `updatedBy ==` the acting key and the same `updatedAt` as W1. Then: `PUT` of W1 with `isActive: false` and
   `DELETE` of W1 -> `DEFAULT_WAREHOUSE`; `PUT` of the former default with `isActive: false` -> `200`;
   `DELETE` of the (unused) former default -> `204`.
 - AC-26 Set-default of the warehouse that already is the default -> `200`, the representation JSON-equal to
@@ -534,10 +540,10 @@ MCP
   `isActive: false` -> `DEFAULT_WAREHOUSE` (`isActive`); `warehouse_delete` of the default ->
   `DEFAULT_WAREHOUSE`; `warehouse_set_default` of an inactive warehouse -> `DEFAULT_WAREHOUSE` (`isActive`),
   of a random UUID -> `NOT_FOUND`; `warehouse_stock_list` with a random UUID -> `NOT_FOUND`, with
-  `{ "id": W1, "foo": 1 }` -> `VALIDATION_FAILED`; `stock_document_update` without `warehouseId` ->
+  `{ "id": W1, "foo": 1 }` -> `VALIDATION_FAILED` (`foo`); `stock_document_update` without `warehouseId` ->
   `VALIDATION_FAILED` (`warehouseId`); `stock_document_create` of a transfer without `warehouseId` ->
   `VALIDATION_FAILED` (`warehouseId`); `stock_balance_rebuild` with `{ "tenantId": … }` ->
-  `VALIDATION_FAILED`.
+  `VALIDATION_FAILED` (`tenantId`).
 
 Tenant isolation (tenants X and Y, each with the standard setup)
 - AC-80 Each tenant has its own default: both have a warehouse `CENTRAL` with `isDefault == true` and
