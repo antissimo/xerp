@@ -68,7 +68,7 @@ public class McpDefaultWarehouseBalanceToolTests(XerpFixture app)
             new JsonObject { ["type"] = "receipt", ["documentDate"] = Stock.Date, ["lines"] = Stock.Lines((a.Id(), 100)) });
         Assert.Equal("CENTRAL", draft.GetProperty("warehouse").Str("code"));
         Assert.Equal(dw.Id(), draft.GetProperty("warehouse").Id());
-        Assert.Equal(agent.Id, draft.GetProperty("createdBy").Id());
+        Assert.Equal(agent.Id, draft.GetProperty("createdBy").GetGuid());
         McpAssert.JsonEqual(await Stock.GetAsync(http, draft.Id()), draft, "stock_document_create differs from HTTP");
 
         var posted = await mcp.OkAsync("stock_document_post", new { id = draft.Id() });
@@ -102,12 +102,12 @@ public class McpDefaultWarehouseBalanceToolTests(XerpFixture app)
         var made = await mcp.OkAsync("warehouse_set_default", new { id = shop.Id() });
         Assert.True(made.Bool("isDefault"));
         Assert.Equal(shop.Id(), made.Id());
-        Assert.Equal(agent.Id, made.GetProperty("updatedBy").Id());
+        Assert.Equal(agent.Id, made.GetProperty("updatedBy").GetGuid());
         McpAssert.JsonEqual(await W.GetAsync(http, shop.Id()), made, "warehouse_set_default differs from HTTP");
         Assert.Equal(shop.Id(), await Balance.DefaultIdAsync(http));
         var former = await W.GetAsync(http, dw.Id());
         Assert.False(former.Bool("isDefault"));
-        Assert.Equal(agent.Id, former.GetProperty("updatedBy").Id());
+        Assert.Equal(agent.Id, former.GetProperty("updatedBy").GetGuid());
 
         // The tool is safe to repeat (idempotentHint): the same representation again.
         McpAssert.JsonEqual(made, await mcp.OkAsync("warehouse_set_default", new { id = shop.Id() }), "Repeating warehouse_set_default changed the warehouse");
@@ -166,7 +166,7 @@ public class McpDefaultWarehouseBalanceToolTests(XerpFixture app)
         var created = await s.Mcp.OkAsync(o.Tool("create"), o.Body(s.S, (s.S.A, 10, null, 1m)).NoWarehouse(asNull));
 
         Assert.Equal(dw, created.GetProperty("warehouse").Id());
-        Assert.Equal(s.Agent.Id, created.GetProperty("createdBy").Id());
+        Assert.Equal(s.Agent.Id, created.GetProperty("createdBy").GetGuid());
         McpAssert.JsonEqual(await o.GetAsync(s.Http, created.Id()), created, $"{o.Tool("create")} differs from HTTP");
 
         // The linked document made through a tool follows the order.
