@@ -77,3 +77,9 @@ differ, and what may still change once an order is agreed with the other party.
 - Invoices (014) will be created from posted fulfilment documents and will add their own progress
   (invoiced quantity) to order lines.
 - Partner, warehouse, article and unit of measure are `IN_USE` while an order names them.
+
+## Amendment (2026-10-10): "never more than ordered" is a default (ADR-0020)
+Over-receipt and over-delivery become tenant-configurable tolerances (`purchase.overReceiptPercent`,
+`sales.overDeliveryPercent`, default 0; spec 012). Progress is still derived only from posted stock
+documents; with a tolerance above 0 it may exceed the ordered quantity, and the outstanding quantity is then
+0, never negative. The other choices of this ADR are classified in `docs/rules.md`.

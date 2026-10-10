@@ -109,3 +109,10 @@ Known limits, accepted: a bulk import of many documents for one tenant runs one 
 long-running posting (a document of 200 lines) delays that tenant's other stock and order writes for its
 duration. Revisit when a tenant's write volume makes this visible, or with row-level security (019) if the
 runtime role changes what can be locked.
+
+## Amendment (2026-10-10): the rules of this ADR are defaults (ADR-0020)
+"Negative stock is always refused", six decimals and the fixed number patterns are business rules, not
+invariants: they become tenant-configurable rules with these values as defaults (`docs/rules.md`;
+`stock.negativeStock` and `quantity.decimals` with spec 012). What stays absolute: the ledger is append-only,
+a posted document is immutable, stock on hand is the sum of the ledger. A change of a rule takes the
+per-tenant lock (condition 1).
