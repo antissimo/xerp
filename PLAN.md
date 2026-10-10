@@ -3,7 +3,7 @@
 Glavni pregled petlje arhitekt -> tester -> builder -> review -> merge. Redoslijed koraka dolazi iz
 `docs/roadmap.md` (piše ga arhitekt); ovaj dokument vodi orkestrator i ažurira ga nakon svakog koraka.
 
-Zadnje ažuriranje: 2026-10-10 12:10
+Zadnje ažuriranje: 2026-10-10 12:15
 
 ## Opseg MVP-a
 
@@ -42,24 +42,27 @@ Oznake: ✅ gotovo · 🔄 u tijeku · ⬜ nije započeto · — ne primjenjuje 
 | | **— granica MVP-a (dovršen) — 011 je prva značajka nakon MVP-a, na zahtjev vlasnika; ostalo ispod čeka —** | | | | | |
 | 011 | Zadano (centralno) skladište, lager lista po skladištu, spremljeni saldo zaliha | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 011a | Partner u zaglavlju skladišnog dokumenta (primka: dobavljač, izdatnica: kupac) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 012 | Vrednovanje zaliha | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 013 | Kontni plan + temeljnice | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 014 | Brojčane serije dokumenata | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 015 | Porezi + izlazni/ulazni računi | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 016 | Plaćanja i otvorene stavke | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 017 | Audit log *(platforma)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 018 | Dozvole po API ključu *(platforma)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 019 | OpenAPI dokument *(platforma)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 020 | Row-level security *(platforma)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 021 | Rate limiting *(platforma)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 012 | Konfigurabilna pravila: registar, vrijednosti po tenantu, prvih 6 pravila (zalihe i narudžbe) | ✅ | 🔄 | ⬜ | ⬜ | ⬜ |
+| 013 | Konfigurabilna pravila: matični podaci (formati, duljine, obavezna polja) | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 014 | Konfigurabilna pravila: dokumenti (datumi, partner, inventura, cijene, životni ciklus narudžbe) | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 015 | Vrednovanje zaliha | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 016 | Kontni plan + temeljnice | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 017 | Brojčane serije dokumenata | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 018 | Porezi + izlazni/ulazni računi | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 019 | Plaćanja i otvorene stavke | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 020 | Audit log *(platforma)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 021 | Dozvole po API ključu *(platforma)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 022 | OpenAPI dokument *(platforma)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 023 | Row-level security *(platforma)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 024 | Rate limiting *(platforma)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 
 Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 
 ## Što tko trenutno radi
 
-- **Arhitekt:** ADR o konfigurabilnim pravilima, popis svih postojećih pravila (konfigurabilno / invarijanta), spec 012.
+- **Arhitekt:** zaustavljen; čeka kod za 012 (review).
 - **Builder:** zaustavljen; nema otvorenog posla.
-- **Tester:** zaustavljen; nema otvorenog posla.
+- **Tester:** testovi za spec 012 (`tests/012-configurable-rules`).
 
 ## Dnevnik
 
@@ -105,6 +108,7 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 - 2026-10-10 — 011a prošao review (OK; arhitekt pokrenuo 591 unit + 1680 integracijskih testova), spojen u `main` i pushan. Vodič za početak dopunjen s 011 i 011a. Petlja staje: sljedeći specovi (012+) čekaju odluku vlasnika.
 - 2026-10-10 — vlasnik: svaka validacija i svako poslovno pravilo mora biti konfigurabilno po tenantu, uz naše zadane vrijednosti; pravilo upisano u `CLAUDE.md` i vrijedi za sve buduće specove. Arhitekt piše ADR, popis pravila i spec 012.
 - 2026-10-10 — `xerp-web` redizajniran (skill `frontend-design`), dodane lager lista i provjera salda; `xerp-cli` napravljen.
+- 2026-10-10 — ADR-0020 (konfigurabilna pravila), `docs/rules.md` (12 invarijanti, katalog pravila, popis svih pravila 001–011a), stalno pravilo u arhitekturi §11, spec 012 napisan.
 
 ## Odluke vlasnika
 
