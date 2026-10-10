@@ -3,7 +3,7 @@
 Glavni pregled petlje arhitekt -> tester -> builder -> review -> merge. Redoslijed koraka dolazi iz
 `docs/roadmap.md` (piše ga arhitekt); ovaj dokument vodi orkestrator i ažurira ga nakon svakog koraka.
 
-Zadnje ažuriranje: 2026-10-10 12:58
+Zadnje ažuriranje: 2026-10-10 13:15
 
 ## Opseg MVP-a
 
@@ -42,8 +42,8 @@ Oznake: ✅ gotovo · 🔄 u tijeku · ⬜ nije započeto · — ne primjenjuje 
 | | **— granica MVP-a (dovršen) — 011 je prva značajka nakon MVP-a, na zahtjev vlasnika; ostalo ispod čeka —** | | | | | |
 | 011 | Zadano (centralno) skladište, lager lista po skladištu, spremljeni saldo zaliha | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 011a | Partner u zaglavlju skladišnog dokumenta (primka: dobavljač, izdatnica: kupac) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 012 | Konfigurabilna pravila (booleovi prekidači): registar, vrijednosti po tenantu, prvih 6 pravila | ✅ | ✅ | ✅ | 🔄 | ⬜ |
-| 013 | Konfigurabilna pravila: matični podaci (formati, duljine, obavezna polja) | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 012 | Konfigurabilna pravila (booleovi prekidači): registar, vrijednosti po tenantu, prvih 6 pravila | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 013 | Konfigurabilna pravila: matični podaci (formati, duljine, obavezna polja) | 🔄 | ⬜ | ⬜ | ⬜ | ⬜ |
 | 014 | Konfigurabilna pravila: dokumenti (datumi, partner, inventura, cijene, životni ciklus narudžbe) | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 015 | Vrednovanje zaliha | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 016 | Kontni plan + temeljnice | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -60,9 +60,9 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 
 ## Što tko trenutno radi
 
-- **Arhitekt:** review speca 012 i odgovori na pitanja testera i buildera.
-- **Builder:** zaustavljen; kod za 012 gotov (`68ce94f`), čeka ishod reviewa.
-- **Tester:** zaustavljen; testovi za 012 napisani (`07f0596`).
+- **Arhitekt:** piše spec 013 (konfigurabilna pravila: matični podaci).
+- **Builder:** zaustavljen; čeka spec i testove za 013.
+- **Tester:** zaustavljen; čeka spec 013.
 
 ## Dnevnik
 
@@ -111,6 +111,7 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 - 2026-10-10 — ADR-0020 (konfigurabilna pravila), `docs/rules.md` (12 invarijanti, katalog pravila, popis svih pravila 001–011a), stalno pravilo u arhitekturi §11, spec 012 napisan.
 - 2026-10-10 — spec 012 prepravljen na booleove prekidače (`0249eb6`); testovi za 012 napisani (`07f0596`); builder krenuo.
 - 2026-10-10 — kod za 012 gotov (`68ce94f`), na reviewu.
+- 2026-10-10 — review 012: kod prihvaćen, 6 testerovih testova ispravljeno (`c775320`); ponovni review OK; orkestrator pokrenuo 657 unit + 1854 integracijska testa; 012 spojen u `main` i pushan.
 
 ## Odluke vlasnika
 
