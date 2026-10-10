@@ -2,13 +2,17 @@ using System.Globalization;
 using Xerp.Application.Common;
 using Xerp.Domain.Inventory;
 using Xerp.Domain.Orders;
+using Xerp.Domain.Rules;
 
 namespace Xerp.Application.Stock;
 
 /// <summary>What a stock document linked to an order needs to know about that order, read under the tenant's lock.</summary>
 /// <param name="LineArticles">The article of every line of the order, by line number.</param>
-/// <param name="PartnerId">The order's supplier or customer: the partner of every document linked to it (spec 011a, R8).</param>
-public sealed record LinkedOrderFacts(Guid Id, OrderStatus Status, Guid WarehouseId, IReadOnlyDictionary<int, Guid> LineArticles, Guid PartnerId);
+/// <param name="PartnerId">
+/// The order's supplier or customer: the partner of every document linked to it (spec 011a, R8) - null when
+/// the order has none, and then the document has none either (spec 012, R36).
+/// </param>
+public sealed record LinkedOrderFacts(Guid Id, OrderStatus Status, Guid WarehouseId, IReadOnlyDictionary<int, Guid> LineArticles, Guid? PartnerId);
 
 /// <summary>
 /// The checks the link to an order adds to saving and posting a stock document (ADR-0016; spec 009, R21, R24,
@@ -48,6 +52,7 @@ public static class OrderLinkChecks
     /// <c>lines[i].articleId</c> when a line's article is not the article of the order line it names,
     /// <c>partnerId</c> when the request names a partner other than the order's (spec 011a, R9). The partner is
     /// only compared: whatever else the named id is - unknown, inactive, without the role - the answer is the same.
+    /// Against an order without a partner every named partner is another one (spec 012, R36).
     /// </summary>
     /// <param name="lines">The lines of the document; every <c>OrderLineNo</c> is a line of the order.</param>
     /// <param name="partnerId">The partner the request names; null when it names none, which is the order's partner (spec 011a, R8).</param>
@@ -74,15 +79,19 @@ public static class OrderLinkChecks
     }
 
     /// <summary>
-    /// R26, never more than ordered: null when the document is within the outstanding quantities of the order,
-    /// otherwise QUANTITY_EXCEEDS_ORDER with the quantity key of every document line that names an exceeded
-    /// order line. Compared in base units.
+    /// R26; spec 012, R22: null when the document is within the outstanding quantities of the order - and
+    /// always when the tenant allows more than ordered - otherwise QUANTITY_EXCEEDS_ORDER with the quantity key
+    /// of every document line that names an exceeded order line, naming the rule that refused. Compared in
+    /// base units.
     /// </summary>
     /// <param name="lines">Per document line, the order line it names and its base quantity as it posts now.</param>
     /// <param name="outstanding">Per order line number, what can still be fulfilled at this moment.</param>
-    public static AppError? WithinOrder(IReadOnlyList<LineFulfilment> lines, IReadOnlyDictionary<int, decimal> outstanding)
+    /// <param name="rule">The rule of the order's kind: <c>purchase.overReceiptAllowed</c> or <c>sales.overDeliveryAllowed</c>.</param>
+    /// <param name="overFulfilmentAllowed">The tenant's value of that rule.</param>
+    public static AppError? WithinOrder(
+        IReadOnlyList<LineFulfilment> lines, IReadOnlyDictionary<int, decimal> outstanding, RuleDefinition rule, bool overFulfilmentAllowed)
     {
-        var exceeding = OrderProgress.ExceedingLines(lines, outstanding);
+        var exceeding = OrderProgress.ExceedingLines(lines, outstanding, overFulfilmentAllowed);
         if (exceeding.Count == 0)
             return null;
         var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
@@ -96,7 +105,7 @@ public static class OrderLinkChecks
         return new AppError(ErrorCodes.QuantityExceedsOrder,
             "The document would take an order line above its ordered quantity; nothing was posted and the draft is unchanged. "
             + "Read the order (`outstandingBaseQuantity` of its lines is what can still be fulfilled, in base units), lower the quantities and post again.",
-            errors);
+            errors).RefusedBy(rule, overFulfilmentAllowed);
     }
 
     private static string Text(decimal quantity) => QuantityRules.Normalize(quantity).ToString(CultureInfo.InvariantCulture);

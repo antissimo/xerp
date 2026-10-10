@@ -1,3 +1,5 @@
+using Xerp.Domain.Orders;
+
 namespace Xerp.Domain.Inventory;
 
 /// <summary>
@@ -75,27 +77,6 @@ public static class DocumentNumber
     }
 }
 
-/// <summary>
-/// No negative stock (ADR-0012, decision 4; spec 005, R15): for every article of an outgoing document, the sum
-/// of its line quantities must not exceed the stock on hand of that article in the document's warehouse.
-/// </summary>
-public static class StockSufficiency
-{
-    /// <summary>
-    /// The zero-based positions of all lines of every short article, ascending; empty when stock covers the
-    /// document. An article missing from <paramref name="onHand"/> has zero stock.
-    /// </summary>
-    public static IReadOnlyList<int> ShortLines(IReadOnlyList<StockLineValues> lines, IReadOnlyDictionary<Guid, decimal> onHand)
-    {
-        var shortArticles = lines
-            .GroupBy(l => l.ArticleId)
-            .Where(g => g.Sum(l => l.Quantity) > onHand.GetValueOrDefault(g.Key))
-            .Select(g => g.Key)
-            .ToHashSet();
-        return Enumerable.Range(0, lines.Count).Where(i => shortArticles.Contains(lines[i].ArticleId)).ToList();
-    }
-}
-
 /// <summary>A signed quantity of an article in a warehouse: what one ledger entry adds to stock on hand.</summary>
 public readonly record struct StockMovement(Guid ArticleId, Guid WarehouseId, decimal Quantity);
 
@@ -144,17 +125,69 @@ public static class StockMovements
     public static StockMovement Opposite(StockMovement movement) => movement with { Quantity = -movement.Quantity };
 
     /// <summary>
-    /// No negative stock (ADR-0012, decision 4): the articles that some (article, warehouse) pair would go
-    /// below zero for if all <paramref name="movements"/> were applied together. A pair missing from
-    /// <paramref name="onHand"/> has zero stock. Only the net effect per pair counts, never the order.
+    /// The rule <c>stock.negativeStockAllowed</c> for one (article, warehouse) pair (ADR-0012, decision 4;
+    /// spec 012, R17, R18): whether an operation that changes the pair's stock by <paramref name="delta"/> is
+    /// refused. It judges the movement, not the state (ADR-0020, decision 7): a pair that is already below
+    /// zero may be raised, and may not be lowered.
     /// </summary>
-    public static IReadOnlySet<Guid> ShortArticles(
-        IEnumerable<StockMovement> movements, IReadOnlyDictionary<(Guid ArticleId, Guid WarehouseId), decimal> onHand) =>
+    /// <param name="onHand">The pair's stock before the operation.</param>
+    /// <param name="delta">The sum of the entries the operation writes for the pair.</param>
+    /// <param name="negativeStockAllowed">The tenant's value of the rule.</param>
+    public static bool GoesBelowZero(decimal onHand, decimal delta, bool negativeStockAllowed) =>
+        !negativeStockAllowed && delta < 0 && onHand + delta < 0;
+
+    /// <summary>
+    /// The rule <c>sales.reservedStockProtected</c> for one (article, warehouse) pair (ADR-0017; spec 012,
+    /// R26, R27): whether an operation that changes the pair's stock by <paramref name="delta"/> is refused
+    /// because it takes goods that confirmed sales orders reserve - afterwards something is still reserved,
+    /// stock no longer covers it, and this operation made that worse.
+    /// </summary>
+    /// <param name="onHand">The pair's stock before the operation.</param>
+    /// <param name="delta">The sum of the entries the operation writes for the pair.</param>
+    /// <param name="reservedBefore">The pair's reserved quantity before the operation.</param>
+    /// <param name="reservedAfter">The reserved quantity it would have afterwards: a delivery lowers what its own order still awaits.</param>
+    /// <param name="reservedStockProtected">The tenant's value of the rule.</param>
+    public static bool TakesReserved(decimal onHand, decimal delta, decimal reservedBefore, decimal reservedAfter, bool reservedStockProtected)
+    {
+        if (!reservedStockProtected || delta >= 0 || reservedAfter <= 0)
+            return false;
+        var availableBefore = StockAvailability.Available(onHand, reservedBefore);
+        var availableAfter = StockAvailability.Available(onHand + delta, reservedAfter);
+        return availableAfter < 0 && availableAfter < availableBefore;
+    }
+
+    /// <summary>
+    /// The pairs <see cref="GoesBelowZero"/> refuses if all <paramref name="movements"/> were applied
+    /// together, in the order they first appear. A pair missing from <paramref name="onHand"/> has zero
+    /// stock. Only the net effect per pair counts, never the order. This is the one place the comparison is
+    /// made: for an issue, the source of a transfer, a delivery and every reversal.
+    /// </summary>
+    public static IReadOnlyList<(Guid ArticleId, Guid WarehouseId)> ShortPairs(
+        IEnumerable<StockMovement> movements, IReadOnlyDictionary<(Guid ArticleId, Guid WarehouseId), decimal> onHand,
+        bool negativeStockAllowed) =>
         movements
             .GroupBy(m => (m.ArticleId, m.WarehouseId))
-            .Where(g => onHand.GetValueOrDefault(g.Key) + g.Sum(m => m.Quantity) < 0)
-            .Select(g => g.Key.ArticleId)
-            .ToHashSet();
+            .Where(g => GoesBelowZero(onHand.GetValueOrDefault(g.Key), g.Sum(m => m.Quantity), negativeStockAllowed))
+            .Select(g => g.Key)
+            .ToList();
+
+    /// <summary>
+    /// The pairs <see cref="TakesReserved"/> refuses if all <paramref name="movements"/> were applied
+    /// together, in the order they first appear. A pair missing from a dictionary has zero stock, or nothing
+    /// reserved.
+    /// </summary>
+    public static IReadOnlyList<(Guid ArticleId, Guid WarehouseId)> ReservedPairs(
+        IEnumerable<StockMovement> movements, IReadOnlyDictionary<(Guid ArticleId, Guid WarehouseId), decimal> onHand,
+        IReadOnlyDictionary<(Guid ArticleId, Guid WarehouseId), decimal> reservedBefore,
+        IReadOnlyDictionary<(Guid ArticleId, Guid WarehouseId), decimal> reservedAfter,
+        bool reservedStockProtected) =>
+        movements
+            .GroupBy(m => (m.ArticleId, m.WarehouseId))
+            .Where(g => TakesReserved(
+                onHand.GetValueOrDefault(g.Key), g.Sum(m => m.Quantity),
+                reservedBefore.GetValueOrDefault(g.Key), reservedAfter.GetValueOrDefault(g.Key), reservedStockProtected))
+            .Select(g => g.Key)
+            .ToList();
 }
 
 /// <summary>
@@ -163,9 +196,12 @@ public static class StockMovements
 /// </summary>
 public static class CountRules
 {
-    /// <summary>A book quantity is stock on hand: a quantity in base units, never negative.</summary>
+    /// <summary>
+    /// A book quantity is stock on hand: a quantity in base units. It is below zero where the tenant allows
+    /// negative stock (spec 012, R20).
+    /// </summary>
     public static bool IsValidBookQuantity(decimal bookQuantity) =>
-        bookQuantity >= 0 && decimal.Round(bookQuantity, QuantityRules.DecimalPlaces) == bookQuantity;
+        decimal.Round(bookQuantity, QuantityRules.DecimalPlaces) == bookQuantity;
 
     /// <summary>
     /// R3: the zero-based positions of every line whose article is on more than one line, ascending; empty

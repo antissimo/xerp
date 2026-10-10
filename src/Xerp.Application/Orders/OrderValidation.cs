@@ -5,6 +5,7 @@ using Xerp.Application.Warehouses;
 using Xerp.Domain.Common;
 using Xerp.Domain.Inventory;
 using Xerp.Domain.Orders;
+using Xerp.Domain.Rules;
 
 namespace Xerp.Application.Orders;
 
@@ -21,18 +22,20 @@ namespace Xerp.Application.Orders;
 /// <param name="DueDateField">The request field of the due date: <c>expectedDate</c>.</param>
 /// <param name="FulfilmentField">The list filter by progress: <c>receiptStatus</c>.</param>
 /// <param name="LinkField">The field of a stock document that links it to an order of this kind: <c>purchaseOrderId</c>.</param>
+/// <param name="PartnerRequired">The rule that says whether an order of this kind needs a partner (spec 012, R33).</param>
+/// <param name="OverFulfilmentAllowed">The rule that says whether a line of an order of this kind may be fulfilled above its ordered quantity (spec 012, R22).</param>
 public sealed record OrderKind(
     OrderSide Side, string Name, string PartnerWord, string PartnerField, string PartnerRole, string DueDateField,
-    string FulfilmentField, string LinkField, DocumentSeries Series)
+    string FulfilmentField, string LinkField, DocumentSeries Series, RuleDefinition PartnerRequired, RuleDefinition OverFulfilmentAllowed)
 {
     public static readonly OrderKind Purchase = new(
         OrderSide.Purchase, "purchase order", "supplier", "supplierId", "isSupplier", "expectedDate", "receiptStatus",
-        "purchaseOrderId", DocumentSeries.PurchaseOrder);
+        "purchaseOrderId", DocumentSeries.PurchaseOrder, RuleRegistry.PurchasePartnerRequired, RuleRegistry.OverReceiptAllowed);
 
     /// <summary>Spec 010: the mirror of <see cref="Purchase"/>.</summary>
     public static readonly OrderKind Sales = new(
         OrderSide.Sales, "sales order", "customer", "customerId", "isCustomer", "requestedDate", "deliveryStatus",
-        "salesOrderId", DocumentSeries.SalesOrder);
+        "salesOrderId", DocumentSeries.SalesOrder, RuleRegistry.SalesPartnerRequired, RuleRegistry.OverDeliveryAllowed);
 
     public static readonly IReadOnlyList<OrderKind> All = [Purchase, Sales];
 
@@ -43,8 +46,8 @@ public sealed record OrderKind(
 }
 
 /// <summary>
-/// Input rules for orders (spec 009, R1-R9, R36). No I/O. Every invalid field and line is reported together;
-/// errors about a line are keyed by its position in the request, <c>lines[0].unitPrice</c>.
+/// Input rules for orders (spec 009, R1-R9, R36; spec 012, R32, R33). No I/O. Every invalid field and line is
+/// reported together; errors about a line are keyed by its position in the request, <c>lines[0].unitPrice</c>.
 /// </summary>
 public static class OrderValidation
 {
@@ -59,6 +62,14 @@ public static class OrderValidation
 
     private static string LineKey(int index, string field) => StockDocumentValidation.LineKey(index, field);
 
+    /// <param name="partnerRequired">
+    /// The tenant's value of the kind's rule <see cref="OrderKind.PartnerRequired"/>: whether an order without
+    /// a partner is refused. The refusal is part of validation and names the rule (spec 012, R33, R38).
+    /// </param>
+    /// <param name="partnerGiven">
+    /// False when a replace omitted the partner. That is the shape of the request, the same for every tenant
+    /// and whatever the rule's value (spec 012, R32): a replace carries every field, and the partner may be null.
+    /// </param>
     /// <param name="dueDateGiven">False when a replace omitted the due date, which it may not (R4).</param>
     /// <param name="referenceGiven">False when a replace omitted the reference.</param>
     /// <param name="noteGiven">False when a replace omitted the note.</param>
@@ -67,9 +78,9 @@ public static class OrderValidation
     /// <c>WarehouseOmitted</c> with an empty <c>WarehouseId</c> for the operation to resolve. A replace names it (R9).
     /// </param>
     public static Result<OrderValues> Values(
-        OrderKind kind, string? orderDate, string? dueDate, string? partnerId, string? warehouseId, string? reference, string? note,
+        OrderKind kind, bool partnerRequired, string? orderDate, string? dueDate, string? partnerId, string? warehouseId, string? reference, string? note,
         IReadOnlyList<OrderLineInput?>? lines, bool dueDateGiven = true, bool referenceGiven = true, bool noteGiven = true,
-        bool warehouseOptional = false)
+        bool warehouseOptional = false, bool partnerGiven = true)
     {
         var errors = new ValidationErrors();
 
@@ -91,7 +102,24 @@ public static class OrderValidation
                 due = parsed;
         }
 
-        var partner = RequiredId(errors, partnerId, kind.PartnerField, "a partner");
+        // Spec 012, R32, R33: a uuid or null is the shape; whether null is accepted is the tenant's rule.
+        Guid? partner = null;
+        var refusedByPartnerRule = false;
+        if (!partnerGiven)
+            errors.Add(kind.PartnerField, $"{kind.PartnerField} is required (it may be null: an order without a {kind.PartnerWord}).");
+        else if (partnerId is null)
+        {
+            if (!OrderPartnerRules.MayBeSavedWith(null, partnerRequired))
+            {
+                errors.Add(kind.PartnerField,
+                    $"{kind.PartnerField} is required: the rule `{kind.PartnerRequired.Key}` ({kind.PartnerRequired.Name}) is true for this tenant.");
+                refusedByPartnerRule = true;
+            }
+        }
+        else if (Guid.TryParse(partnerId, out var partnerValue))
+            partner = partnerValue;
+        else
+            errors.Add(kind.PartnerField, $"{kind.PartnerField} must be the id (UUID) of a partner, not its code, or null.");
         var warehouse = DefaultWarehouseRules.Named(errors, warehouseId, warehouseOptional);
 
         // R4: as on a stock document (spec 005, R7).
@@ -156,7 +184,11 @@ public static class OrderValidation
         }
 
         if (errors.Any)
-            return errors.ToError();
+        {
+            // R38, R39: the rule is named with exactly the key it produced; what an invariant refused is in no rule's fields.
+            var error = errors.ToError();
+            return refusedByPartnerRule ? error.RefusedBy(kind.PartnerRequired, partnerRequired, [kind.PartnerField]) : error;
+        }
         return new OrderValues(date, due, partner, warehouse ?? default, normalizedReference, normalizedNote, lineValues, WarehouseOmitted: warehouse is null);
     }
 

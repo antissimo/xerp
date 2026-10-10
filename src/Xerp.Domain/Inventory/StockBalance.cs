@@ -16,7 +16,11 @@ public sealed class StockBalance : ITenantOwned
     public Guid WarehouseId { get; private set; }
     public Guid ArticleId { get; private set; }
 
-    /// <summary>Never negative (ADR-0012, decision 4); the database checks it too.</summary>
+    /// <summary>
+    /// The sum of the pair's ledger entries. Below zero where the tenant allows negative stock: whether stock
+    /// may go there is the rule <c>stock.negativeStockAllowed</c>, judged before the entries are written
+    /// (spec 012, R17-R19), and not a property of the balance.
+    /// </summary>
     public decimal Quantity { get; private set; }
 
     /// <summary>The balance of a pair that had no row: zero.</summary>
@@ -24,22 +28,10 @@ public sealed class StockBalance : ITenantOwned
         new() { TenantId = tenantId, WarehouseId = warehouseId, ArticleId = articleId };
 
     /// <summary>Adds the signed quantity of ledger entries of this pair (spec 011, R21).</summary>
-    /// <exception cref="InvalidOperationException">The balance would go below zero; it is unchanged.</exception>
-    public void Add(decimal quantity)
-    {
-        if (Quantity + quantity < 0)
-            throw new InvalidOperationException("A stock balance cannot go below zero.");
-        Quantity += quantity;
-    }
+    public void Add(decimal quantity) => Quantity += quantity;
 
     /// <summary>Replaces the stored quantity by the sum of the pair's ledger entries (spec 011, R25: rebuild).</summary>
-    /// <exception cref="InvalidOperationException">The sum is negative; the balance is unchanged.</exception>
-    public void CorrectTo(decimal ledgerQuantity)
-    {
-        if (ledgerQuantity < 0)
-            throw new InvalidOperationException("A stock balance cannot be below zero.");
-        Quantity = ledgerQuantity;
-    }
+    public void CorrectTo(decimal ledgerQuantity) => Quantity = ledgerQuantity;
 }
 
 /// <summary>What ledger entries do to the stored balances (spec 011, R21).</summary>

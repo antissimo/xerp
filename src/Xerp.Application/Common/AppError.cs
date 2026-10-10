@@ -1,3 +1,5 @@
+using Xerp.Domain.Rules;
+
 namespace Xerp.Application.Common;
 
 /// <summary>Stable, machine-readable error codes (docs/architecture.md section 6). Part of the contract.</summary>
@@ -24,16 +26,35 @@ public static class ErrorCodes
     public const string OrderMismatch = "ORDER_MISMATCH";
     public const string QuantityExceedsOrder = "QUANTITY_EXCEEDS_ORDER";
     public const string DefaultWarehouse = "DEFAULT_WAREHOUSE";
+    public const string StockReserved = "STOCK_RESERVED";
     public const string PayloadTooLarge = "PAYLOAD_TOO_LARGE";
     public const string InternalError = "INTERNAL_ERROR";
 }
 
 /// <summary>
+/// A configurable rule that refused an operation (ADR-0020, decision 9; spec 012, R38): its key, the value it
+/// had for the tenant, and the keys of <c>errors</c> it produced, in their order there.
+/// </summary>
+public sealed record RuleRefusal(string Key, bool Value, IReadOnlyList<string> Fields);
+
+/// <summary>
 /// An expected failure of an Application operation. Clients (HTTP, MCP, CLI) map it to their own
 /// transport; they branch on <see cref="Code"/>, never on <see cref="Detail"/>.
 /// </summary>
-public sealed record AppError(string Code, string Detail, IReadOnlyDictionary<string, string[]>? Errors = null)
+/// <param name="Rules">
+/// The configurable rules that refused, one element per rule; null when none did - the refusal is then an
+/// invariant's, and no switch lifts it.
+/// </param>
+public sealed record AppError(
+    string Code, string Detail, IReadOnlyDictionary<string, string[]>? Errors = null, IReadOnlyList<RuleRefusal>? Rules = null)
 {
+    /// <summary>
+    /// The same error, naming a rule that refused and the value it had. Its fields are
+    /// <paramref name="fields"/>, or every key of <see cref="Errors"/> when the rule alone refused.
+    /// </summary>
+    public AppError RefusedBy(RuleDefinition rule, bool value, IReadOnlyCollection<string>? fields = null) =>
+        this with { Rules = [.. Rules ?? [], new RuleRefusal(rule.Key, value, [.. fields ?? Errors?.Keys ?? []])] };
+
     public static AppError Unauthenticated(string detail = "A valid API key is required.") =>
         new(ErrorCodes.Unauthenticated, detail);
 

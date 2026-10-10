@@ -21,7 +21,6 @@ public static class DbNames
     /// <summary>Spec 011, R2: the partial unique index that allows one default warehouse per tenant.</summary>
     public const string DefaultWarehouseIndex = "IX_Warehouses_TenantId_Default";
     public const string DefaultWarehouseIsActiveCheck = "CK_Warehouses_DefaultIsActive";
-    public const string StockBalanceNotNegativeCheck = "CK_StockBalances_QuantityNotNegative";
 }
 
 /// <summary>Functions that are evaluated by the database, never in memory.</summary>

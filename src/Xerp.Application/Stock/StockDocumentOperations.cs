@@ -5,6 +5,7 @@ using Xerp.Application.Ports;
 using Xerp.Application.Warehouses;
 using Xerp.Domain.Inventory;
 using Xerp.Domain.Orders;
+using Xerp.Domain.Rules;
 
 namespace Xerp.Application.Stock;
 
@@ -24,14 +25,24 @@ namespace Xerp.Application.Stock;
 /// <para>
 /// A receipt may be linked to a purchase order (spec 009). The order is read inside the same lock, which the
 /// order's own writes take too: its status and its outstanding quantities cannot change between the check and
-/// the save, so a line is never received above what was ordered (R26, R30).
+/// the save, so a line is never received above what was ordered unless the tenant allows it (R26, R30).
+/// </para>
+/// <para>
+/// What a posting and a reversal may do to stock and to an order is the tenant's (ADR-0020; spec 012):
+/// <c>stock.negativeStockAllowed</c>, <c>sales.reservedStockProtected</c>, and for a linked document
+/// <c>purchase.overReceiptAllowed</c> / <c>sales.overDeliveryAllowed</c>. Both read the rules once, as their
+/// first step after they hold the tenant's lock - the lock a change of a rule takes too - so each is judged
+/// entirely by the values before a change or entirely by the values after it (R14).
 /// </para>
 /// </summary>
-public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, IClock clock)
+public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, IClock clock, IRules rules)
 {
     private const string WarehouseField = DefaultWarehouseRules.WarehouseField;
     private const string ToWarehouseField = StockDocumentValidation.ToWarehouseField;
     private const string PartnerField = StockPartnerChecks.PartnerField;
+
+    private static readonly IReadOnlyDictionary<(Guid ArticleId, Guid WarehouseId), decimal> NothingReleased =
+        new Dictionary<(Guid ArticleId, Guid WarehouseId), decimal>();
 
     public async Task<Result<PagedResult<StockDocumentSummaryDto>>> ListAsync(ListStockDocumentsInput input, CancellationToken cancellationToken = default)
     {
@@ -228,10 +239,17 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
     /// (spec 009, R24-R26; spec 010, R7) is checked against that order after conversion and before stock: it
     /// must be confirmed, and no order line may be taken above what is outstanding; then the fulfilled
     /// quantities of the order lines rise in the same save.
+    /// <para>
+    /// Three of these checks are the tenant's rules (spec 012, R16, R30), each answering alone and in this
+    /// order: the order's quantities, stock, reservation. A count is judged by none of them (R29): it states
+    /// what is physically there.
+    /// </para>
     /// </summary>
     public Task<Result<StockDocumentDto>> PostAsync(Guid id, CancellationToken cancellationToken = default) =>
         db.SerializedPerTenantAsync<Result<StockDocumentDto>>(async ct =>
         {
+            // Spec 012, R14: one set of rules for the whole posting, read under the tenant's lock.
+            var tenantRules = await rules.ReadAsync(ct);
             var document = await db.StockDocuments.Include(d => d.Lines).SingleOrDefaultAsync(d => d.Id == id, ct);
             if (document is null)
                 return NotFound();
@@ -276,24 +294,43 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
             // close, reopen and every other posting take too, so what is outstanding now is what this posting
             // is held to. The order is asked before stock: a delivery above both is above the order (E3).
             IFulfilledOrder? order = null;
+            // Spec 012, R22: whether a line of the order may go above its ordered quantity - the rule of the
+            // order's kind, with the value of this moment. An unlinked document has no order to ask it for.
+            bool? overFulfilmentAllowed = null;
+            // What the document takes off the reserved quantity of its pairs: a delivery, off what its own sales order still awaits.
+            var released = new Dictionary<(Guid ArticleId, Guid WarehouseId), decimal>();
             if (document.Link is { } link)
             {
+                var kind = OrderKind.Of(link.Side);
                 order = await OrderReads.ForFulfilmentAsync(db, link, ct);
-                if (OrderLinkChecks.Open(OrderKind.Of(link.Side).LinkField, order.Status) is { } notOpen)
+                if (OrderLinkChecks.Open(kind.LinkField, order.Status) is { } notOpen)
                     return notOpen;
                 var fulfilment = converted.Value.Select((c, i) => new LineFulfilment(lines[i].OrderLineNo!.Value, c.BaseQuantity)).ToList();
-                if (OrderLinkChecks.WithinOrder(fulfilment, order.Outstanding) is { } exceeds)
+                overFulfilmentAllowed = tenantRules[kind.OverFulfilmentAllowed];
+                if (OrderLinkChecks.WithinOrder(fulfilment, order.Outstanding, kind.OverFulfilmentAllowed, overFulfilmentAllowed.Value) is { } exceeds)
                     return exceeds;
+                if (link.Side == OrderSide.Sales)
+                {
+                    // Every line of an order line has that order line's article (R21), and the order ships from the document's warehouse.
+                    foreach (var (orderLineNo, quantity) in OrderProgress.Released(fulfilment, order.Outstanding))
+                    {
+                        var pair = (lines.First(l => l.OrderLineNo == orderLineNo).ArticleId, document.WarehouseId);
+                        released[pair] = released.GetValueOrDefault(pair) + quantity;
+                    }
+                }
             }
 
-            // R15, R18; spec 006, R7; spec 007, R19: only what leaves the (source) warehouse is checked, in
-            // base quantities; stock in the destination and the document date play no part. Nor does what is
-            // reserved for sales orders - this one's or another's (spec 010, R9, R17): stock on hand decides.
-            if (document.Type is StockDocumentType.Issue or StockDocumentType.Transfer)
+            // R15, R18; spec 006, R7; spec 007, R19; spec 012, R17, R27: what the document moves is judged in
+            // base quantities, per (article, warehouse) pair; only a pair it lowers can be refused, so stock in
+            // the destination of a transfer and the document date play no part. A count is not judged (R29).
+            if (document.Type != StockDocumentType.Count)
             {
-                var inSource = await OnHandInAsync(document.WarehouseId, lines.Select(l => l.ArticleId), ct);
-                if (StockLineChecks.Sufficiency(converted.Value.Select(c => c.BaseValues).ToList(), inSource) is { } insufficient)
-                    return insufficient;
+                var baseLines = converted.Value.Select(c => c.BaseValues).ToList();
+                var movements = baseLines
+                    .SelectMany(l => StockMovements.OfLine(document.Type, document.WarehouseId, document.ToWarehouseId, l))
+                    .ToList();
+                if (await StockRulesAsync(baseLines, movements, released, tenantRules, reversal: false, ct) is { } refused)
+                    return refused;
             }
 
             var number = await StockReads.NextNumberAsync(db, TenantId(), DocumentSeries.Of(document.Type), ct);
@@ -302,7 +339,7 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
             // Spec 011, R21: the balances move with the entries, in this transaction and under this lock.
             await StockBalances.AddAsync(db, TenantId(), entries, ct);
             // R25: from the base quantities the lines were posted with.
-            order?.Fulfil(document.Fulfilment);
+            order?.Fulfil(document.Fulfilment, overFulfilmentAllowed!.Value);
             await db.SaveChangesAsync(ct);
             return await ToDtoAsync(document, ct);
         }, cancellationToken);
@@ -315,7 +352,8 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
     /// reversal consumes no number. The masters need not be active (R17). Reversing a document linked to an
     /// order gives the quantity back to the order's lines in the same save, whatever the order's status, and
     /// does not change that status (spec 009, R32-R34; spec 010, R14). The reversing document carries the
-    /// original's partner, and nothing about that partner is checked (spec 011a, R14).
+    /// original's partner, and nothing about that partner is checked (spec 011a, R14). Stock, then reservation,
+    /// are the tenant's rules (spec 012, R17, R27, R30); the order's quantities are not judged at a reversal (R24).
     /// </summary>
     public async Task<Result<StockDocumentDto>> ReverseAsync(Guid id, ReverseStockDocumentInput input, CancellationToken cancellationToken = default)
     {
@@ -326,6 +364,8 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
 
         return await db.SerializedPerTenantAsync<Result<StockDocumentDto>>(async ct =>
         {
+            // Spec 012, R14: one set of rules for the whole reversal, read under the tenant's lock.
+            var tenantRules = await rules.ReadAsync(ct);
             var original = await db.StockDocuments.Include(d => d.Lines).SingleOrDefaultAsync(d => d.Id == id, ct);
             if (original is null)
                 return NotFound();
@@ -339,11 +379,11 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
             var movements = entries
                 .Select(e => StockMovements.Opposite(new StockMovement(e.ArticleId, e.WarehouseId, e.Quantity)))
                 .ToList();
-            // R16: no pair may go below zero, whatever stock other warehouses hold.
-            var onHand = await OnHandAsync(movements.Select(m => m.ArticleId), movements.Select(m => m.WarehouseId), ct);
+            // R16; spec 012, R17, R27: per pair, whatever stock other warehouses hold. A reversal gives nothing
+            // back to a sales order that would lower what is reserved: reversing a delivery only raises stock.
             var lines = original.Lines.Select(l => l.BaseValues).ToList();
-            if (StockLineChecks.ReversalSufficiency(lines, movements, onHand) is { } insufficient)
-                return insufficient;
+            if (await StockRulesAsync(lines, movements, NothingReleased, tenantRules, reversal: true, ct) is { } refused)
+                return refused;
 
             if (original.Link is { } link)
                 (await OrderReads.ForFulfilmentAsync(db, link, ct)).TakeBack(original.Fulfilment);
@@ -357,6 +397,40 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
             await db.SaveChangesAsync(ct);
             return await ToDtoAsync(reversal, ct);
         }, cancellationToken);
+    }
+
+    /// <summary>
+    /// The two rules about stock that judge a posting and a reversal (spec 012, R16, R30), in their order and
+    /// each answering alone: <c>stock.negativeStockAllowed</c> (INSUFFICIENT_STOCK), then
+    /// <c>sales.reservedStockProtected</c> (STOCK_RESERVED). Null when neither refuses. Called under the
+    /// tenant's lock: the stock and the reserved quantities read here cannot change before the save.
+    /// </summary>
+    /// <param name="lines">The lines of the document - of the original, for a reversal - in base quantities: they key the errors.</param>
+    /// <param name="movements">What the operation writes to the ledger.</param>
+    /// <param name="released">What the operation itself takes off the reserved quantity of a pair.</param>
+    private async Task<AppError?> StockRulesAsync(
+        IReadOnlyList<StockLineValues> lines, IReadOnlyCollection<StockMovement> movements,
+        IReadOnlyDictionary<(Guid ArticleId, Guid WarehouseId), decimal> released, TenantRules tenantRules, bool reversal,
+        CancellationToken cancellationToken)
+    {
+        // Only a pair that is lowered can be refused by either rule: nothing is read for a document that only brings goods in.
+        var lowered = StockBalanceRules.Changes(movements).Where(c => c.Value < 0).Select(c => c.Key).ToList();
+        if (lowered.Count == 0)
+            return null;
+        var onHand = await OnHandAsync(lowered.Select(p => p.ArticleId), lowered.Select(p => p.WarehouseId), cancellationToken);
+
+        var negativeStockAllowed = tenantRules[RuleRegistry.NegativeStockAllowed];
+        var insufficient = reversal
+            ? StockLineChecks.ReversalSufficiency(lines, movements, onHand, negativeStockAllowed)
+            : StockLineChecks.Sufficiency(lines, movements, onHand, negativeStockAllowed);
+        if (insufficient is not null)
+            return insufficient;
+
+        // Where reserved stock is not protected the reserved quantity decides nothing (R26), so it is not read.
+        var reservedStockProtected = tenantRules[RuleRegistry.ReservedStockProtected];
+        var reservedBefore = reservedStockProtected ? await OrderReads.ReservedAsync(db, lowered, cancellationToken) : [];
+        var reservedAfter = reservedBefore.ToDictionary(r => r.Key, r => r.Value - released.GetValueOrDefault(r.Key));
+        return StockLineChecks.Reservation(lines, movements, onHand, reservedBefore, reservedAfter, reservedStockProtected, reversal);
     }
 
     /// <summary>The inactive warehouses of a document with their error keys: source, then destination.</summary>
@@ -481,8 +555,9 @@ public sealed class StockDocumentOperations(IXerpDb db, ITenantContext context, 
             return lines.Error;
         if (order is not null && OrderLinkChecks.Agreement(values.WarehouseId, lines.Value, order, values.PartnerId) is { } mismatch)
             return mismatch;
-        // Spec 011a, R8: a linked document has its order's partner, whether the request named it or not.
-        return new CheckedReferences(lines.Value, order?.PartnerId ?? values.PartnerId);
+        // Spec 011a, R8: a linked document has its order's partner, whether the request named it or not -
+        // and none when the order has none (spec 012, R36).
+        return new CheckedReferences(lines.Value, order is not null ? order.PartnerId : values.PartnerId);
     }
 
     /// <summary>What documents show of other records: the current code and name of their warehouses and partners, the number of the documents and orders they link to.</summary>

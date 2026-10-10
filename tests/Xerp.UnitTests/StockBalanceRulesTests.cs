@@ -38,14 +38,18 @@ public class StockBalanceRulesTests
     }
 
     [Fact]
-    public void R20_A_balance_never_goes_negative_and_a_refused_change_leaves_it_as_it_was()
+    public void S012_R19_A_balance_follows_the_ledger_below_zero()
     {
+        // Spec 012, section 3: whether stock may go below zero is the tenant's rule, judged before the entries
+        // are written; the balance is their sum, whatever it is.
         var balance = StockBalance.Start(Tenant, W1, A);
         balance.Add(10m);
 
-        Assert.Throws<InvalidOperationException>(() => balance.Add(-10.000001m));
+        balance.Add(-10.000001m);
 
-        Assert.Equal(10m, balance.Quantity);
+        Assert.Equal(-0.000001m, balance.Quantity);
+        balance.Add(3m);
+        Assert.Equal(2.999999m, balance.Quantity);
     }
 
     [Fact]
@@ -57,8 +61,9 @@ public class StockBalanceRulesTests
         balance.CorrectTo(10m);
 
         Assert.Equal(10m, balance.Quantity);
-        Assert.Throws<InvalidOperationException>(() => balance.CorrectTo(-1m));
-        Assert.Equal(10m, balance.Quantity);
+        // Spec 012, R19: also when the ledger sums to less than zero.
+        balance.CorrectTo(-1m);
+        Assert.Equal(-1m, balance.Quantity);
     }
 
     [Fact]

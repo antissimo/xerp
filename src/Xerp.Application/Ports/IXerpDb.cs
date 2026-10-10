@@ -3,6 +3,7 @@ using Xerp.Domain.Catalog;
 using Xerp.Domain.Inventory;
 using Xerp.Domain.Orders;
 using Xerp.Domain.Partners;
+using Xerp.Domain.Rules;
 using Xerp.Domain.Tenancy;
 
 namespace Xerp.Application.Ports;
@@ -37,6 +38,12 @@ public interface IXerpDb
     DbSet<PurchaseOrderLine> PurchaseOrderLines { get; }
     DbSet<SalesOrder> SalesOrders { get; }
     DbSet<SalesOrderLine> SalesOrderLines { get; }
+
+    /// <summary>The values the tenant has set for rules (ADR-0020): a rule without a row is at its default.</summary>
+    DbSet<RuleValue> RuleValues { get; }
+
+    /// <summary>Append-only: a change of a rule is recorded and never altered or deleted (spec 012, R10).</summary>
+    DbSet<RuleChange> RuleChanges { get; }
 
     /// <exception cref="UniqueConstraintViolationException">A unique index rejected the change.</exception>
     /// <exception cref="ForeignKeyViolationException">A foreign key rejected the change.</exception>

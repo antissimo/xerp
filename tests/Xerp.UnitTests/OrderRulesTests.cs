@@ -74,7 +74,7 @@ public class OrderRulesTests
         Assert.Equal(150m, order.Lines[0].LineAmount);
 
         order.Confirm("PO-000001", [10m], Now, Actor);
-        order.Fulfil([new LineFulfilment(1, 20m)]);
+        order.Fulfil([new LineFulfilment(1, 20m)], overFulfilmentAllowed: false);
 
         Assert.Equal(150m, order.Lines[0].LineAmount);
     }
@@ -108,7 +108,7 @@ public class OrderRulesTests
         var order = Confirmed((A, 10m, 1m), (B, 5m, 1m), (A, 5m, 12m));
 
         // Two lines for line 1; line 3 was ordered in boxes (60) and is received in base units.
-        order.Fulfil([new LineFulfilment(1, 6m), new LineFulfilment(3, 24m), new LineFulfilment(1, 4m)]);
+        order.Fulfil([new LineFulfilment(1, 6m), new LineFulfilment(3, 24m), new LineFulfilment(1, 4m)], overFulfilmentAllowed: false);
 
         Assert.Equal([10m, 0m, 24m], order.Lines.Select(l => l.FulfilledBaseQuantity));
         Assert.Equal(0m, order.Outstanding[1]);
@@ -121,8 +121,8 @@ public class OrderRulesTests
     {
         var outstanding = new Dictionary<int, decimal> { [1] = 10m };
 
-        Assert.Empty(OrderProgress.ExceedingLines([new LineFulfilment(1, 10m)], outstanding));
-        Assert.Equal([0], OrderProgress.ExceedingLines([new LineFulfilment(1, 10.000001m)], outstanding));
+        Assert.Empty(OrderProgress.ExceedingLines([new LineFulfilment(1, 10m)], outstanding, overFulfilmentAllowed: false));
+        Assert.Equal([0], OrderProgress.ExceedingLines([new LineFulfilment(1, 10.000001m)], outstanding, overFulfilmentAllowed: false));
     }
 
     [Fact]
@@ -131,23 +131,23 @@ public class OrderRulesTests
         var outstanding = new Dictionary<int, decimal> { [1] = 10m, [2] = 5m, [3] = 3m };
 
         // Each of the two lines for line 1 is within, together they are above (E11).
-        Assert.Equal([0, 1], OrderProgress.ExceedingLines([new LineFulfilment(1, 6m), new LineFulfilment(1, 5m)], outstanding));
-        Assert.Empty(OrderProgress.ExceedingLines([new LineFulfilment(1, 6m), new LineFulfilment(1, 4m)], outstanding));
+        Assert.Equal([0, 1], OrderProgress.ExceedingLines([new LineFulfilment(1, 6m), new LineFulfilment(1, 5m)], outstanding, overFulfilmentAllowed: false));
+        Assert.Empty(OrderProgress.ExceedingLines([new LineFulfilment(1, 6m), new LineFulfilment(1, 4m)], outstanding, overFulfilmentAllowed: false));
         // One line within and one above (E12): only the second.
         Assert.Equal([1], OrderProgress.ExceedingLines(
-            [new LineFulfilment(3, 3m), new LineFulfilment(2, 6m), new LineFulfilment(1, 2m)], outstanding));
+            [new LineFulfilment(3, 3m), new LineFulfilment(2, 6m), new LineFulfilment(1, 2m)], outstanding, overFulfilmentAllowed: false));
         // A line the order does not have has nothing outstanding.
-        Assert.Equal([0], OrderProgress.ExceedingLines([new LineFulfilment(9, 1m)], outstanding));
+        Assert.Equal([0], OrderProgress.ExceedingLines([new LineFulfilment(9, 1m)], outstanding, overFulfilmentAllowed: false));
     }
 
     [Fact]
     public void R26_The_order_refuses_a_receipt_above_what_is_outstanding_and_keeps_what_it_had()
     {
         var order = Confirmed((A, 10m, 1m), (B, 5m, 1m));
-        order.Fulfil([new LineFulfilment(1, 4m)]);
+        order.Fulfil([new LineFulfilment(1, 4m)], overFulfilmentAllowed: false);
 
         // Line 2 is within; nothing of the document counts.
-        Assert.Throws<InvalidOperationException>(() => order.Fulfil([new LineFulfilment(2, 5m), new LineFulfilment(1, 7m)]));
+        Assert.Throws<InvalidOperationException>(() => order.Fulfil([new LineFulfilment(2, 5m), new LineFulfilment(1, 7m)], overFulfilmentAllowed: false));
 
         Assert.Equal([4m, 0m], order.Lines.Select(l => l.FulfilledBaseQuantity));
     }
@@ -156,21 +156,21 @@ public class OrderRulesTests
     public void R33_A_reversed_receipt_no_longer_counts_and_the_quantity_can_be_received_again()
     {
         var order = Confirmed((A, 10m, 1m));
-        order.Fulfil([new LineFulfilment(1, 10m)]);
-        Assert.Throws<InvalidOperationException>(() => order.Fulfil([new LineFulfilment(1, 0.000001m)]));
+        order.Fulfil([new LineFulfilment(1, 10m)], overFulfilmentAllowed: false);
+        Assert.Throws<InvalidOperationException>(() => order.Fulfil([new LineFulfilment(1, 0.000001m)], overFulfilmentAllowed: false));
 
         order.TakeBack([new LineFulfilment(1, 10m)]);
 
         Assert.Equal(0m, order.Lines[0].FulfilledBaseQuantity);
         Assert.Equal(10m, order.Outstanding[1]);
-        order.Fulfil([new LineFulfilment(1, 10m)]);
+        order.Fulfil([new LineFulfilment(1, 10m)], overFulfilmentAllowed: false);
     }
 
     [Fact]
     public void R34_A_receipt_against_a_closed_order_can_be_taken_back_and_the_order_stays_closed()
     {
         var order = Confirmed((A, 10m, 1m));
-        order.Fulfil([new LineFulfilment(1, 4m)]);
+        order.Fulfil([new LineFulfilment(1, 4m)], overFulfilmentAllowed: false);
         order.Close(Now, Actor);
 
         order.TakeBack([new LineFulfilment(1, 4m)]);
@@ -184,7 +184,7 @@ public class OrderRulesTests
     public void R27_Received_never_leaves_zero_to_ordered()
     {
         var order = Confirmed((A, 10m, 1m));
-        order.Fulfil([new LineFulfilment(1, 4m)]);
+        order.Fulfil([new LineFulfilment(1, 4m)], overFulfilmentAllowed: false);
 
         Assert.Throws<InvalidOperationException>(() => order.TakeBack([new LineFulfilment(1, 5m)]));
         Assert.Throws<InvalidOperationException>(() => order.TakeBack([new LineFulfilment(2, 1m)]));
@@ -195,14 +195,14 @@ public class OrderRulesTests
     public void R31_Only_a_confirmed_order_is_received_against()
     {
         var draft = Draft(new OrderLineEntry(A, Pcs, 10m, 1m));
-        Assert.Throws<InvalidOperationException>(() => draft.Fulfil([new LineFulfilment(1, 1m)]));
+        Assert.Throws<InvalidOperationException>(() => draft.Fulfil([new LineFulfilment(1, 1m)], overFulfilmentAllowed: false));
 
         var closed = Confirmed((A, 10m, 1m));
         closed.Close(Now, Actor);
-        Assert.Throws<InvalidOperationException>(() => closed.Fulfil([new LineFulfilment(1, 1m)]));
+        Assert.Throws<InvalidOperationException>(() => closed.Fulfil([new LineFulfilment(1, 1m)], overFulfilmentAllowed: false));
 
         closed.Reopen();
-        closed.Fulfil([new LineFulfilment(1, 1m)]);
+        closed.Fulfil([new LineFulfilment(1, 1m)], overFulfilmentAllowed: false);
     }
 
     // ---- receipt status (R29)
@@ -224,10 +224,10 @@ public class OrderRulesTests
         var order = Confirmed((A, 10m, 1m), (B, 5m, 1m));
         Assert.Equal(FulfilmentStatus.None, order.FulfilmentStatus);
 
-        order.Fulfil([new LineFulfilment(1, 10m)]);
+        order.Fulfil([new LineFulfilment(1, 10m)], overFulfilmentAllowed: false);
         Assert.Equal(FulfilmentStatus.Partial, order.FulfilmentStatus);
 
-        order.Fulfil([new LineFulfilment(2, 5m)]);
+        order.Fulfil([new LineFulfilment(2, 5m)], overFulfilmentAllowed: false);
         Assert.Equal(FulfilmentStatus.Full, order.FulfilmentStatus);
         Assert.Equal(OrderStatus.Confirmed, order.Status);
 
@@ -327,7 +327,7 @@ public class OrderRulesTests
     public void R15_R16_Close_and_reopen_change_nothing_but_the_status_and_who_closed()
     {
         var order = Confirmed((A, 10m, 1m));
-        order.Fulfil([new LineFulfilment(1, 4m)]);
+        order.Fulfil([new LineFulfilment(1, 4m)], overFulfilmentAllowed: false);
         var closer = Guid.NewGuid();
         var closedAt = Now.AddDays(1);
 

@@ -244,8 +244,8 @@ public class StockDocumentValidationTests
         var onHand = new Dictionary<Guid, decimal> { [A] = 10m };
         List<StockLineValues> lines = [new(A, 6m), new(B, 1m), new(A, 4m)];
 
-        Assert.Null(StockLineChecks.Sufficiency([new(A, 6m), new(A, 4m)], onHand));
-        AssertError(StockLineChecks.Sufficiency(lines, onHand), ErrorCodes.InsufficientStock, "lines[1].quantity");
-        AssertError(StockLineChecks.Sufficiency([new(A, 6m), new(A, 6m)], onHand), ErrorCodes.InsufficientStock, "lines[0].quantity", "lines[1].quantity");
+        Assert.Null(StockTestSupport.IssueSufficiency([new(A, 6m), new(A, 4m)], onHand));
+        AssertError(StockTestSupport.IssueSufficiency(lines, onHand), ErrorCodes.InsufficientStock, "lines[1].quantity");
+        AssertError(StockTestSupport.IssueSufficiency([new(A, 6m), new(A, 6m)], onHand), ErrorCodes.InsufficientStock, "lines[0].quantity", "lines[1].quantity");
     }
 }

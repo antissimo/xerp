@@ -253,24 +253,28 @@ public class StockTransferReversalRulesTests
 
     // ---- no negative stock by reversal (R16)
 
+    /// <summary>The articles of the pairs that go below zero where the tenant does not allow negative stock (the default).</summary>
+    private static Guid[] ShortArticles(StockMovement[] movements, Dictionary<(Guid, Guid), decimal> onHand) =>
+        StockMovements.ShortPairs(movements, onHand, negativeStockAllowed: false).Select(p => p.ArticleId).ToArray();
+
     [Fact]
     public void R16_A_pair_that_would_go_below_zero_makes_its_article_short()
     {
         var onHand = new Dictionary<(Guid, Guid), decimal> { [(A, W1)] = 60, [(B, W1)] = 5, [(A, W2)] = 20 };
 
         // Reversing a receipt of 100 A after 40 left: short. Of 5 B with 5 on hand: covered.
-        Assert.Equal([A], StockMovements.ShortArticles([new(A, W1, -100), new(B, W1, -5)], onHand));
+        Assert.Equal([A], ShortArticles([new(A, W1, -100), new(B, W1, -5)], onHand));
         // Exactly what is on hand may go.
-        Assert.Empty(StockMovements.ShortArticles([new(A, W1, -60)], onHand));
-        Assert.Equal([A], StockMovements.ShortArticles([new(A, W1, -60.000001m)], onHand));
+        Assert.Empty(ShortArticles([new(A, W1, -60)], onHand));
+        Assert.Equal([A], ShortArticles([new(A, W1, -60.000001m)], onHand));
         // Several movements of one pair count together.
-        Assert.Equal([A], StockMovements.ShortArticles([new(A, W1, -40), new(A, W1, -40)], onHand));
+        Assert.Equal([A], ShortArticles([new(A, W1, -40), new(A, W1, -40)], onHand));
         // Reversing an issue only adds: always covered, also for a pair without stock.
-        Assert.Empty(StockMovements.ShortArticles([new(A, W1, 40), new(B, W2, 1)], onHand));
+        Assert.Empty(ShortArticles([new(A, W1, 40), new(B, W2, 1)], onHand));
         // Reversing a transfer W1 -> W2 needs the goods in the destination; plenty in the source does not help.
-        Assert.Equal([A], StockMovements.ShortArticles([new(A, W1, 30), new(A, W2, -30)], onHand));
-        Assert.Empty(StockMovements.ShortArticles([new(A, W1, 20), new(A, W2, -20)], onHand));
+        Assert.Equal([A], ShortArticles([new(A, W1, 30), new(A, W2, -30)], onHand));
+        Assert.Empty(ShortArticles([new(A, W1, 20), new(A, W2, -20)], onHand));
         // A pair that has no stock is at zero.
-        Assert.Equal([B], StockMovements.ShortArticles([new(B, W2, -0.000001m)], onHand));
+        Assert.Equal([B], ShortArticles([new(B, W2, -0.000001m)], onHand));
     }
 }

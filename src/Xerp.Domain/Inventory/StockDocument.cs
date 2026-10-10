@@ -298,7 +298,7 @@ public sealed class StockDocument : ITenantOwned
             if (CountRules.RepeatedLines(lines.Select(l => l.ArticleId).ToList()).Count > 0)
                 throw new ArgumentException("A count names each article at most once.", nameof(lines));
             if (bookQuantities is null || bookQuantities.Count != lines.Count || bookQuantities.Any(b => !CountRules.IsValidBookQuantity(b)))
-                throw new ArgumentException("A count needs the book quantity of every line: stock on hand, never negative.", nameof(bookQuantities));
+                throw new ArgumentException("A count needs the book quantity of every line: stock on hand.", nameof(bookQuantities));
         }
         else if (bookQuantities is not null)
             throw new ArgumentException("Only a count records book quantities.", nameof(bookQuantities));

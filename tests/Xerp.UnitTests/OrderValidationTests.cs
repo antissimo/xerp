@@ -4,6 +4,7 @@ using Xerp.Application.Stock;
 using Xerp.Domain.Catalog;
 using Xerp.Domain.Inventory;
 using Xerp.Domain.Orders;
+using Xerp.Domain.Rules;
 
 namespace Xerp.UnitTests;
 
@@ -22,7 +23,7 @@ public class OrderValidationTests
     private static OrderLineInput Line(decimal? quantity = 1m, decimal? unitPrice = 1m) => new(A.ToString(), quantity, unitPrice);
 
     private static Result<OrderValues> Values(string? expectedDate = null, params OrderLineInput[] lines) =>
-        OrderValidation.Values(OrderKind.Purchase, "2026-10-09", expectedDate, Supplier, Warehouse, null, null, lines.Length == 0 ? [Line()] : lines);
+        OrderValidation.Values(OrderKind.Purchase, true, "2026-10-09", expectedDate, Supplier, Warehouse, null, null, lines.Length == 0 ? [Line()] : lines);
 
     private static void AssertKeys<T>(Result<T> result, string code, params string[] keys) where T : notnull
     {
@@ -45,7 +46,7 @@ public class OrderValidationTests
         AssertKeys(Values("2026-10-08"), ErrorCodes.ValidationFailed, "expectedDate");
         AssertKeys(Values("2026-02-30"), ErrorCodes.ValidationFailed, "expectedDate");
         AssertKeys(
-            OrderValidation.Values(OrderKind.Purchase, "2026-02-30", "2026-10-08", "abc", null, null, null, [Line()]),
+            OrderValidation.Values(OrderKind.Purchase, true, "2026-02-30", "2026-10-08", "abc", null, null, null, [Line()]),
             ErrorCodes.ValidationFailed, "orderDate", "supplierId", "warehouseId");
     }
 
@@ -53,7 +54,7 @@ public class OrderValidationTests
     public void R4_A_replace_must_give_expected_date_reference_and_note_though_each_may_be_null()
     {
         var omitted = OrderValidation.Values(
-            OrderKind.Purchase, "2026-10-09", null, Supplier, Warehouse, null, null, [Line()],
+            OrderKind.Purchase, true, "2026-10-09", null, Supplier, Warehouse, null, null, [Line()],
             dueDateGiven: false, referenceGiven: false, noteGiven: false);
         AssertKeys(omitted, ErrorCodes.ValidationFailed, "expectedDate", "reference", "note");
     }
@@ -176,9 +177,9 @@ public class OrderValidationTests
     public void R26_E11_E12_Every_document_line_naming_an_exceeded_order_line_is_reported_and_no_other()
     {
         var outstanding = new Dictionary<int, decimal> { [1] = 10m, [2] = 5m };
-        Assert.Null(OrderLinkChecks.WithinOrder([new(1, 6m), new(1, 4m), new(2, 5m)], outstanding));
-        AssertKeys(OrderLinkChecks.WithinOrder([new(1, 6m), new(1, 5m)], outstanding), ErrorCodes.QuantityExceedsOrder, "lines[0].quantity", "lines[1].quantity");
-        AssertKeys(OrderLinkChecks.WithinOrder([new(1, 3m), new(2, 5.000001m), new(1, 2m)], outstanding), ErrorCodes.QuantityExceedsOrder, "lines[1].quantity");
+        Assert.Null(OrderLinkChecks.WithinOrder([new(1, 6m), new(1, 4m), new(2, 5m)], outstanding, RuleRegistry.OverReceiptAllowed, overFulfilmentAllowed: false));
+        AssertKeys(OrderLinkChecks.WithinOrder([new(1, 6m), new(1, 5m)], outstanding, RuleRegistry.OverReceiptAllowed, overFulfilmentAllowed: false), ErrorCodes.QuantityExceedsOrder, "lines[0].quantity", "lines[1].quantity");
+        AssertKeys(OrderLinkChecks.WithinOrder([new(1, 3m), new(2, 5.000001m), new(1, 2m)], outstanding, RuleRegistry.OverReceiptAllowed, overFulfilmentAllowed: false), ErrorCodes.QuantityExceedsOrder, "lines[1].quantity");
     }
 
     [Fact]

@@ -83,7 +83,7 @@ public sealed record StockDocumentSummaryDto(
 /// <c>IncomingQuantity</c> is what confirmed purchase orders still expect into the warehouse, in base units
 /// (spec 009, R35); <c>ReservedQuantity</c> what confirmed sales orders shipping from it still owe, and
 /// <c>AvailableQuantity</c> is <c>Quantity</c> minus that, possibly negative (spec 010, R15, R16). An order
-/// never changes <c>Quantity</c>, and a reservation blocks nothing.
+/// never changes <c>Quantity</c>, and by default a reservation blocks nothing (rule <c>sales.reservedStockProtected</c>).
 /// </summary>
 public sealed record StockOnHandDto(
     ReferenceSummary Article, ReferenceSummary Warehouse, ReferenceSummary Unit, decimal Quantity, decimal IncomingQuantity,

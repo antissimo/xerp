@@ -3,6 +3,7 @@ using Xerp.Application.Common;
 using Xerp.Domain.Catalog;
 using Xerp.Domain.Inventory;
 using Xerp.Domain.Orders;
+using Xerp.Domain.Rules;
 
 namespace Xerp.Application.Stock;
 
@@ -201,27 +202,99 @@ public static class StockLineChecks
     }
 
     /// <summary>
-    /// No negative stock (R15; spec 007, R19): null when stock covers the outgoing lines, otherwise
-    /// INSUFFICIENT_STOCK with the quantity key of every line of every short article.
+    /// The rule <c>stock.negativeStockAllowed</c> at posting (R15; spec 006, R7; spec 007, R19; spec 012, R17,
+    /// R18): null when no (article, warehouse) pair is lowered to below zero by the document's
+    /// <paramref name="movements"/> - and always when the tenant allows negative stock - otherwise
+    /// INSUFFICIENT_STOCK with the quantity key of every line of every short article, naming the rule.
     /// </summary>
     /// <param name="lines">The lines in base quantities.</param>
-    public static AppError? Sufficiency(IReadOnlyList<StockLineValues> lines, IReadOnlyDictionary<Guid, decimal> onHand)
+    /// <param name="movements">What posting the lines moves, in base quantities.</param>
+    /// <param name="onHand">Stock on hand of the pairs the movements touch; a missing pair has none.</param>
+    /// <param name="negativeStockAllowed">The tenant's value of the rule.</param>
+    public static AppError? Sufficiency(
+        IReadOnlyList<StockLineValues> lines, IReadOnlyCollection<StockMovement> movements,
+        IReadOnlyDictionary<(Guid ArticleId, Guid WarehouseId), decimal> onHand, bool negativeStockAllowed) =>
+        Short(lines, movements, onHand, negativeStockAllowed,
+            (taken, there) => $"The document takes {Text(taken)} of this article in total, in its base unit; {Text(there)} is on hand in the warehouse.",
+            "Stock on hand does not cover the document; nothing was posted and the draft is unchanged. "
+            + "Check stock on hand, then lower the quantities or receive stock first, and post again.");
+
+    /// <summary>
+    /// The same rule at a reversal (spec 006, R16; spec 012, R17): null when no pair is lowered to below zero
+    /// by the reversing <paramref name="movements"/>, otherwise INSUFFICIENT_STOCK with the quantity key of
+    /// every line of the original that names a short article, naming the rule.
+    /// </summary>
+    /// <param name="originalLines">The posted lines of the original in base quantities, in line order.</param>
+    public static AppError? ReversalSufficiency(
+        IReadOnlyList<StockLineValues> originalLines, IReadOnlyCollection<StockMovement> movements,
+        IReadOnlyDictionary<(Guid ArticleId, Guid WarehouseId), decimal> onHand, bool negativeStockAllowed) =>
+        Short(originalLines, movements, onHand, negativeStockAllowed,
+            (taken, there) => $"The reversal takes {Text(taken)} of this article back out of the warehouse it was brought into; only {Text(there)} is still on hand there.",
+            "The goods this document brought in have already left: reversing it would make stock negative. "
+            + "Nothing was reversed and the document is still posted. Reverse the later documents that took the goods out first, "
+            + "or receive stock, then reverse again.");
+
+    /// <summary>The one refusal for stock that would go below zero: posting and reversal differ in their words only.</summary>
+    private static AppError? Short(
+        IReadOnlyList<StockLineValues> lines, IReadOnlyCollection<StockMovement> movements,
+        IReadOnlyDictionary<(Guid ArticleId, Guid WarehouseId), decimal> onHand, bool negativeStockAllowed,
+        Func<decimal, decimal, string> message, string detail)
     {
-        var shortLines = StockSufficiency.ShortLines(lines, onHand);
-        if (shortLines.Count == 0)
+        var shortPairs = StockMovements.ShortPairs(movements, onHand, negativeStockAllowed);
+        if (shortPairs.Count == 0)
             return null;
+        var errors = LineErrorsOf(lines, shortPairs, pair => message(Taken(movements, pair), onHand.GetValueOrDefault(pair)));
+        return new AppError(ErrorCodes.InsufficientStock, detail, errors).RefusedBy(RuleRegistry.NegativeStockAllowed, negativeStockAllowed);
+    }
+
+    /// <summary>
+    /// The rule <c>sales.reservedStockProtected</c> at a posting and at a reversal (spec 012, R27, R28): null
+    /// when the <paramref name="movements"/> take nothing that confirmed sales orders reserve - and always when
+    /// the tenant does not protect reserved stock - otherwise STOCK_RESERVED with the quantity key of every
+    /// line with the article of a pair that is taken from, naming the rule.
+    /// </summary>
+    /// <param name="lines">The lines of the document - of the original, for a reversal - in base quantities, in line order.</param>
+    /// <param name="reservedBefore">The reserved quantity of the pairs the movements lower, as it is now.</param>
+    /// <param name="reservedAfter">As it would be after the operation: a delivery lowers what its own order still awaits.</param>
+    /// <param name="reservedStockProtected">The tenant's value of the rule.</param>
+    /// <param name="reversal">True when a posted document is being reversed; it changes the words only.</param>
+    public static AppError? Reservation(
+        IReadOnlyList<StockLineValues> lines, IReadOnlyCollection<StockMovement> movements,
+        IReadOnlyDictionary<(Guid ArticleId, Guid WarehouseId), decimal> onHand,
+        IReadOnlyDictionary<(Guid ArticleId, Guid WarehouseId), decimal> reservedBefore,
+        IReadOnlyDictionary<(Guid ArticleId, Guid WarehouseId), decimal> reservedAfter,
+        bool reservedStockProtected, bool reversal)
+    {
+        var reservedPairs = StockMovements.ReservedPairs(movements, onHand, reservedBefore, reservedAfter, reservedStockProtected);
+        if (reservedPairs.Count == 0)
+            return null;
+        var errors = LineErrorsOf(lines, reservedPairs, pair =>
+            $"The {(reversal ? "reversal" : "document")} takes {Text(Taken(movements, pair))} of this article out of the warehouse, in its base unit; "
+            + $"{Text(onHand.GetValueOrDefault(pair))} is on hand there and {Text(reservedAfter.GetValueOrDefault(pair))} stays reserved for confirmed sales orders.");
+        return new AppError(ErrorCodes.StockReserved,
+            "The goods are reserved for confirmed sales orders: afterwards stock on hand would no longer cover what those orders still await. "
+            + (reversal ? "Nothing was reversed and the document is still posted. " : "Nothing was posted and the draft is unchanged. ")
+            + "Check `availableQuantity` in stock on hand; take less, receive stock first, or deliver against the sales orders instead.",
+            errors).RefusedBy(RuleRegistry.ReservedStockProtected, reservedStockProtected);
+    }
+
+    /// <summary>What the movements take out of a pair in total: the opposite of their sum.</summary>
+    private static decimal Taken(IEnumerable<StockMovement> movements, (Guid ArticleId, Guid WarehouseId) pair) =>
+        -movements.Where(m => (m.ArticleId, m.WarehouseId) == pair).Sum(m => m.Quantity);
+
+    /// <summary>The quantity key of every line whose article is the article of a refused pair, in line order, with the message of the first such pair.</summary>
+    private static Dictionary<string, string[]> LineErrorsOf(
+        IReadOnlyList<StockLineValues> lines, IReadOnlyList<(Guid ArticleId, Guid WarehouseId)> pairs,
+        Func<(Guid ArticleId, Guid WarehouseId), string> message)
+    {
         var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
-        foreach (var index in shortLines)
+        for (var index = 0; index < lines.Count; index++)
         {
             var article = lines[index].ArticleId;
-            var requested = lines.Where(l => l.ArticleId == article).Sum(l => l.Quantity);
-            errors[StockDocumentValidation.LineKey(index, QuantityField)] =
-                [$"The document takes {Text(requested)} of this article in total, in its base unit; {Text(onHand.GetValueOrDefault(article))} is on hand in the warehouse."];
+            if (pairs.Any(p => p.ArticleId == article))
+                errors[StockDocumentValidation.LineKey(index, QuantityField)] = [message(pairs.First(p => p.ArticleId == article))];
         }
-        return new AppError(ErrorCodes.InsufficientStock,
-            "Stock on hand does not cover the document; nothing was posted and the draft is unchanged. "
-            + "Check stock on hand, then lower the quantities or receive stock first, and post again.",
-            errors);
+        return errors;
     }
 
     /// <summary>
@@ -244,40 +317,6 @@ public static class StockLineChecks
             "Stock changed since the count was saved, so the difference it shows is no longer the difference to stock. Nothing was posted "
             + "and the count is still a draft. Read the document, check the counted quantities, save it again (that takes the current "
             + "book quantity) and post again.",
-            errors);
-    }
-
-    /// <summary>
-    /// No negative stock, also by reversal (spec 006, R16): null when every (article, warehouse) pair stays at
-    /// or above zero after the reversing <paramref name="movements"/>, otherwise INSUFFICIENT_STOCK with the
-    /// quantity key of every line of the original that names a short article.
-    /// </summary>
-    /// <param name="originalLines">The posted lines of the original in base quantities, in line order.</param>
-    public static AppError? ReversalSufficiency(
-        IReadOnlyList<StockLineValues> originalLines, IReadOnlyCollection<StockMovement> movements,
-        IReadOnlyDictionary<(Guid ArticleId, Guid WarehouseId), decimal> onHand)
-    {
-        var shortArticles = StockMovements.ShortArticles(movements, onHand);
-        if (shortArticles.Count == 0)
-            return null;
-        var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
-        for (var index = 0; index < originalLines.Count; index++)
-        {
-            var article = originalLines[index].ArticleId;
-            if (!shortArticles.Contains(article))
-                continue;
-            var worst = movements
-                .Where(m => m.ArticleId == article)
-                .GroupBy(m => m.WarehouseId)
-                .Select(g => (Needed: -g.Sum(m => m.Quantity), OnHand: onHand.GetValueOrDefault((article, g.Key))))
-                .First(p => p.Needed > p.OnHand);
-            errors[StockDocumentValidation.LineKey(index, QuantityField)] =
-                [$"The reversal takes {Text(worst.Needed)} of this article back out of the warehouse it was brought into; only {Text(worst.OnHand)} is still on hand there."];
-        }
-        return new AppError(ErrorCodes.InsufficientStock,
-            "The goods this document brought in have already left: reversing it would make stock negative. "
-            + "Nothing was reversed and the document is still posted. Reverse the later documents that took the goods out first, "
-            + "or receive stock, then reverse again.",
             errors);
     }
 

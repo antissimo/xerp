@@ -10,8 +10,8 @@ namespace Xerp.Application.Orders;
 /// Everything they do is <see cref="OrderOperations{TOrder,TLine,TDto,TSummary}"/>; here are only the names a
 /// purchase order gives to its supplier, its expected date and what was received.
 /// </summary>
-public sealed class PurchaseOrderOperations(IXerpDb db, ITenantContext context, IClock clock)
-    : OrderOperations<PurchaseOrder, PurchaseOrderLine, PurchaseOrderDto, PurchaseOrderSummaryDto>(db, context, clock, OrderKind.Purchase)
+public sealed class PurchaseOrderOperations(IXerpDb db, ITenantContext context, IClock clock, IRules rules)
+    : OrderOperations<PurchaseOrder, PurchaseOrderLine, PurchaseOrderDto, PurchaseOrderSummaryDto>(db, context, clock, rules, OrderKind.Purchase)
 {
     private readonly IXerpDb _db = db;
 
@@ -40,7 +40,8 @@ public sealed class PurchaseOrderOperations(IXerpDb db, ITenantContext context, 
 
     private static OrderInput Values(ReplacePurchaseOrderInput input) => new(
         input.OrderDate, input.ExpectedDate, input.SupplierId, input.WarehouseId, input.Reference, input.Note, input.Lines,
-        input.Has(nameof(input.ExpectedDate)), input.Has(nameof(input.Reference)), input.Has(nameof(input.Note)));
+        input.Has(nameof(input.ExpectedDate)), input.Has(nameof(input.Reference)), input.Has(nameof(input.Note)),
+        PartnerGiven: input.Has(nameof(input.SupplierId)));
 
     protected override PurchaseOrder NewOrder(OrderValues values, IReadOnlyList<OrderLineEntry> lines, DateTime now, Guid actorKeyId) =>
         PurchaseOrder.Create(

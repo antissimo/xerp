@@ -12,6 +12,14 @@ namespace Xerp.Application.Orders;
 /// </summary>
 internal static class OrderReads
 {
+    /// <summary>What one line of a confirmed order has outstanding, with its article and the order's warehouse.</summary>
+    public sealed class OutstandingLine
+    {
+        public Guid ArticleId { get; init; }
+        public Guid WarehouseId { get; init; }
+        public decimal Quantity { get; init; }
+    }
+
     /// <summary>The order of the current tenant a link names, as a linked document sees it at saving; null when there is none of that kind.</summary>
     public static Task<LinkedOrderFacts?> FactsAsync(IXerpDb db, OrderLink link, CancellationToken cancellationToken) => link.Side switch
     {
@@ -41,6 +49,41 @@ internal static class OrderReads
         }
         return numbers;
     }
+
+    /// <summary>
+    /// The reserved quantity (spec 010, R15) of the pairs of the given articles and warehouses, as it is now:
+    /// what the lines of confirmed sales orders shipping from the warehouse still await. A pair nothing is
+    /// reserved for is absent. Read under the tenant's lock by the posting or reversal that is judged by it
+    /// (spec 012, R27).
+    /// </summary>
+    public static async Task<Dictionary<(Guid ArticleId, Guid WarehouseId), decimal>> ReservedAsync(
+        IXerpDb db, IReadOnlyCollection<(Guid ArticleId, Guid WarehouseId)> pairs, CancellationToken cancellationToken)
+    {
+        if (pairs.Count == 0)
+            return [];
+        var articleIds = pairs.Select(p => p.ArticleId).Distinct().ToList();
+        var warehouseIds = pairs.Select(p => p.WarehouseId).Distinct().ToList();
+        var lines = await Outstanding<SalesOrder, SalesOrderLine>(db.SalesOrders, db.SalesOrderLines)
+            .Where(l => articleIds.Contains(l.ArticleId) && warehouseIds.Contains(l.WarehouseId))
+            .ToListAsync(cancellationToken);
+        return lines
+            .GroupBy(l => (l.ArticleId, l.WarehouseId))
+            .Where(g => pairs.Contains(g.Key))
+            .ToDictionary(g => g.Key, g => g.Sum(l => l.Quantity));
+    }
+
+    /// <summary>
+    /// What the lines of the confirmed orders of one kind have outstanding - the rule of
+    /// <see cref="OrderProgress.Outstanding"/>, asked of the database: ordered minus fulfilled, and nothing
+    /// for a line fulfilled to or above its ordered quantity (spec 012, R23). The same query gives the
+    /// incoming quantity from purchase orders and the reserved quantity from sales orders.
+    /// </summary>
+    public static IQueryable<OutstandingLine> Outstanding<TOrder, TLine>(IQueryable<TOrder> orders, IQueryable<TLine> lines)
+        where TOrder : Order<TLine> where TLine : OrderLine =>
+        from l in lines.AsNoTracking()
+        join o in orders.AsNoTracking() on l.OrderId equals o.Id
+        where o.Status == OrderStatus.Confirmed && l.FulfilledBaseQuantity < l.BaseQuantity
+        select new OutstandingLine { ArticleId = l.ArticleId, WarehouseId = o.WarehouseId, Quantity = l.BaseQuantity!.Value - l.FulfilledBaseQuantity };
 
     /// <summary>Whether an order of any kind names the partner (spec 009, R37; spec 010, R21).</summary>
     public static async Task<bool> AnyForPartnerAsync(IXerpDb db, Guid partnerId, CancellationToken cancellationToken) =>
