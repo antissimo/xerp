@@ -60,9 +60,9 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 
 ## Što tko trenutno radi
 
-- **Arhitekt:** zaustavljen; čeka kod za 012 (review).
+- **Arhitekt:** usklađuje ADR-0020, `docs/rules.md` i spec 012 s odlukom da su pravila booleovi.
 - **Builder:** zaustavljen; nema otvorenog posla.
-- **Tester:** testovi za spec 012 (`tests/012-configurable-rules`).
+- **Tester:** pauziran dok se spec 012 ne uskladi; zatim testovi za 012.
 
 ## Dnevnik
 
@@ -113,6 +113,9 @@ Napomena: testove za 001 i 002 pisao je builder; od 003 nadalje piše ih tester.
 ## Odluke vlasnika
 
 Potvrđeno:
+- Konfigurabilna pravila (2026-10-10): konfigurabilna je samo poslovna logika; 12 invarijanti iz `docs/rules.md` odobreno;
+  pravila su booleovi prekidači (npr. "Obavezan partner na narudžbi: da/ne"), bez brojčanih parametara; pravila smije
+  mijenjati svaki ključ tenanta, i agent; negativna zaliha je pravilo koje tenant sam određuje; redoslijed: 012, 013, 014, pa vrednovanje.
 - Spec 003: nema MCP alata za kreiranje ključeva (samo HTTP); svaki ključ smije upravljati ključevima dok ne
   dođu dozvole; MCP klijenti samo sa statičkim API ključem; rate limiting kasnije.
 
