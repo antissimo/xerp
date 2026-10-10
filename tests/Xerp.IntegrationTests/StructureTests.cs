@@ -58,6 +58,7 @@ public class StructureTests(XerpFixture app)
             "StockDocuments", "StockDocumentLines", "StockLedgerEntries", "DocumentCounters", // spec 005
             "ArticleUnits", // spec 007
             "StockBalances", // spec 011
+            "RuleValues", "RuleChanges", // spec 012
         ];
         foreach (var table in named)
             Assert.Contains(table, tables);

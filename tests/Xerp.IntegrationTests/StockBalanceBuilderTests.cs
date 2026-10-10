@@ -34,8 +34,10 @@ public class StockBalanceBuilderTests(XerpFixture app)
     // ---- AC-02 ----
 
     [Fact]
-    public async Task AC02_The_database_refuses_a_second_default_warehouse_an_inactive_default_and_a_negative_balance()
+    public async Task AC02_The_database_refuses_a_second_default_warehouse_and_an_inactive_default()
     {
+        // That it also refused a negative balance ended with spec 012 (AC-01, item 5): whether stock may go
+        // below zero is a tenant's rule, and RuleBuilderTests asserts that the constraint is gone.
         var s = await Stock.SetupAsync(app);
         var dw = await Balance.DefaultIdAsync(s.Http);
         await Stock.ReceiveAsync(s.Http, s.W1, s.A, 10);
@@ -44,19 +46,9 @@ public class StockBalanceBuilderTests(XerpFixture app)
             app.ExecuteSqlAsync("""UPDATE "Warehouses" SET "IsDefault" = TRUE WHERE "Id" = @id""", ("id", s.W1)));
         var inactive = await Assert.ThrowsAsync<PostgresException>(() =>
             app.ExecuteSqlAsync("""UPDATE "Warehouses" SET "IsActive" = FALSE WHERE "Id" = @id""", ("id", dw)));
-        var negative = await Assert.ThrowsAsync<PostgresException>(() =>
-            app.ExecuteSqlAsync(
-                """UPDATE "StockBalances" SET "Quantity" = -0.000001 WHERE "TenantId" = @t AND "WarehouseId" = @w AND "ArticleId" = @a""",
-                ("t", s.Tenant.Id), ("w", s.W1), ("a", s.A)));
-        var negativeInsert = await Assert.ThrowsAsync<PostgresException>(() =>
-            app.ExecuteSqlAsync(
-                """INSERT INTO "StockBalances" ("TenantId", "WarehouseId", "ArticleId", "Quantity") VALUES (@t, @w, @a, -1)""",
-                ("t", s.Tenant.Id), ("w", s.W2), ("a", s.A)));
 
         Assert.Equal((PostgresErrorCodes.UniqueViolation, DbNames.DefaultWarehouseIndex), (second.SqlState, second.ConstraintName));
         Assert.Equal((PostgresErrorCodes.CheckViolation, DbNames.DefaultWarehouseIsActiveCheck), (inactive.SqlState, inactive.ConstraintName));
-        Assert.Equal((PostgresErrorCodes.CheckViolation, DbNames.StockBalanceNotNegativeCheck), (negative.SqlState, negative.ConstraintName));
-        Assert.Equal((PostgresErrorCodes.CheckViolation, DbNames.StockBalanceNotNegativeCheck), (negativeInsert.SqlState, negativeInsert.ConstraintName));
         // Nothing of it happened.
         Assert.Equal(dw, await Balance.DefaultIdAsync(s.Http));
         await Balance.AssertBalancedAsync(s, "after the refused statements", dw);

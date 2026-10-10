@@ -17,7 +17,9 @@ public static class Problems
         int Status,
         string Detail,
         string Code,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, string[]>? Errors);
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, string[]>? Errors,
+        // Spec 012, section 4: the rules that refused; absent - not empty - when no configurable rule did.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<RuleRefusal>? Rules);
 
     public static int StatusOf(string code) => code switch
     {
@@ -31,7 +33,7 @@ public static class Problems
             or ErrorCodes.UnitIsBaseUnit or ErrorCodes.UnitNotOnArticle or ErrorCodes.QuantityNotConvertible
             or ErrorCodes.CountOutdated or ErrorCodes.PartnerRoleMissing or ErrorCodes.OrderNotOpen
             or ErrorCodes.OrderMismatch or ErrorCodes.QuantityExceedsOrder
-            or ErrorCodes.DefaultWarehouse => StatusCodes.Status409Conflict,
+            or ErrorCodes.DefaultWarehouse or ErrorCodes.StockReserved => StatusCodes.Status409Conflict,
         ErrorCodes.PayloadTooLarge => StatusCodes.Status413PayloadTooLarge,
         _ => StatusCodes.Status500InternalServerError,
     };
@@ -54,5 +56,5 @@ public static class Problems
     }
 
     private static Body ToBody(AppError error) =>
-        new("about:blank", error.Code, StatusOf(error.Code), error.Detail, error.Code, error.Errors);
+        new("about:blank", error.Code, StatusOf(error.Code), error.Detail, error.Code, error.Errors, error.Rules);
 }

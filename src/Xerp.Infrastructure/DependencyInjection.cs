@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Xerp.Application.Ports;
 using Xerp.Infrastructure.Persistence;
+using Xerp.Infrastructure.Rules;
 using Xerp.Infrastructure.Security;
 using Xerp.Infrastructure.Tenancy;
 using Xerp.Infrastructure.Time;
@@ -18,6 +19,7 @@ public static class DependencyInjection
         services.AddScoped<IXerpDb>(provider => provider.GetRequiredService<XerpDbContext>());
         services.AddScoped<IApiKeyLookup, ApiKeyLookup>();
         services.AddScoped<ICurrentTenantReader, CurrentTenantReader>();
+        services.AddScoped<IRules, TenantRuleReader>();
         services.AddScoped<ITenantProvisioningStore, TenantProvisioningStore>();
         services.AddSingleton<ApiKeyCrypto>();
         services.AddSingleton<IApiKeyGenerator>(provider => provider.GetRequiredService<ApiKeyCrypto>());
